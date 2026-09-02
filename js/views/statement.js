@@ -28,6 +28,16 @@ function openThing(kind, name) {
 export async function render(root) { host = root; readUrl(); draw(); }
 export function refresh() { if (host) { readUrl(); draw(); } }
 
+// Esc leaves whatever statement is open the same way the back gesture does —
+// which lands you back where you came from, Net Worth included.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (!host || !host.isConnected) return;
+  if (document.querySelector('.modal-wrap')) return;      // a sheet owns Esc first
+  if (!f.account && !f.tag) return;
+  history.back();
+});
+
 function draw() { f.tag ? drawHolding() : f.account ? drawOne() : drawList(); }
 
 // --------------------------------------------------------- all accounts ----

@@ -3,7 +3,8 @@
 // ============================================================================
 import { el, modal, toast, todayISO, uuid, evalAmount, confirmBox, money, round2 } from '../util.js';
 import { DB, put, remove } from '../store.js';
-import { fxFor, currencyOf, convertAmount, parentsFor, subsFor, payeeNames, eventNames } from '../calc.js';
+import { fxFor, currencyOf, convertAmount, parentsFor, subsFor, payeeNames, eventNames,
+  activeAccounts as liveAccounts } from '../calc.js';
 
 const TYPES = ['Expense', 'Income', 'Transfer', 'Lend/Borrow', 'Investment'];
 const ICON = { Expense: '💸', Income: '💵', Transfer: '🔄', 'Lend/Borrow': '🤝', Investment: '📈', 'Opening Balance': '🏁' };
@@ -28,8 +29,11 @@ const holdings = () => {
   return [...seen].filter(Boolean).sort((a, b) => a.localeCompare(b));
 };
 
-const activeAccounts = () => DB.accounts.filter(a => a.active !== false)
-  .sort((a, b) => (a.grp === b.grp ? a.name.localeCompare(b.name) : a.grp === 'primary' ? -1 : 1));
+const byGroup = (a, b) => (a.grp === b.grp ? a.name.localeCompare(b.name) : a.grp === 'primary' ? -1 : 1);
+/** The same 60-day rule the rest of the app uses — not the stale flag the
+ *  workbook import brought with it. */
+const activeAccounts = () => liveAccounts().slice().sort(byGroup);
+const everyAccount = () => DB.accounts.filter(a => !a.deleted).slice().sort(byGroup);
 
 // ── what may live in an amount box ─────────────────────────────────────────
 // Digits, one dot per number, and the four operators. Nothing else — no commas,
@@ -248,10 +252,24 @@ export function openTxEditor(existing = null, presets = {}) {
   // conversion — the bank's rate on the day was whatever it was.
   if (linked && +inLeg.income) { amountBoxB.set(inLeg.income); amountBoxB.touched = true; }
 
+  // Idle accounts are out of the way by default, but one tick brings them all
+  // back — which is how you give an old unlinked transfer its real other side.
+  let showIdle = false;
+  const idleTick = el('input', { type: 'checkbox' });
+  idleTick.addEventListener('change', () => {
+    showIdle = idleTick.checked;
+    fillAccounts();
+    syncCurrency();
+  });
+  const idleRow = el('label', { class: 'field full row switch-row', style: 'cursor:pointer;margin-top:-4px' },
+    idleTick,
+    el('div', { style: 'min-width:0' }, el('span', { class: 'small' }, 'View inactive accounts'),
+      el('div', { class: 'hint' }, 'Accounts with nothing on them for 60 days are hidden until you ask.')));
+
   const fillAccounts = () => {
-    // Switched-off accounts are out of the list — except the one this very
-    // entry already uses, or opening an old row would silently move its money.
-    const list = activeAccounts();
+    // Idle accounts are out of the list — except the one this very entry
+    // already uses, or opening an old row would silently move its money.
+    const list = showIdle ? everyAccount() : activeAccounts();
     // Both ends of this entry must be in the list even if the account is
     // switched off, or opening an old row would quietly drop the account it
     // names — and saving would then send the money somewhere else.
@@ -262,13 +280,15 @@ export function openTxEditor(existing = null, presets = {}) {
       if (a) extras.push(a);
     }
     const options = [...extras, ...list];
+    const live = new Set(activeAccounts().map(a => a.name));
     const fillOne = (sel, allowUnknown) => {
       const keep = sel.value;
       sel.innerHTML = '';
       if (allowUnknown) sel.append(el('option', { value: UNKNOWN }, UNKNOWN));
       for (const a of options) {
+        const idle = !live.has(a.name);
         sel.append(el('option', { value: a.name },
-          `${a.name} · ${a.currency}` + (extras.includes(a) ? ' (inactive)' : '')));
+          `${a.name} · ${a.currency}` + (idle ? ' (idle)' : '')));
       }
       sel.value = keep || '';
     };
@@ -359,6 +379,7 @@ export function openTxEditor(existing = null, presets = {}) {
     form.append(el('div', { class: 'full' }, calcKeys));
     if (type === 'Transfer') { add('From account', acctSel); add('To account', toSel); }
     else { add('Account', acctSel); add('Currency', curSel); }
+    form.append(idleRow);            // every type gets the same escape hatch
     add('Date', dateIn); add('Time', timeIn);
 
     if (type === 'Lend/Borrow' || type === 'Investment') {

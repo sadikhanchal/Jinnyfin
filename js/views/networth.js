@@ -13,6 +13,15 @@ let asOf = '', host = null, showAll = false;
 export async function render(root) { host = root; asOf = asOf || todayISO(); draw(); }
 export function refresh() { if (host) draw(); }
 
+/** Where a row's own story lives: the ledger behind its balance. */
+const openLedger = (kind, name) => { location.hash = `#/statement?${kind}=${encodeURIComponent(name)}`; };
+
+/** A quiet ⋮ that opens the record itself, so the row click can mean "show me". */
+const dots = onclick => el('button', {
+  class: 'icon-btn row-dots', title: 'Edit',
+  onclick: e => { e.stopPropagation(); onclick(); },
+}, '⋮');
+
 function draw() {
   const S = SERIES();
   host.innerHTML = '';
@@ -72,8 +81,12 @@ function draw() {
     el('th', { class: 'n' }, 'Gain / loss'), el('th', { class: 'n' }, 'Gain %'), el('th', { class: 'n' }, 'Value used'))));
   const atb = el('tbody');
   for (const a of fa.rows) {
-    atb.append(el('tr', { style: 'cursor:pointer', onclick: () => addAsset(a) },
-      el('td', {}, a.name), el('td', { class: 'muted small' }, a.category_tag || '—'),
+    atb.append(el('tr', {
+      style: 'cursor:pointer', title: 'Every payment behind this asset',
+      onclick: () => openLedger('tag', a.category_tag || a.name),
+    },
+      el('td', {}, el('div', { class: 'row-name' }, el('span', {}, a.name), dots(() => addAsset(a)))),
+      el('td', { class: 'muted small' }, a.category_tag || '—'),
       el('td', { class: 'n' }, num(a.cost, 0)),
       el('td', { class: 'n' }, a.market ? num(a.market, 0) : el('span', { class: 'muted' }, 'not set')),
       el('td', { class: 'n ' + (a.gain >= 0 ? 'pos' : 'neg') }, a.market ? num(a.gain, 0) : '–'),
@@ -88,7 +101,7 @@ function draw() {
   at.append(atb);
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Fixed assets'), el('div', { class: 'spacer' }),
-      el('span', { class: 'small muted' }, 'cost is built up from your tagged spending; set a market value to override it')),
+      el('span', { class: 'small muted' }, 'tap a row for its full statement · ⋮ to edit the asset')),
     el('div', { class: 'table-wrap' }, at)));
 
   // -------------------------------------------------------- investments ---
@@ -97,7 +110,13 @@ function draw() {
     el('th', { class: 'n' }, 'Deposits'), el('th', { class: 'n' }, 'Returns'), el('th', { class: 'n' }, 'Value ≈ INR'))));
   const itb = el('tbody');
   for (const d of inv.detail) {
-    itb.append(el('tr', {}, el('td', {}, d.name), el('td', { class: 'muted small' }, d.kind),
+    const where = d.kind === 'category' ? ['tag', d.name]
+      : d.kind === 'account' ? ['account', d.name] : null;
+    itb.append(el('tr', where ? {
+      style: 'cursor:pointer', title: 'Every movement behind this balance',
+      onclick: () => openLedger(where[0], where[1]),
+    } : { style: 'cursor:pointer', onclick: () => { location.hash = '#/equity'; } },
+      el('td', {}, d.name), el('td', { class: 'muted small' }, d.kind),
       el('td', { class: 'n' }, d.deposits != null ? num(d.deposits, 0) : '–'),
       el('td', { class: 'n' }, d.interest != null ? num(d.interest, 0) : '–'),
       el('td', { class: 'n' }, num(d.value, 0))));
@@ -106,7 +125,9 @@ function draw() {
     el('td', { class: 'n' }, num(inv.total, 0))));
   it.append(itb);
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
-    el('div', { class: 'card-head' }, el('h3', {}, 'Investments & savings')),
+    el('div', { class: 'card-head' }, el('h3', {}, 'Investments & savings'),
+      el('div', { class: 'spacer' }),
+      el('span', { class: 'small muted' }, 'tap a row for its full statement')),
     el('div', { class: 'table-wrap' }, it)));
 
   host.append(el('p', { class: 'small muted', style: 'margin-top:10px' },

@@ -12,7 +12,7 @@ import * as A from './alerts.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.18', date: '2026-09-02' };
+export const BUILD = { version: '1.19', date: '2026-09-02' };
 
 const ROUTES = {
   dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
@@ -186,7 +186,16 @@ export function topbar(title, ...right) {
   const bar = el('div', { class: 'topbar' }, el('h1', {}, title), el('div', { class: 'spacer' }),
     ...right, bellButton(), chip);
   updateChip(chip);
+  watchLift(bar);
   return bar;
+}
+
+/** The hairline under the frozen bar appears only once it is actually holding
+ *  content back — at the top of a page it would just be a line for no reason. */
+function watchLift(bar) {
+  const mark = () => bar.classList.toggle('lifted', bar.getBoundingClientRect().top <= 1 && window.scrollY > 4);
+  mark();
+  addEventListener('scroll', mark, { passive: true });
 }
 
 // ------------------------------------------------------------------ bell ---

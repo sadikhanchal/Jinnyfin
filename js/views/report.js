@@ -13,6 +13,13 @@ export function makeReport(kind) {
   const isIncome = kind === 'Income';
   let f = { year: String(new Date().getFullYear()), month: 'All', parent: 'All', sub: 'All', account: 'All' };
   let host = null;
+  let escapeOut = null;                     // set while a drill-down is open
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || !escapeOut) return;
+    if (document.querySelector('.modal-wrap')) return;    // a sheet is on top; it owns Esc
+    if (!host || !host.isConnected) return;               // this report is not on screen
+    escapeOut();
+  });
 
   function draw() {
     const S = SERIES();
@@ -76,21 +83,51 @@ export function makeReport(kind) {
     host.append(tables);
 
     // ------------------------------------------------------- breakdown ----
+    // Tapping a bar goes a level in. The trail across the top is how you get
+    // back out again — without it, drilling in was a room with no door.
+    const stepOut = () => {
+      if (f.sub !== 'All') f.sub = 'All';
+      else if (f.parent !== 'All') { f.parent = 'All'; f.sub = 'All'; }
+      draw();
+    };
+    const crumb = (text, onto, last) => (last
+      ? el('span', { class: 'crumb here' }, text)
+      : el('button', { class: 'crumb', onclick: onto }, text));
+    const trail = el('div', { class: 'crumbs' },
+      crumb('All categories', () => { f.parent = 'All'; f.sub = 'All'; draw(); }, f.parent === 'All'),
+      ...(f.parent === 'All' ? [] : [
+        el('span', { class: 'crumb-sep' }, '›'),
+        crumb(f.parent, () => { f.sub = 'All'; draw(); }, f.sub === 'All'),
+      ]),
+      ...(f.sub === 'All' ? [] : [
+        el('span', { class: 'crumb-sep' }, '›'),
+        crumb(f.sub, null, true),
+      ]));
+
+    const deep = f.parent !== 'All' || f.sub !== 'All';
     const bdCard = el('div', { class: 'card', style: 'margin-top:12px' },
-      el('div', { class: 'card-head' }, el('h3', {},
-        f.parent === 'All' ? 'Breakdown by category' : `Breakdown inside ${f.parent}`)));
+      el('div', { class: 'card-head' },
+        el('h3', {}, f.sub !== 'All' ? `Inside ${f.sub}`
+          : f.parent === 'All' ? 'Breakdown by category' : `Breakdown inside ${f.parent}`),
+        el('div', { class: 'spacer' }),
+        deep ? el('button', { class: 'btn sm', onclick: stepOut }, '← Back') : null),
+      trail);
     const bd = el('div', {}); bdCard.append(bd);
     const breakdown = f.parent === 'All'
       ? C.bySource(kind, flt)
       : C.bySub(kind, f.parent, flt);
-    barList(bd, breakdown.slice(0, 25).map(r => ({
+    if (!breakdown.length) {
+      bd.append(el('p', { class: 'small muted', style: 'margin:6px 2px' }, 'Nothing in this period.'));
+    } else barList(bd, breakdown.slice(0, 25).map(r => ({
       label: r.name, value: r.equiv, color,
       sub: [r.sar ? num(r.sar, 0) + ' SAR' : null, r.inr ? '₹' + num(r.inr, 0) : null].filter(Boolean).join(' + '),
     })), {
       format: v => money(v, 'INR', false),
-      onClick: r => { if (f.parent === 'All') { f.parent = r.label; f.sub = 'All'; } else { f.sub = r.name || r.label; } draw(); },
+      onClick: f.sub !== 'All' ? null
+        : r => { if (f.parent === 'All') { f.parent = r.label; f.sub = 'All'; } else { f.sub = r.name || r.label; } draw(); },
     });
     host.append(bdCard);
+    escapeOut = deep ? stepOut : null;      // Esc steps back out, for a keyboard
 
     // ------------------------------------------------------- detail rows --
     const detCard = el('div', { class: 'card', style: 'margin-top:12px' },
