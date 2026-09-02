@@ -1,7 +1,7 @@
 // ============================================================================
 //  insurance.js — policies and documents that expire, with reminders.
 // ============================================================================
-import { el, money, fmtDate, todayISO, modal, toast, confirmBox, addDays, downloadCSV } from '../util.js';
+import { el, money, fmtDate, todayISO, modal, toast, confirmBox, addDays, downloadCSV, daysBetween } from '../util.js';
 import { DB, put, remove, getSettings, setSettings } from '../store.js';
 import * as C from '../calc.js';
 import { topbar } from '../app.js';
@@ -17,34 +17,62 @@ function draw() {
   const rows = C.insuranceAlerts();
   const head = C.insuranceHeadline();
   host.append(topbar('Insurance & Documents',
-    el('button', { class: 'btn sm', onclick: () => edit() }, '+ Policy'),
     el('button', { class: 'btn sm', onclick: exportCSV }, '⬇ CSV')));
 
+  // The headline already names one of them when something is close; the line
+  // under it must then name the NEXT one — never skip the soonest.
+  const sub = head.level === 'soon' || head.level === 'expired' ? head.then : head.next;
   host.append(el('div', { class: 'alert ' + head.level },
     el('span', { class: 'ico' }, head.level === 'ok' ? '✓' : head.level === 'expired' ? '⛔' : '⚠'),
     el('div', {}, el('b', {}, head.text),
-      head.then ? el('div', { class: 'small muted' }, `then ${head.then.label} in ${head.then.daysLeft} days`) : null)));
+      sub ? el('div', { class: 'small muted' },
+        `next: ${sub.label} on ${fmtDate(sub.renewal_date)} · ${sub.daysLeft} days`) : null)));
 
   host.append(notifyCard());
 
-  const expired = rows.filter(r => r.level === 'expired').length;
-  const soon = rows.filter(r => r.level === 'soon' || r.level === 'critical').length;
+  const cards = (DB.cards || []).filter(c => !c.deleted).map(c => ({ ...c, ...cardDue(c) }))
+    .sort((a, b) => (a.daysLeft ?? 9e9) - (b.daysLeft ?? 9e9));
+  const expired = rows.filter(r => r.level === 'expired').length + cards.filter(c => c.daysLeft < 0).length;
+  const soon = rows.filter(r => r.level === 'soon' || r.level === 'critical').length
+    + cards.filter(c => c.daysLeft >= 0 && c.daysLeft <= 45).length;
+
   host.append(el('div', { class: 'grid g4 keep2', style: 'margin-top:12px' },
-    kpi('Policies tracked', String(rows.length)),
-    kpi('Expiring within 30 days', String(soon), soon ? 'expense' : ''),
+    kpi('Tracked', String(rows.length + cards.length)),
+    kpi('Expiring soon', String(soon), soon ? 'expense' : ''),
     kpi('Already expired', String(expired), expired ? 'expense' : ''),
     kpi('Annual premium', money(rows.reduce((s, r) => s + (r.currency === 'SAR' ? (+r.premium || 0) * C.rates().sar : +r.premium || 0), 0), 'INR', false))));
 
-  const list = el('div', { class: 'grid g2', style: 'margin-top:12px' });
-  for (const p of rows) {
+  // Three things expire in this house: policies, papers, and plastic. Each gets
+  // its own heading and its own Add, so nothing has to be hunted for.
+  section('🛡️', 'Insurance policies', rows.filter(r => r.kind !== 'document'),
+    'No policies yet.', () => edit(null, 'insurance'));
+  section('🪪', 'ID & Documents', rows.filter(r => r.kind === 'document'),
+    'No documents yet — Iqama, passport, licence.', () => edit(null, 'document'));
+  cardSection(cards);
+}
+
+/** One headed block of expiring things. */
+function section(icon, title, list, empty, add) {
+  const head = el('div', { class: 'card-head', style: 'margin:18px 0 8px' },
+    el('h3', {}, icon + '  ' + title),
+    el('div', { class: 'spacer' }),
+    el('button', { class: 'btn sm', onclick: add }, '+ Add'));
+  host.append(head);
+  if (!list.length) {
+    host.append(el('p', { class: 'small muted', style: 'margin:0 2px 4px' }, empty));
+    return;
+  }
+  const grid = el('div', { class: 'grid g2' });
+  for (const p of list) {
     const badge = p.level === 'expired' ? ['⛔', 'var(--critical)', `expired ${-p.daysLeft} days ago`]
       : p.level === 'critical' ? ['🚨', 'var(--serious)', `${p.daysLeft} days left`]
       : p.level === 'soon' ? ['⚠', 'var(--warning)', `${p.daysLeft} days left`]
       : ['✓', 'var(--good)', `${p.daysLeft} days left`];
-    list.append(el('div', { class: 'card', style: `border-left:4px solid ${badge[1]};cursor:pointer`, onclick: () => edit(p) },
+    grid.append(el('div', { class: 'card', style: `border-left:4px solid ${badge[1]};cursor:pointer`, onclick: () => edit(p) },
       el('div', { class: 'row' },
         el('span', { style: 'font-size:18px' }, badge[0]),
-        el('div', {}, el('b', {}, p.label), el('div', { class: 'small muted' }, p.policy || '')),
+        el('div', { style: 'min-width:0' }, el('b', {}, p.label),
+          el('div', { class: 'small muted' }, p.policy || '')),
         el('div', { class: 'spacer' }),
         el('div', { style: 'text-align:right' },
           el('div', { class: 'small' }, fmtDate(p.renewal_date)),
@@ -53,45 +81,131 @@ function draw() {
         `Premium ${money(p.premium, p.currency || 'INR')} · reminder ${p.notify_days || 30} days before`) : null,
       p.policy_no ? el('div', { class: 'small muted mono' }, p.policy_no) : null));
   }
-  host.append(list);
-  if (!rows.length) host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, '🛡️'),
-    el('p', {}, 'No policies yet.'), el('button', { class: 'btn primary', onclick: () => edit() }, 'Add the first one')));
+  host.append(grid);
+}
+
+/** When a card printed MM/YY actually stops working: the end of that month. */
+function cardDue(c) {
+  const m = String(c.expiry_hint || '').match(/^(\d{1,2})\s*\/\s*(\d{2,4})$/);
+  if (!m) return { on: null, daysLeft: null, level: 'none' };
+  const mm = +m[1]; let yy = +m[2]; if (yy < 100) yy += 2000;
+  if (!(mm >= 1 && mm <= 12)) return { on: null, daysLeft: null, level: 'none' };
+  const on = new Date(Date.UTC(yy, mm, 0)).toISOString().slice(0, 10);
+  const daysLeft = daysBetween(todayISO(), on);
+  return { on, daysLeft, level: daysLeft < 0 ? 'expired' : daysLeft <= 14 ? 'critical' : daysLeft <= 45 ? 'soon' : 'ok' };
+}
+
+/** The cards, by when they run out. The numbers stay locked in the vault. */
+function cardSection(cards) {
+  host.append(el('div', { class: 'card-head', style: 'margin:18px 0 8px' },
+    el('h3', {}, '💳  ATM Cards'),
+    el('div', { class: 'spacer' }),
+    el('button', { class: 'btn sm', onclick: () => { location.hash = '#/cards'; } }, 'Open vault')));
+  if (!cards.length) {
+    host.append(el('p', { class: 'small muted', style: 'margin:0 2px 4px' },
+      'No cards yet — add them in the Card Vault, where the numbers are encrypted.'));
+    return;
+  }
+  const grid = el('div', { class: 'grid g2' });
+  for (const c of cards) {
+    const badge = c.level === 'expired' ? ['⛔', 'var(--critical)', `expired ${-c.daysLeft} days ago`]
+      : c.level === 'critical' ? ['🚨', 'var(--serious)', `${c.daysLeft} days left`]
+      : c.level === 'soon' ? ['⚠', 'var(--warning)', `${c.daysLeft} days left`]
+      : c.level === 'none' ? ['💳', 'var(--hair)', 'no expiry saved']
+      : ['✓', 'var(--good)', `${c.daysLeft} days left`];
+    grid.append(el('div', { class: 'card', style: `border-left:4px solid ${badge[1]};cursor:pointer`,
+      onclick: () => { location.hash = '#/cards'; } },
+      el('div', { class: 'row' },
+        el('span', { style: 'font-size:18px' }, badge[0]),
+        el('div', { style: 'min-width:0' }, el('b', {}, c.label),
+          el('div', { class: 'small muted' },
+            [c.bank, c.network, c.last4 ? '•••• ' + c.last4 : null].filter(Boolean).join(' · '))),
+        el('div', { class: 'spacer' }),
+        el('div', { style: 'text-align:right' },
+          el('div', { class: 'small' }, c.expiry_hint || '—'),
+          el('div', { class: 'small muted' }, badge[2])))));
+  }
+  host.append(grid);
 }
 
 // -------------------------------------------------------- notifications ---
+/**
+ * A switch, not a mirror. What it shows is YOUR choice, kept in settings and
+ * synced to every device — before, it read the browser's permission back to
+ * you, so it looked as though it had turned itself off again.
+ */
 function notifyCard() {
   const s = getSettings();
+  const on = s.notify_on !== false;                 // never asked = on
+  const sound = s.reminder_sound !== false;
   const supported = 'Notification' in window;
   const perm = supported ? Notification.permission : 'unsupported';
+  const blocked = on && supported && perm === 'denied';
+  const needsAsking = on && supported && perm === 'default';
+
+  const sw = el('input', { type: 'checkbox', checked: on });
+  sw.addEventListener('change', async () => {
+    const want = sw.checked;
+    await setSettings({ notify_on: want });
+    // Turning it on is also the moment to ask the browser, once.
+    if (want && supported && Notification.permission === 'default') {
+      try { await Notification.requestPermission(); } catch { /* ignore */ }
+    }
+    toast(want ? 'Reminders on' : 'Reminders off');
+    draw();
+  });
+
+  const sndSw = el('input', { type: 'checkbox', checked: sound });
+  sndSw.addEventListener('change', async () => {
+    await setSettings({ reminder_sound: sndSw.checked });
+    toast(sndSw.checked ? 'Sound on' : 'Sound off');
+  });
+
   const card = el('div', { class: 'card tight' });
-  const row = el('div', { class: 'row' },
+  card.append(el('label', { class: 'row switch-row', style: 'cursor:pointer' },
     el('span', {}, '🔔'),
-    el('div', {}, el('b', {}, 'Renewal reminders'),
+    el('div', { style: 'min-width:0' }, el('b', {}, 'Renewal reminders'),
       el('div', { class: 'small muted' },
-        perm === 'granted' ? 'On — this device pops a reminder when something is close to expiry.'
-          : perm === 'denied' ? 'Blocked in your browser settings. Allow notifications for this site to switch it on.'
-          : !supported ? 'This browser cannot show notifications.'
-          : 'Off — turn it on to get a pop-up even when the app is closed.')),
-    el('div', { class: 'spacer' }));
-  if (supported && perm !== 'granted') {
-    row.append(el('button', {
+        !on ? 'Off — nothing will be announced until you switch this back on.'
+          : !supported ? 'On inside the app. This browser cannot show system pop-ups.'
+          : blocked ? 'On inside the app — but your browser is blocking pop-ups for this site. Allow notifications in the site settings.'
+          : needsAsking ? 'On inside the app. Tap “Allow pop-ups” to get them outside it too.'
+          : 'On — you get a pop-up when something falls due.')),
+    el('div', { class: 'spacer' }), sw));
+
+  card.append(el('label', { class: 'row switch-row', style: 'cursor:pointer;margin-top:8px' },
+    el('span', {}, '🔊'),
+    el('div', { style: 'min-width:0' }, el('b', {}, 'Sound'),
+      el('div', { class: 'small muted' }, 'A short chime when a reminder rings.')),
+    el('div', { class: 'spacer' }), sndSw));
+
+  const acts = el('div', { class: 'row', style: 'margin-top:8px' });
+  if (needsAsking || blocked) {
+    acts.append(el('button', {
       class: 'btn sm primary', onclick: async () => {
         const r = await Notification.requestPermission();
-        if (r === 'granted') { toast('Reminders on'); setSettings({ notify: true }); draw(); }
-        else toast('Not allowed', 'warn');
+        toast(r === 'granted' ? 'Pop-ups allowed' : 'Your browser said no — allow it in the site settings', r === 'granted' ? 'ok' : 'warn', 5000);
+        draw();
       },
-    }, 'Turn on'));
-  } else if (perm === 'granted') {
-    row.append(el('button', {
-      class: 'btn sm', onclick: async () => {
-        const reg = await navigator.serviceWorker?.getRegistration();
-        const head = C.insuranceHeadline();
-        const opts = { body: head.next ? `${head.next.label} renews ${fmtDate(head.next.renewal_date)}` : 'Nothing due soon.', icon: 'icons/icon-192.png' };
-        if (reg) reg.showNotification('Jinnyfin · ' + head.text, opts); else new Notification('Jinnyfin · ' + head.text, opts);
-      },
-    }, 'Test'));
+    }, 'Allow pop-ups'));
   }
-  card.append(row);
+  if (on) {
+    acts.append(el('button', {
+      class: 'btn sm', onclick: async () => {
+        const head = C.insuranceHeadline();
+        const body = head.next ? `${head.next.label} renews ${fmtDate(head.next.renewal_date)}` : 'Nothing due soon.';
+        const reg = await navigator.serviceWorker?.getRegistration();
+        if (supported && Notification.permission === 'granted') {
+          const opts = { body, icon: 'icons/icon-192.png', tag: 'jinnyfin-test' };
+          if (reg) reg.showNotification('Jinnyfin · ' + head.text, opts);
+          else new Notification('Jinnyfin · ' + head.text, opts);
+        }
+        toast('🔔 ' + head.text + ' — ' + body, 'ok', 6000);
+      },
+    }, 'Test it'));
+  }
+  if (acts.children.length) card.append(acts);
+
   card.append(el('p', { class: 'hint', style: 'margin:8px 0 0' },
     'Want an e-mail too? The repo ships a GitHub Action ('
     , el('span', { class: 'mono' }, '.github/workflows/expiry-email.yml')
@@ -99,51 +213,19 @@ function notifyCard() {
   return card;
 }
 
-/**
- * Push the renewal date on a year and, unless told not to, put the premium
- * through the books: an expense on the account that paid it, so it shows up in
- * that account's statement and in Transactions like any other payment.
- */
-async function renew(v, m, o) {
-  if (o.record && o.premium > 0 && !o.account) return toast('Which account paid it?', 'warn');
-  const paid = printableDate();
-  if (!(await confirmBox(
-    (o.record && o.premium > 0
-      ? `Renew ${o.label} for a year and record ${money(o.premium, o.currency)} paid from ${o.account}?`
-      : `Renew ${o.label} for another year? No payment will be recorded.`), 'Renew'))) return;
-
-  await put('insurance', { ...v, renewal_date: addDays(v.renewal_date, 365),
-    premium: o.premium, currency: o.currency, pay_account: o.account, last_paid: paid });
-
-  if (o.record && o.premium > 0) {
-    const fx = C.fxFor(paid);
-    const seq = Math.max(0, ...DB.transactions.map(t => t.no || 0)) + 1;
-    await put('transactions', {
-      no: seq, date: paid, time: new Date().toTimeString().slice(0, 5),
-      type: 'Expense', account: o.account, currency: o.currency,
-      income: 0, expense: o.premium, fx,
-      parent: 'Insurance', sub: o.label,
-      payee: v.policy || null, event: null,
-      note: `${o.label} renewed — premium for ${addDays(v.renewal_date, 365).slice(0, 4)}`,
-    });
-    toast(`Renewed, and ${money(o.premium, o.currency)} recorded on ${o.account}`, 'ok', 5000);
-  } else {
-    toast('Renewed for another year');
-  }
-  m.close();
-}
-
 const printableDate = () => todayISO();
 
-function edit(p = null) {
+function edit(p = null, startKind = 'insurance') {
   const v = p || { label: '', policy: '', policy_no: '', renewal_date: addDays(todayISO(), 365),
-    premium: 0, currency: 'INR', notify_days: 30, kind: 'insurance', note: '' };
+    premium: 0, currency: 'INR', notify_days: 30, kind: startKind, note: '' };
   const label = el('input', { value: v.label, placeholder: 'Car / Health / Iqama / Passport' });
   const policy = el('input', { value: v.policy || '', placeholder: 'Insurer or issuing body' });
   const pno = el('input', { value: v.policy_no || '', placeholder: 'Policy / document number' });
   const date = el('input', { type: 'date', value: v.renewal_date });
   const prem = el('input', { type: 'number', step: 'any', value: v.premium || 0 });
-  const cur = el('select', {}, ...['INR', 'SAR', 'USD'].map(c => el('option', { value: c, selected: v.currency === c }, c)));
+  // The premium is paid out of an account, so it is in that account's currency.
+  // A free choice here silently valued a riyal premium as rupees.
+  const cur = el('input', { readonly: true, tabindex: '-1', class: 'locked', value: v.currency || 'INR' });
   const days = el('input', { type: 'number', value: v.notify_days || 30 });
   const kind = el('select', {}, el('option', { value: 'insurance', selected: v.kind !== 'document' }, 'Insurance policy'),
     el('option', { value: 'document', selected: v.kind === 'document' }, 'Document (Iqama, passport, licence…)'));
@@ -152,6 +234,9 @@ function edit(p = null) {
   const payFrom = el('select', {}, ...C.activeAccounts()
     .map(a => el('option', { value: a.name, selected: v.pay_account === a.name }, `${a.name} · ${a.currency}`)));
   if (!v.pay_account) payFrom.value = C.cashAccounts()[0]?.name || payFrom.value;
+  const followAccount = () => { cur.value = C.currencyOf(payFrom.value) || cur.value; };
+  payFrom.addEventListener('change', followAccount);
+  followAccount();
   const postIt = el('input', { type: 'checkbox', checked: true });
   const fld = (l, n, cls = '') => el('div', { class: 'field ' + cls }, el('label', {}, l), n);
   const body = el('div', { class: 'form-grid' },

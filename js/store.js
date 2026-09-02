@@ -10,12 +10,12 @@ import { uuid, todayISO, toast, store as safeStore, storageBlocked } from './uti
 
 export const TABLES = ['accounts', 'categories', 'payees', 'transactions', 'fx_rates',
   'assets', 'insurance', 'cards', 'equity_positions', 'equity_trades', 'businesses',
-  'budgets', 'templates', 'settings'];
+  'budgets', 'templates', 'tasks', 'settings'];
 
 export const DB = {
   accounts: [], categories: [], payees: [], transactions: [], fx_rates: [],
   assets: [], insurance: [], cards: [], equity_positions: [], equity_trades: [],
-  businesses: [], budgets: [], templates: [], settings: [],
+  businesses: [], budgets: [], templates: [], tasks: [], settings: [],
 };
 
 export const state = {
@@ -32,7 +32,7 @@ export const emit = (what = 'data') => listeners.forEach(f => { try { f(what); }
 let idb = null;
 function openIDB() {
   return new Promise((res, rej) => {
-    const rq = indexedDB.open('jinnyfin', 1);
+    const rq = indexedDB.open('jinnyfin', 2);   // 2: added 'tasks'
     rq.onupgradeneeded = () => {
       const d = rq.result;
       for (const t of TABLES) if (!d.objectStoreNames.contains(t)) d.createObjectStore(t, { keyPath: 'id' });

@@ -2,16 +2,17 @@
 //  app.js — shell, router, auth gate, screen lock.
 // ============================================================================
 import { CONFIG } from '../config.js';
-import { $, el, toast, todayISO, store as safeStore, storageBlocked, confirmBox } from './util.js';
+import { $, el, toast, todayISO, store as safeStore, storageBlocked, confirmBox, modal } from './util.js';
 import * as S from './store.js';
 import { DB, state, getSettings, setSettings } from './store.js';
 import { insuranceHeadline } from './calc.js';
 import { checkPin } from './crypto.js';
 import { openTxEditor } from './views/editor.js';
+import * as A from './alerts.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.17', date: '2026-09-02' };
+export const BUILD = { version: '1.18', date: '2026-09-02' };
 
 const ROUTES = {
   dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
@@ -27,11 +28,12 @@ const ROUTES = {
   insurance:    { title: 'Insurance & Documents', icon: '🛡️', load: () => import('./views/insurance.js') },
   cards:        { title: 'Card Vault',       icon: '💳', load: () => import('./views/cards.js') },
   budgets:      { title: 'Budgets',          icon: '🎯', load: () => import('./views/budgets.js') },
+  tasks:        { title: 'Reminders',        icon: '⏰', load: () => import('./views/tasks.js') },
   settings:     { title: 'Settings',         icon: '⚙️', load: () => import('./views/settings.js') },
 };
 
 const NAV = [
-  { sep: 'Overview' }, 'dashboard', 'transactions', 'networth', 'budgets',
+  { sep: 'Overview' }, 'dashboard', 'transactions', 'networth', 'budgets', 'tasks',
   { sep: 'Reports' }, 'expense', 'income', 'incexp', 'statement', 'payee', 'business', 'equity',
   { sep: 'Vault' }, 'insurance', 'cards',
   { sep: '' }, 'settings',
@@ -181,9 +183,103 @@ function markActive() {
 
 export function topbar(title, ...right) {
   const chip = el('span', { class: 'sync-chip', id: 'syncchip', onclick: () => S.sync() });
-  const bar = el('div', { class: 'topbar' }, el('h1', {}, title), el('div', { class: 'spacer' }), ...right, chip);
+  const bar = el('div', { class: 'topbar' }, el('h1', {}, title), el('div', { class: 'spacer' }),
+    ...right, bellButton(), chip);
   updateChip(chip);
   return bar;
+}
+
+// ------------------------------------------------------------------ bell ---
+// One button on every screen carrying one number: how many things are waiting
+// that you have not looked at. Tapping it opens the same list the Reminders
+// screen shows, so there is only ever one truth about what is unread.
+function bellButton() {
+  const b = el('button', { class: 'bell', id: 'bell', title: 'Reminders', onclick: openBell }, '🔔',
+    el('span', { class: 'bell-count' }));
+  paintBell(b);
+  return b;
+}
+function paintBell(b) {
+  b = b || $('#bell'); if (!b) return;
+  let n = 0;
+  try { n = A.unreadCount(); } catch { n = 0; }
+  const dot = b.querySelector('.bell-count');
+  if (!dot) return;
+  dot.textContent = n > 99 ? '99+' : String(n);
+  dot.style.display = n ? '' : 'none';
+  b.classList.toggle('has', !!n);
+}
+export const refreshBell = () => paintBell();
+
+async function openBell() {
+  const { alertRow } = await import('./views/tasks.js');
+  const body = el('div', { class: 'bell-list' });
+  const fill = () => {
+    body.innerHTML = '';
+    const list = A.alerts();
+    if (!list.length) {
+      body.append(el('p', { class: 'small muted', style: 'margin:6px 2px' }, 'Nothing needs you right now.'));
+    } else for (const a of list) body.append(alertRow(a, () => { fill(); paintBell(); }));
+  };
+  fill();
+  const m = modal('Reminders', body, { footer: [
+    el('button', { class: 'btn', onclick: async () => { await A.markAllRead(); fill(); paintBell(); } }, 'Mark all read'),
+    el('button', { class: 'btn primary', onclick: () => { m.close(); go('tasks'); } }, 'Open reminders'),
+  ] });
+}
+
+// ------------------------------------------------------- ringing on time ---
+/** A short chime, made on the spot — no audio file to ship or fail to load. */
+function chime() {
+  if (getSettings().reminder_sound === false) return;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ac = new Ctx();
+    const now = ac.currentTime;
+    [880, 1174.7].forEach((hz, i) => {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'sine'; o.frequency.value = hz;
+      g.gain.setValueAtTime(0.0001, now + i * 0.18);
+      g.gain.exponentialRampToValueAtTime(0.25, now + i * 0.18 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.18 + 0.35);
+      o.connect(g); g.connect(ac.destination);
+      o.start(now + i * 0.18); o.stop(now + i * 0.18 + 0.4);
+    });
+    setTimeout(() => ac.close(), 1200);
+  } catch { /* a browser that will not make a sound is not a reason to fail */ }
+}
+
+/**
+ * Every minute, and whenever you come back to the app: has anything fallen due
+ * that has not been announced on this device yet? If so, ring once.
+ */
+async function ring() {
+  let fresh = [];
+  try { fresh = A.unrung(); } catch { return; }
+  paintBell();
+  if (!fresh.length) return;
+  chime();
+  const lead = fresh[0];
+  const rest = fresh.length - 1;
+  toast(`🔔 ${lead.title}${rest ? ` · and ${rest} more` : ''}`, 'warn', 8000,
+    { label: 'Open', run: () => openBell() });
+  if (getSettings().notify_on !== false && 'Notification' in window && Notification.permission === 'granted') {
+    try {
+      const reg = await navigator.serviceWorker?.getRegistration();
+      const opts = { body: rest ? `and ${rest} more waiting` : (lead.body || ''), icon: 'icons/icon-192.png',
+        tag: 'jinnyfin-reminder', badge: 'icons/icon-192.png' };
+      if (reg) reg.showNotification('Jinnyfin · ' + lead.title, opts);
+      else new Notification('Jinnyfin · ' + lead.title, opts);
+    } catch { /* the browser said no; the in-app toast already did the job */ }
+  }
+}
+let ringTimer = null;
+export function startRinging() {
+  if (ringTimer) return;
+  ring();
+  ringTimer = setInterval(ring, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) ring(); });
 }
 function updateChip(chip) {
   chip = chip || $('#syncchip'); if (!chip) return;
@@ -336,6 +432,7 @@ async function start() {
   await renderRoute();
   window.__jinnyfinReady = true;
   maybeNotify();
+  startRinging();
   prefetchViews();
 }
 
@@ -353,6 +450,7 @@ function prefetchViews() {
 
 S.onChange(what => {
   updateChip();
+  paintBell();
   if (what === 'auth') {
     if (!state.user) loginScreen(); else start();
   } else if (what === 'data' && currentView?.refresh) {
