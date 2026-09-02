@@ -184,7 +184,6 @@ export function openTxEditor(existing = null, presets = {}) {
   const calcKeys = el('div', { class: 'calc-keys' },
     ...[['+', '+'], ['−', '-'], ['×', '*'], ['÷', '/']]
       .map(([label, ch]) => key(label, () => (live || boxes[0]).insert(ch))),
-    key('⌫', () => (live || boxes[0]).insert('⌫'), ' del'),
     key('=', () => (live || boxes[0]).settle(), ' eq'),
     calcOut);
 
@@ -261,10 +260,8 @@ export function openTxEditor(existing = null, presets = {}) {
     fillAccounts();
     syncCurrency();
   });
-  const idleRow = el('label', { class: 'field full row switch-row', style: 'cursor:pointer;margin-top:-4px' },
-    idleTick,
-    el('div', { style: 'min-width:0' }, el('span', { class: 'small' }, 'View inactive accounts'),
-      el('div', { class: 'hint' }, 'Accounts with nothing on them for 60 days are hidden until you ask.')));
+  const idleRow = el('label', { class: 'idle-tick', title: 'Show accounts with nothing on them for 60 days' },
+    idleTick, el('span', {}, 'View inactive accounts'));
 
   const fillAccounts = () => {
     // Idle accounts are out of the list — except the one this very entry
@@ -349,12 +346,13 @@ export function openTxEditor(existing = null, presets = {}) {
     updateFx();
   }
 
+  // The rate used to have a line of its own under the form. It is already on
+  // the amount itself when it matters, so the line was just length.
   const updateFx = () => {
-    const r = fxFor(dateIn.value);
+    const cur = curSel.value;
+    if (cur === 'INR' || type === 'Transfer') { fxNote.textContent = ''; return; }
     const amt = evalAmount(amountIn.value) || 0;
-    fxNote.textContent = curSel.value === 'SAR'
-      ? `Rate for ${dateIn.value.slice(0, 7)}: 1 SAR = ${r.toFixed(4)} INR  →  ≈ ${money(amt * r, 'INR')}`
-      : curSel.value === 'INR' ? `Rate for ${dateIn.value.slice(0, 7)}: 1 SAR = ${r.toFixed(4)} INR` : '';
+    fxNote.textContent = amt ? '≈ ' + money(convertAmount(amt, cur, 'INR', dateIn.value), 'INR') : '';
   };
   acctSel.addEventListener('change', syncCurrency);
   toSel.addEventListener('change', () => { amountBoxB.touched = false; refreshLanded(); });
@@ -370,16 +368,22 @@ export function openTxEditor(existing = null, presets = {}) {
   }
   parentIn.addEventListener('input', refreshLists);
 
+  /**
+   * Short is the whole point. This is the screen he opens several times a day
+   * with a keyboard already covering half the phone, so every field earns its
+   * line: the account carries its own currency, the rate speaks only when it
+   * changes an amount, and everything that pairs sits side by side.
+   */
   function layout() {
     form.innerHTML = '';
     const add = (label, node, cls = '', extra = null) =>
       form.append(el('div', { class: 'field ' + cls }, el('label', {}, label), node, extra));
-    add('Amount', amountIn, 'full');
+    add('Amount', amountIn, 'full', fxNote);
     form.append(landedField);                 // only visible when two currencies meet
-    form.append(el('div', { class: 'full' }, calcKeys));
+    form.append(el('div', { class: 'full calc-line' }, calcKeys, idleRow));
+
     if (type === 'Transfer') { add('From account', acctSel); add('To account', toSel); }
-    else { add('Account', acctSel); add('Currency', curSel); }
-    form.append(idleRow);            // every type gets the same escape hatch
+    else add('Account', acctSel, 'full');
     add('Date', dateIn); add('Time', timeIn);
 
     if (type === 'Lend/Borrow' || type === 'Investment') {
@@ -392,10 +396,7 @@ export function openTxEditor(existing = null, presets = {}) {
     }
 
     if (type === 'Lend/Borrow') add('Payee', payeeIn, 'full');
-    else {
-      add('Payee / tag', payeeIn);
-      add('Event', eventIn);
-    }
+    else { add('Payee / tag', payeeIn); add('Event', eventIn); }
     add('Description', noteIn, 'full');
     if (type === 'Transfer' && !linked && !isNew) {
       form.append(el('div', { class: 'full alert soon' }, el('span', { class: 'ico' }, '🔗'),
@@ -403,7 +404,6 @@ export function openTxEditor(existing = null, presets = {}) {
           + `Pick the ${rowIsIn ? 'account it came from' : 'account it went to'} and Jinnyfin will find that entry and link the two. `
           + 'Leave it as “not known” and only this row is saved.')));
     }
-    form.append(el('div', { class: 'full' }, fxNote));
     refreshLists();
     syncCurrency();
     paintAmount();
@@ -575,7 +575,7 @@ export function openTxEditor(existing = null, presets = {}) {
   // Straight to the ledger from here — the fastest route to "what did I enter
   // yesterday", now that Transactions is no longer a tab.
   const history_ = el('button', {
-    class: 'icon-btn', title: 'Past transactions', style: 'margin-right:2px',
+    class: 'icon-btn lead-btn', title: 'Past transactions',
     // Closing unwinds the sheet's history entry, which is asynchronous — so the
     // navigation waits for that to land or it would be undone a beat later.
     onclick: () => {
@@ -583,7 +583,7 @@ export function openTxEditor(existing = null, presets = {}) {
       m.close();
       setTimeout(() => { if (location.hash !== '#/transactions') location.hash = '#/transactions'; }, 250);
     },
-  }, '\u23f1');
+  }, '\ud83d\udd52');
   const m = modal(existing ? 'Edit transaction' : 'New transaction', body, { footer, lead: history_ });
   setTimeout(() => amountIn.focus(), 60);
   body.addEventListener('keydown', e => { if (e.key === 'Enter' && e.metaKey) save(false); });
