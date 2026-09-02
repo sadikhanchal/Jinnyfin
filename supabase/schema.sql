@@ -213,6 +213,21 @@ create table if not exists public.templates (
   updated_at  timestamptz not null default now()
 );
 
+create table if not exists public.tasks (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users on delete cascade,
+  title       text not null,
+  note        text,
+  due_date    date,
+  due_time    text,                                   -- 'HH:MM'
+  repeat      text not null default 'none',           -- none | daily | weekly | monthly | yearly
+  priority    text not null default 'normal',         -- low | normal | high
+  done        boolean not null default false,
+  done_at     timestamptz,
+  deleted     boolean not null default false,
+  updated_at  timestamptz not null default now()
+);
+
 create table if not exists public.settings (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null unique default auth.uid() references auth.users on delete cascade,
@@ -235,7 +250,7 @@ declare t text;
 begin
   foreach t in array array['accounts','categories','payees','transactions','fx_rates','assets',
                            'insurance','cards','equity_positions','equity_trades','businesses',
-                           'budgets','templates','settings']
+                           'budgets','templates','tasks','settings']
   loop
     execute format('drop trigger if exists touch_%1$s on public.%1$s', t);
     execute format('create trigger touch_%1$s before insert or update on public.%1$s
