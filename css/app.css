@@ -661,3 +661,40 @@ tr:hover .row-dots, .row-dots:focus { opacity: 1; }
 /* The shared `max-width: 100%` further up clips the frozen bar back inside the
    page padding, leaving a bare strip either side of it. It alone opts out. */
 main > .topbar { max-width: none; }
+
+/* ------------------------------------------------- the new-entry sheet */
+/* This is the screen he opens several times a day with a keyboard already
+   covering half the phone. Everything here is about fitting it on one view. */
+@media (max-width: 520px) {
+  /* Fields that belong together stay together — stacking them one per line is
+     what made this sheet a scroll. Only a genuinely tiny screen gives up. */
+  .modal .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 8px; }
+  .modal .form-grid .full { grid-column: 1 / -1; }
+}
+@media (max-width: 359px) { .modal .form-grid { grid-template-columns: minmax(0,1fr); } }
+.modal .form-grid > .field > label { font-size: 10.5px; }
+.modal .form-grid input[type=date], .modal .form-grid input[type=time] { min-width: 0; }
+
+/* The keypad and the reveal-idle tick share one line. */
+.calc-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.calc-line .calc-keys { margin-top: 0; }
+.idle-tick { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
+.idle-tick input[type=checkbox] { width: 15px; height: 15px; }
+/* Five keys and the tick have to share one line on a phone, so the keys give
+   up the width they do not need — a 40px target is still a comfortable thumb. */
+@media (max-width: 520px) {
+  .calc-line .calc-key { min-width: 32px; height: 32px; padding: 0 4px; font-size: 15px; }
+  .calc-line .calc-keys { gap: 4px; }
+  .calc-line { gap: 6px; flex-wrap: nowrap; }
+  .idle-tick { font-size: 10.5px; gap: 5px; letter-spacing: -.01em; }
+  .idle-tick input[type=checkbox] { width: 14px; height: 14px; }
+  /* An empty running total still reserved width and pushed the tick onto a
+     line of its own — it only needs room once there is a sum to show. */
+  .calc-line .calc-out:empty { display: none; }
+}
+
+/* A lead button in the sheet's header, big enough to see and to hit. */
+.icon-btn.lead-btn { border: 1px solid var(--hair); border-radius: 999px;
+  width: 32px; height: 32px; font-size: 16px; display: inline-flex;
+  align-items: center; justify-content: center; margin-right: 8px; flex: 0 0 auto; }
