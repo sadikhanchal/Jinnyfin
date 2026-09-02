@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jinnyfin — storage check</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 16px 14px 40px; background: #0f1420; color: #e8ecf3;
+         font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 16px; color: #93a4bd; font-size: 13px; }
+  .row { border: 1px solid #263049; border-radius: 12px; padding: 11px 13px; margin-bottom: 9px;
+         background: #161d2e; }
+  .row b { display: block; font-size: 14px; margin-bottom: 3px; }
+  .ok  { border-left: 4px solid #35c17a; }
+  .bad { border-left: 4px solid #ef5f5f; }
+  .val { font: 12.5px/1.45 ui-monospace, Menlo, Consolas, monospace; word-break: break-word;
+         white-space: pre-wrap; color: #c3cede; }
+  .bad .val { color: #ff9a9a; }
+  button { margin-top: 14px; width: 100%; padding: 13px; border-radius: 11px; border: 0;
+           background: #2f6fd0; color: #fff; font-size: 15px; font-weight: 700; }
+  #out { margin-top: 14px; width: 100%; height: 150px; background: #0a0f1a; color: #cfe0f5;
+         border: 1px solid #263049; border-radius: 10px; padding: 8px;
+         font: 11.5px/1.4 ui-monospace, monospace; display: none; }
+</style>
+</head>
+<body>
+<h1>Storage check</h1>
+<p class="sub">Every place a web app can keep something, tried one by one.
+   The exact words the browser answers with are printed below.</p>
+<div id="list"></div>
+<button id="copy">Copy everything</button>
+<textarea id="out" readonly></textarea>
+
+<script>
+// A deliberately plain page: no modules, no imports, nothing that could itself
+// fail. It has to run on the broken device, which is the whole point.
+(function () {
+  var list = document.getElementById('list');
+  var lines = [];
+
+  function say(label, ok, value) {
+    lines.push((ok ? 'OK   ' : 'FAIL ') + label + ': ' + value);
+    var d = document.createElement('div');
+    d.className = 'row ' + (ok ? 'ok' : 'bad');
+    var b = document.createElement('b'); b.textContent = (ok ? '✅ ' : '⛔ ') + label;
+    var v = document.createElement('div'); v.className = 'val'; v.textContent = value;
+    d.appendChild(b); d.appendChild(v); list.appendChild(d);
+  }
+
+  /** Report the real exception, not a friendly summary — the name is the clue. */
+  function err(e) {
+    if (!e) return 'unknown';
+    return (e.name ? e.name + ': ' : '') + (e.message || String(e));
+  }
+
+  say('Address', true, location.href);
+  say('Secure context (https)', window.isSecureContext === true, String(window.isSecureContext));
+  say('Opened as', true,
+      (matchMedia('(display-mode: standalone)').matches ? 'installed app' : 'browser tab'));
+  say('Browser', true, navigator.userAgent);
+  say('navigator.cookieEnabled', navigator.cookieEnabled === true, String(navigator.cookieEnabled));
+
+  try {
+    document.cookie = 'jfprobe=1; SameSite=Lax; path=/';
+    var got = document.cookie.indexOf('jfprobe=1') >= 0;
+    document.cookie = 'jfprobe=; Max-Age=0; path=/';
+    say('Cookie write/read', got, got ? 'a cookie was written and read back' : 'the cookie did not stick');
+  } catch (e) { say('Cookie write/read', false, err(e)); }
+
+  ['localStorage', 'sessionStorage'].forEach(function (k) {
+    try {
+      var s = window[k];
+      s.setItem('jfprobe', '1');
+      var v = s.getItem('jfprobe');
+      s.removeItem('jfprobe');
+      say(k, v === '1', v === '1' ? 'reads and writes fine' : 'wrote but read back ' + v);
+    } catch (e) { say(k, false, err(e)); }
+  });
+
+  try {
+    say('caches (offline files)', !!window.caches, window.caches ? 'the API exists' : 'window.caches is missing');
+    if (window.caches) {
+      caches.open('jfprobe').then(function () {
+        return caches.delete('jfprobe').then(function () { say('caches.open()', true, 'opened and deleted a test cache'); });
+      }).catch(function (e) { say('caches.open()', false, err(e)); });
+    }
+  } catch (e) { say('caches (offline files)', false, err(e)); }
+
+  try {
+    var req = indexedDB.open('jfprobe', 1);
+    req.onsuccess = function () {
+      req.result.close();
+      try { indexedDB.deleteDatabase('jfprobe'); } catch (e) {}
+      say('indexedDB.open()', true, 'the database opened');
+    };
+    req.onerror = function () { say('indexedDB.open()', false, err(req.error)); };
+    req.onblocked = function () { say('indexedDB.open()', false, 'blocked by another tab'); };
+    setTimeout(function () {
+      if (req.readyState !== 'done') say('indexedDB.open()', false, 'never answered (still pending after 6s)');
+    }, 6000);
+  } catch (e) { say('indexedDB.open()', false, err(e)); }
+
+  if (navigator.storage && navigator.storage.estimate) {
+    navigator.storage.estimate().then(function (q) {
+      say('Space allowed', (q.quota || 0) > 0,
+          Math.round((q.usage || 0) / 1048576) + ' MB used of ' + Math.round((q.quota || 0) / 1048576) + ' MB');
+    }).catch(function (e) { say('Space allowed', false, err(e)); });
+  }
+  if (navigator.storage && navigator.storage.persisted) {
+    navigator.storage.persisted().then(function (v) {
+      say('Marked as permanent', true, String(v));
+    }).catch(function (e) { say('Marked as permanent', false, err(e)); });
+  }
+
+  if (navigator.serviceWorker) {
+    navigator.serviceWorker.getRegistration().then(function (r) {
+      // Not having one here is normal — this page can be opened before the app
+      // has ever run. Only an outright refusal is worth flagging.
+      say('Service worker', true, r ? (r.active ? 'active' : 'installing')
+        : 'none yet (normal if the app has not been opened on this device)');
+    }).catch(function (e) { say('Service worker', false, err(e)); });
+  } else {
+    say('Service worker', false, 'not offered by this browser');
+  }
+
+  document.getElementById('copy').onclick = function () {
+    var t = document.getElementById('out');
+    t.style.display = 'block';
+    t.value = lines.join('\n');
+    t.select();
+    try { document.execCommand('copy'); this.textContent = 'Copied — paste it in the chat'; }
+    catch (e) { this.textContent = 'Select the text below and copy it'; }
+  };
+})();
+</script>
+</body>
+</html>

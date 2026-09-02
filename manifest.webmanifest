@@ -1,0 +1,55 @@
+{
+  "name": "Jinnyfin",
+  "short_name": "Jinnyfin",
+  "description": "Personal finance — transactions, reports, net worth and renewal reminders.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0d3544",
+  "theme_color": "#0d3544",
+  "categories": [
+    "finance",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Add transaction",
+      "url": "./index.html#/transactions",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Expense report",
+      "url": "./index.html#/expense"
+    },
+    {
+      "name": "Net worth",
+      "url": "./index.html#/networth"
+    }
+  ]
+}

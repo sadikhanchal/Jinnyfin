@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
+<title>Jinnyfin</title>
+<meta name="description" content="Personal finance — transactions, reports, net worth, insurance alerts.">
+<meta name="theme-color" content="#0d3544">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jinnyfin">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="root">
+  <div class="auth-wrap"><div class="row gap"><span class="spinner"></span> <span class="muted">Loading your ledger…</span></div></div>
+</div>
+<script type="module" src="js/app.js"></script>
+<script>
+// ============================================================================
+//  Boot guard. A phone has no developer console, so anything that goes wrong
+//  before the app draws itself has to say so on screen — never a blank page.
+// ============================================================================
+(function () {
+  var problems = [];
+  var note = function (m) { if (m && problems.indexOf(m) < 0) problems.push(m); };
+
+  addEventListener('error', function (e) {
+    if (e.target && (e.target.src || e.target.href)) note('Could not load ' + (e.target.src || e.target.href));
+    else note((e.message || '') + (e.filename ? '  (' + e.filename + ':' + e.lineno + ')' : ''));
+  }, true);
+  addEventListener('unhandledrejection', function (e) {
+    note((e.reason && (e.reason.message || e.reason)) + '');
+  });
+  document.addEventListener('jinnyfin-boot-failed', function (e) { note(e.detail); render('slow'); });
+
+  function esc(s) {
+    return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; });
+  }
+
+  function render(kind) {
+    var root = document.getElementById('root');
+    if (!root || root.getAttribute('data-diag')) return;
+    root.setAttribute('data-diag', '1');
+
+    var head, body;
+    if (kind === 'file') {
+      head = 'This page has to be served, not opened';
+      body = '<p>The address bar says <code>file:///…</code>. Browsers block JavaScript modules there, '
+           + 'so the app never starts. Nothing is broken — it just needs a web address.</p>'
+           + '<p>Upload the files to GitHub and switch on Pages (step 3 of SETUP.md), then open the '
+           + '<code>https://…github.io/…</code> link.</p>';
+    } else {
+      head = 'The app could not start';
+      body = '<p>Usually one file did not arrive, or an old copy is stuck in this device’s cache. '
+           + 'The button below clears the cache and reloads — nothing on the server is touched.</p>'
+           + '<div id="jf-probe" class="small muted">Checking which files are reachable…</div>'
+           + (problems.length
+              ? '<p class="small muted" style="margin-top:12px">What went wrong:</p><pre class="small" style="white-space:pre-wrap;'
+                + 'color:var(--critical);background:var(--surface-2);padding:10px;border-radius:8px;'
+                + 'max-height:160px;overflow:auto">' + esc(problems.slice(0, 4).join('\n\n')) + '</pre>'
+              : '');
+    }
+
+    root.innerHTML =
+      '<div class="auth-wrap"><div class="card" style="max-width:560px;line-height:1.55">'
+      + '<h2 style="margin:0 0 10px">' + head + '</h2>' + body
+      + (kind === 'file' ? ''
+         : '<div class="row" style="margin-top:14px">'
+           + '<button class="btn primary" id="jf-reset">Clear cache &amp; reload</button>'
+           + '<button class="btn ghost" id="jf-retry">Just reload</button></div>')
+      + '</div></div>';
+
+    // Say WHICH file is missing rather than "something went wrong". On a phone
+    // this is the only way to tell a bad upload from a stale cache.
+    probe();
+
+    var retry = document.getElementById('jf-retry');
+    if (retry) retry.onclick = function () { location.reload(); };
+
+    // On a phone there is no other way to clear a poisoned service-worker cache.
+    var reset = document.getElementById('jf-reset');
+    if (reset) reset.onclick = function () {
+      reset.textContent = 'Clearing…'; reset.disabled = true;
+      var done = function () { location.replace(location.pathname + '?fresh=' + Date.now()); };
+      var jobs = [];
+      if (window.caches && caches.keys) {
+        jobs.push(caches.keys().then(function (ks) {
+          return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+        }));
+      }
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+        jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) {
+          return Promise.all(rs.map(function (r) { return r.unregister(); }));
+        }));
+      }
+      Promise.all(jobs).then(done, done);
+      setTimeout(done, 4000);
+    };
+  }
+
+  function probe() {
+    var box = document.getElementById('jf-probe');
+    if (!box || !window.fetch) return;
+    var files = ['js/app.js', 'js/store.js', 'js/calc.js', 'js/util.js', 'js/charts.js',
+                 'js/crypto.js', 'js/views/dashboard.js', 'js/views/report.js', 'js/views/editor.js',
+                 'css/app.css', 'config.js', 'manifest.webmanifest'];
+    Promise.all(files.map(function (f) {
+      return fetch(f + '?probe=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) {
+          var t = (r.headers.get('content-type') || '').split(';')[0];
+          var wrong = f.slice(-3) === '.js' && t.indexOf('javascript') < 0;
+          return { f: f, ok: r.ok && !wrong, why: !r.ok ? r.status : (wrong ? 'served as ' + t : '') };
+        })
+        .catch(function (e) { return { f: f, ok: false, why: 'no answer' }; });
+    })).then(function (rows) {
+      var bad = rows.filter(function (r) { return !r.ok; });
+      box.innerHTML = bad.length
+        ? '<b style="color:var(--critical)">These files are not reachable:</b><br>'
+          + bad.map(function (r) { return '<code>' + r.f + '</code> — ' + r.why; }).join('<br>')
+          + '<br><br>Upload them again into the folder they belong to.'
+        : '<b style="color:var(--good-text)">All ' + rows.length + ' files load fine.</b><br>'
+          + 'So this is a stuck cache, not a bad upload — press <b>Clear cache &amp; reload</b>.';
+    });
+  }
+
+  if (location.protocol === 'file:') { render('file'); return; }
+
+  // If the interface has not drawn itself in 15 seconds, something is wrong.
+  setTimeout(function () { if (!window.__jinnyfinReady) render('slow'); }, 15000);
+
+  if ('serviceWorker' in navigator) {
+    addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+  }
+})();
+</script>
+</body>
+</html>
