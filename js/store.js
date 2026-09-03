@@ -18,6 +18,57 @@ export const DB = {
   businesses: [], budgets: [], templates: [], tasks: [], settings: [],
 };
 
+/**
+ * Every column each table really has — taken from supabase/schema.sql plus the
+ * migrations. Screens work with enriched copies of a row: an insurance policy
+ * picks up `daysLeft` and `level` on its way to the page, a fixed asset picks up
+ * `gain` and `gainPct`. An editor that then saved `{ ...row, … }` handed those
+ * invented fields to the database, which rightly refused them — and the app
+ * warned about a missing migration that was never missing.
+ *
+ * Nothing is lost by dropping them: every one is worked out again from the real
+ * columns each time a screen draws. A table missing from this map is left
+ * untouched, so a new table can never be quietly emptied by a list nobody
+ * remembered to update.
+ */
+export const COLUMNS = {
+  accounts: ['id', 'user_id', 'name', 'currency', 'grp', 'opening_bal', 'active', 'pinned',
+    'created_at', 'stated_balance', 'reconciled_at', 'sort', 'icon', 'deleted', 'updated_at'],
+  categories: ['id', 'user_id', 'type', 'parent', 'sub', 'icon', 'color', 'deleted', 'updated_at'],
+  payees: ['id', 'user_id', 'name', 'note', 'deleted', 'updated_at'],
+  transactions: ['id', 'user_id', 'no', 'date', 'time', 'type', 'account', 'currency', 'income',
+    'expense', 'parent', 'sub', 'payee', 'event', 'note', 'fx', 'transfer_group', 'to_account',
+    'deleted', 'updated_at'],
+  fx_rates: ['id', 'user_id', 'month', 'rate', 'source', 'deleted', 'updated_at'],
+  assets: ['id', 'user_id', 'name', 'category_tag', 'opening_cost', 'market_value', 'market_date',
+    'note', 'deleted', 'updated_at'],
+  insurance: ['id', 'user_id', 'label', 'policy', 'policy_no', 'renewal_date', 'premium', 'currency',
+    'notify_days', 'kind', 'pay_account', 'last_paid', 'note', 'deleted', 'updated_at'],
+  cards: ['id', 'user_id', 'label', 'bank', 'network', 'kind', 'last4', 'expiry_hint',
+    'enc_blob', 'enc_iv', 'enc_salt', 'deleted', 'updated_at'],
+  equity_positions: ['id', 'user_id', 'symbol', 'company', 'qty', 'avg_cost', 'price', 'price_date',
+    'closed', 'buy_qty', 'buy_value', 'sell_qty', 'sell_value', 'realised', 'dividends',
+    'deleted', 'updated_at'],
+  equity_trades: ['id', 'user_id', 'date', 'symbol', 'company', 'exchange', 'action', 'qty', 'rate',
+    'value', 'source', 'deleted', 'updated_at'],
+  businesses: ['id', 'user_id', 'name', 'income_parent', 'income_sub', 'expense_parent',
+    'expense_sub', 'deleted', 'updated_at'],
+  budgets: ['id', 'user_id', 'parent', 'sub', 'amount', 'currency', 'period', 'deleted', 'updated_at'],
+  templates: ['id', 'user_id', 'label', 'payload', 'sort', 'deleted', 'updated_at'],
+  tasks: ['id', 'user_id', 'title', 'note', 'due_date', 'due_time', 'repeat', 'priority', 'done',
+    'done_at', 'deleted', 'updated_at'],
+  settings: ['id', 'user_id', 'data', 'deleted', 'updated_at'],
+};
+
+/** A copy of the row carrying only the fields the table actually holds. */
+export function onlyColumns(table, row) {
+  const cols = COLUMNS[table];
+  if (!cols || !row || typeof row !== 'object') return row;
+  const out = {};
+  for (const k of cols) if (k in row) out[k] = row[k];
+  return out;
+}
+
 export const state = {
   user: null, online: navigator.onLine, syncing: false,
   lastSync: null, pending: 0, ready: false, sb: null, sbError: null, sbLoading: null,
@@ -247,7 +298,7 @@ async function queueClear(qids) {
 /** Insert or update one row. Returns the stored row. */
 export async function put(table, row, { silent = false } = {}) {
   const now = new Date().toISOString();
-  const r = { ...row, id: row.id || uuid(), updated_at: now, deleted: !!row.deleted };
+  const r = onlyColumns(table, { ...row, id: row.id || uuid(), updated_at: now, deleted: !!row.deleted });
   const arr = DB[table];
   const i = arr.findIndex(x => x.id === r.id);
   if (r.deleted) { if (i >= 0) arr.splice(i, 1); }
@@ -261,7 +312,8 @@ export async function put(table, row, { silent = false } = {}) {
 /** Bulk insert (import). Much faster than put() in a loop. */
 export async function putMany(table, rows, { queue = true } = {}) {
   const now = new Date().toISOString();
-  const out = rows.map(r => ({ ...r, id: r.id || uuid(), updated_at: r.updated_at || now, deleted: !!r.deleted }));
+  const out = rows.map(r => onlyColumns(table,
+    { ...r, id: r.id || uuid(), updated_at: r.updated_at || now, deleted: !!r.deleted }));
   const byId = new Map(DB[table].map(r => [r.id, r]));
   for (const r of out) byId.set(r.id, r);
   DB[table] = [...byId.values()].filter(r => !r.deleted);
@@ -313,7 +365,10 @@ export async function sync({ full = false } = {}) {
         // keep only the newest version of each row
         const latest = new Map();
         for (const it of items) latest.set(it.row.id, it.row);
-        let rows = [...latest.values()].map(r => ({ ...r, user_id: state.user.id }));
+        // Filter here as well as in put(): a row queued by an older build may
+        // still be carrying a worked-out field, and it should drain quietly
+        // instead of raising a migration warning that is not true.
+        let rows = [...latest.values()].map(r => onlyColumns(table, { ...r, user_id: state.user.id }));
         for (let i = 0; i < rows.length; i += 500) {
           let chunk = rows.slice(i, i + 500);
           let { error } = await sb.from(table).upsert(chunk, { onConflict: 'id' });

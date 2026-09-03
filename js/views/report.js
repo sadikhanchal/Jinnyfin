@@ -21,6 +21,36 @@ export function makeReport(kind) {
     escapeOut();
   });
 
+  /**
+   * Redraw without throwing the page back to the top.
+   *
+   * Every tap in the breakdown rebuilds the whole screen, and a rebuilt screen
+   * starts at scroll 0 — so drilling into a category, stepping back out, or
+   * touching a crumb sent the page shooting upwards and you had to scroll all
+   * the way down again to carry on.
+   *
+   * Keeping the raw scrollY is not enough: what sits above the breakdown can
+   * change height as the filter narrows (fewer months in the totals table), and
+   * the card would land somewhere else anyway. So the anchor is the card
+   * itself — remember how far down the window its top was, and after the redraw
+   * put the new card back at exactly that height. The thumb ends up over the
+   * same row it just tapped.
+   */
+  function redraw(anchor) {
+    const before = anchor?.getBoundingClientRect().top;
+    draw();
+    if (before == null || !host?.isConnected) return;
+    const settle = () => {
+      const now = host.querySelector('.jf-bd');
+      if (!now) return;
+      const shift = now.getBoundingClientRect().top - before;
+      if (Math.abs(shift) > 1) window.scrollTo(window.scrollX, window.scrollY + shift);
+    };
+    // Two frames: the first lets the new nodes lay out, the second catches the
+    // bar chart, which finishes drawing a frame later and can change the height.
+    requestAnimationFrame(() => { settle(); requestAnimationFrame(settle); });
+  }
+
   function draw() {
     const S = SERIES();
     const color = isIncome ? S.income : S.expense;
@@ -88,16 +118,16 @@ export function makeReport(kind) {
     const stepOut = () => {
       if (f.sub !== 'All') f.sub = 'All';
       else if (f.parent !== 'All') { f.parent = 'All'; f.sub = 'All'; }
-      draw();
+      redraw(bdCard);
     };
     const crumb = (text, onto, last) => (last
       ? el('span', { class: 'crumb here' }, text)
       : el('button', { class: 'crumb', onclick: onto }, text));
     const trail = el('div', { class: 'crumbs' },
-      crumb('All categories', () => { f.parent = 'All'; f.sub = 'All'; draw(); }, f.parent === 'All'),
+      crumb('All categories', () => { f.parent = 'All'; f.sub = 'All'; redraw(bdCard); }, f.parent === 'All'),
       ...(f.parent === 'All' ? [] : [
         el('span', { class: 'crumb-sep' }, '›'),
-        crumb(f.parent, () => { f.sub = 'All'; draw(); }, f.sub === 'All'),
+        crumb(f.parent, () => { f.sub = 'All'; redraw(bdCard); }, f.sub === 'All'),
       ]),
       ...(f.sub === 'All' ? [] : [
         el('span', { class: 'crumb-sep' }, '›'),
@@ -105,7 +135,7 @@ export function makeReport(kind) {
       ]));
 
     const deep = f.parent !== 'All' || f.sub !== 'All';
-    const bdCard = el('div', { class: 'card', style: 'margin-top:12px' },
+    const bdCard = el('div', { class: 'card jf-bd', style: 'margin-top:12px' },
       el('div', { class: 'card-head' },
         el('h3', {}, f.sub !== 'All' ? `Inside ${f.sub}`
           : f.parent === 'All' ? 'Breakdown by category' : `Breakdown inside ${f.parent}`),
@@ -124,7 +154,10 @@ export function makeReport(kind) {
     })), {
       format: v => money(v, 'INR', false),
       onClick: f.sub !== 'All' ? null
-        : r => { if (f.parent === 'All') { f.parent = r.label; f.sub = 'All'; } else { f.sub = r.name || r.label; } draw(); },
+        : r => {
+          if (f.parent === 'All') { f.parent = r.label; f.sub = 'All'; } else { f.sub = r.name || r.label; }
+          redraw(bdCard);
+        },
     });
     host.append(bdCard);
     escapeOut = deep ? stepOut : null;      // Esc steps back out, for a keyboard
@@ -162,7 +195,8 @@ export function makeReport(kind) {
 
   return {
     render: async root => { host = root; draw(); },
-    refresh: () => { if (host) draw(); },
+    // A sync landing while you are reading must not move the page either.
+    refresh: () => { if (host) redraw(host.querySelector('.jf-bd')); },
   };
 }
 
