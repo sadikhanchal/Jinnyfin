@@ -2,13 +2,13 @@
 //  sw.js — service worker: makes the app installable and fully offline.
 //  Bump CACHE when you change any file, so devices pick up the new version.
 // ============================================================================
-const CACHE = 'jinnyfin-1.25';
+const CACHE = 'jinnyfin-1.26';
 
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './config.js',
   './css/app.css',
   './js/app.js', './js/util.js', './js/store.js', './js/calc.js', './js/charts.js', './js/crypto.js',
-  './js/alerts.js',
+  './js/alerts.js', './js/push.js',
   './js/views/editor.js', './js/views/dashboard.js', './js/views/transactions.js', './js/views/tasks.js',
   './js/views/report.js', './js/views/incexp.js',
   './js/views/statement.js', './js/views/payee.js', './js/views/business.js', './js/views/equity.js',
@@ -75,21 +75,44 @@ self.addEventListener('fetch', e => {
   })());
 });
 
-// Renewal reminders pushed from the scheduled job (optional — see SETUP.md).
+// ---------------------------------------------------------------- push -----
+// A reminder arriving with the app shut. The phone's own software draws this
+// and plays the phone's notification sound — a web app cannot pick the sound,
+// but Android lets you give Jinnyfin its own tone in the phone's app settings.
 self.addEventListener('push', e => {
-  let data = { title: 'Jinnyfin', body: 'Something needs renewing.' };
+  let data = { title: 'Jinnyfin', body: 'Something needs you.', url: './#/tasks' };
   try { data = { ...data, ...e.data.json() }; } catch { if (e.data) data.body = e.data.text(); }
   e.waitUntil(self.registration.showNotification(data.title, {
-    body: data.body, icon: './icons/icon-192.png', badge: './icons/icon-192.png',
-    tag: 'jinnyfin-reminder', data: { url: './#/insurance' },
+    body: data.body,
+    icon: './icons/icon-192.png',
+    badge: './icons/icon-32.png',
+    // A tag replaces an earlier notification about the SAME thing instead of
+    // stacking duplicates; renotify makes the replacement sound again, so a
+    // reminder that has grown more urgent is not silently swapped in.
+    tag: data.tag || 'jinnyfin-reminder',
+    renotify: true,
+    requireInteraction: true,          // stays on screen until it is dealt with
+    silent: false,
+    vibrate: [200, 100, 200],
+    timestamp: Date.now(),
+    data: { url: data.url || './#/tasks' },
   }));
 });
 
 self.addEventListener('notificationclick', e => {
   e.notification.close();
+  const want = e.notification.data?.url || './#/tasks';
   e.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const c of all) if ('focus' in c) return c.focus();
-    return self.clients.openWindow(e.notification.data?.url || './');
+    const href = new URL(want, self.registration.scope).href;
+    // Already open somewhere: bring that window forward AND take it to the
+    // screen the notification was about, rather than whatever page it was left
+    // on. Tapping "Car insurance expires in 3 days" should land on the policy.
+    for (const c of all) {
+      if (!('focus' in c)) continue;
+      try { await c.navigate(href); } catch { /* not permitted in every browser */ }
+      return c.focus();
+    }
+    return self.clients.openWindow(href);
   })());
 });
