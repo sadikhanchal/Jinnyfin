@@ -197,6 +197,7 @@ export function openTxEditor(existing = null, presets = {}) {
   const landedField = el('div', { class: 'field full', style: 'display:none' },
     el('label', {}, 'Landed as'), amountBoxB.input, landedHint);
 
+  let lastA = null;             // what the amount box held last time it settled
   const acctSel = el('select', {});
   const toSel = el('select', {});
   // Currency is the account's own, never a separate choice: picking INR on a
@@ -247,9 +248,22 @@ export function openTxEditor(existing = null, presets = {}) {
   const inLeg = pair.find(x => +x.income > 0) || (+t.income > 0 ? t : null);
   const linked = !!(outLeg && inLeg && outLeg.id !== inLeg.id);
   const rowIsIn = !linked && +t.income > 0;          // an unlinked receiving row
-  // A saved transfer already knows what landed. Show that figure, not a fresh
-  // conversion — the bank's rate on the day was whatever it was.
-  if (linked && +inLeg.income) { amountBoxB.set(inLeg.income); amountBoxB.touched = true; }
+
+  // A transfer is edited as one thing — "this much left here, that much landed
+  // there" — whichever of its two rows you happened to tap. Reading the amount
+  // off the tapped row put the LANDED figure in the Amount box when you opened
+  // the receiving side, and saving then wrote that back as the amount sent.
+  if (linked) {
+    amountBoxA.set(Number(outLeg.expense) || 0);
+    lastA = amountBoxA.value();
+    if (+inLeg.income) { amountBoxB.set(inLeg.income); amountBoxB.touched = true; }
+    // The rest of the entry belongs to the out leg too, or re-saving from the
+    // receiving side would relabel both rows "From …".
+    for (const [box, val] of [[noteIn, outLeg.note], [payeeIn, outLeg.payee], [eventIn, outLeg.event]])
+      box.value = val || '';
+    dateIn.value = outLeg.date || dateIn.value;
+    timeIn.value = outLeg.time || timeIn.value;
+  }
 
   // Idle accounts are out of the way by default, but one tick brings them all
   // back — which is how you give an old unlinked transfer its real other side.
@@ -337,12 +351,19 @@ export function openTxEditor(existing = null, presets = {}) {
   }
 
   /**
-   * Anything that changes an amount keeps the rest honest. Changing what LEFT
-   * is a deliberate change to the transfer, so the landed figure is worked out
-   * again; typing in the landed box itself always wins until then.
+   * Changing what LEFT is a deliberate change to the transfer, so the landed
+   * figure is worked out again. But merely LEAVING the amount box is not a
+   * change — and treating it as one threw away the figure you had just typed
+   * into the landed box, turning ₹2,500 → $25.18 into ₹2,500 → $29.66 the
+   * moment you pressed Update.
    */
   function onAmountChanged(box) {
-    if (box === amountBoxA) { amountBoxB.touched = false; refreshLanded(); }
+    if (box === amountBoxA) {
+      const now = amountBoxA.value();
+      if (lastA !== null && now !== lastA) amountBoxB.touched = false;
+      lastA = now;
+      refreshLanded();
+    }
     updateFx();
   }
 

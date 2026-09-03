@@ -6,6 +6,7 @@ import { DB, put, remove, putMany, getSettings, setSettings, sync, state, resetL
   changePassword, sendPasswordReset, TABLES } from '../store.js';
 import { store as safeStore } from '../util.js';
 import * as C from '../calc.js';
+import { round2 } from '../util.js';
 import { hashPin } from '../crypto.js';
 import { topbar, toggleTheme, BUILD, askSignOut } from '../app.js';
 import { kpi } from './report.js';
@@ -721,6 +722,108 @@ function checkGroup(host2, title, blurb, rows, extra) {
   host2.append(card);
 }
 
+/**
+ * An account that ended up holding two currencies. That happens when a name was
+ * used as a bucket for several old accounts — the balance then adds riyals to
+ * rupees, which is a number that means nothing.
+ */
+function mixedAccounts() {
+  const out = [];
+  for (const a of DB.accounts) {
+    if (a.deleted) continue;
+    const rows = DB.transactions.filter(t => !t.deleted && t.account === a.name);
+    const others = [...new Set(rows.map(t => t.currency).filter(c => c && c !== a.currency))];
+    if (!others.length) continue;
+    out.push({
+      account: a, others,
+      groups: others.map(c => {
+        const list = rows.filter(t => t.currency === c);
+        return { currency: c, rows: list,
+          net: round2(list.reduce((s, t) => s + (+t.income || 0) - (+t.expense || 0), 0)) };
+      }),
+      ownRows: rows.filter(t => t.currency === a.currency).length,
+    });
+  }
+  return out;
+}
+
+/**
+ * Move the odd-currency rows onto an account of their own. Nothing is converted
+ * and no amount is touched — the entries simply stop pretending to belong to an
+ * account in a different currency. What DOES change is the total: a riyal that
+ * was being counted as a rupee now counts as a riyal.
+ */
+async function splitOffCurrency(acct, group) {
+  const name = `${acct.name} (${group.currency})`;
+  if (DB.accounts.some(a => !a.deleted && a.name === name))
+    return toast(`There is already an account called “${name}”`, 'warn', 5000);
+
+  const before = C.netWorth().total;
+  // Only 'primary' and 'investment' accounts feed the totals — an account filed
+  // under Other is already outside them, so splitting it moves no money at all.
+  const counted = ['primary', 'investment'].includes(acct.grp) && acct.active !== false;
+  const shift = counted
+    ? round2(C.liveINR(group.net, group.currency) - C.liveINR(group.net, acct.currency))
+    : 0;
+
+  const ok = await confirmBox(
+    `Move ${group.rows.length} ${group.currency} entries off “${acct.name}” onto a new account called `
+    + `“${name}”?\n\nNo amount is changed and nothing is converted — the entries keep exactly the figures `
+    + `they have.\n\n`
+    + (!counted
+      ? `Your totals do not move: “${acct.name}” is filed under “${acct.grp || 'other'}”, which net worth `
+        + `does not count. This only splits one meaningless balance into two honest ones.`
+      : `Because ${group.currency} was being added up as ${acct.currency}, your net worth will `
+        + `${shift < 0 ? 'drop' : 'rise'} by about ${money(Math.abs(shift), 'INR')}. That difference was `
+        + `always wrong; this is it being put right.`),
+    'Split them off');
+  if (!ok) return;
+
+  await put('accounts', {
+    name, currency: group.currency, grp: acct.grp || 'other',
+    opening_bal: 0, created_at: todayISO(), pinned: false,
+    icon: acct.icon || null,
+  });
+  await putMany('transactions', group.rows.map(t => ({ ...t, account: name })));
+
+  const after = C.netWorth().total;
+  const moved = round2(after - before);
+  toast(`${group.rows.length} entries moved to “${name}”`
+    + (moved ? ` — net worth ${moved > 0 ? '+' : ''}${money(moved, 'INR')}` : ' — totals unchanged'),
+    'ok', 8000);
+  draw();
+}
+
+function mixedCard() {
+  const mixed = mixedAccounts();
+  if (!mixed.length) return;
+  const card = el('div', { class: 'card', style: 'margin-bottom:12px' });
+  card.append(el('div', { class: 'card-head' }, el('h3', {}, 'One account, two currencies'),
+    el('div', { class: 'spacer' }),
+    el('span', { class: 'chip' }, mixed.length + (mixed.length === 1 ? ' account' : ' accounts'))));
+  card.append(el('p', { class: 'small muted', style: 'margin:0 0 8px' },
+    'A balance can only be in one currency. Where a name was used as a bucket for several old accounts, '
+    + 'the other currency is being added up as though it were this one. Splitting it off leaves every '
+    + 'entry exactly as it is — it only stops the two being added together.'));
+
+  for (const m of mixed) {
+    for (const g of m.groups) {
+      card.append(el('div', { class: 'check-row', style: 'cursor:default' },
+        el('div', { style: 'min-width:0;flex:1' },
+          el('div', { class: 't1' }, `${m.account.name} · ${m.account.currency}`),
+          el('div', { class: 't2' },
+            `${m.ownRows} in ${m.account.currency} · ${g.rows.length} in ${g.currency}`),
+          el('div', { class: 't3' },
+            `${g.currency} ${num(g.net)} is being counted as ${m.account.currency}`
+            + (['primary', 'investment'].includes(m.account.grp) && m.account.active !== false
+              ? '' : ' · this account is outside your totals, so nothing moves'))),
+        el('button', { class: 'btn sm', onclick: () => splitOffCurrency(m.account, g) },
+          `Split off ${g.currency}`)));
+    }
+  }
+  host.append(card);
+}
+
 function check() {
   const cur = currencyOdd(), lb = lbOdd(), nc = noCategory();
   const total = cur.length + lb.length + nc.length;
@@ -733,6 +836,8 @@ function check() {
       el('div', { class: 'small muted' },
         'Nothing here is wrong on its own — the app will not change any of it. '
         + 'Tap a line to open that entry and decide for yourself.'))));
+
+  mixedCard();
 
   checkGroup(host, 'Currency does not match the account',
     'The account is in one currency and the entry says another. Balances use the account’s currency, '
