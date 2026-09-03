@@ -698,3 +698,22 @@ main > .topbar { max-width: none; }
 .icon-btn.lead-btn { border: 1px solid var(--hair); border-radius: 999px;
   width: 32px; height: 32px; font-size: 16px; display: inline-flex;
   align-items: center; justify-content: center; margin-right: 8px; flex: 0 0 auto; }
+
+/* -------------------------------------------------------------- data check */
+/* One line per entry the app wants a second opinion on. Tapping opens it. */
+.check-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; cursor: pointer;
+  border-bottom: 1px solid var(--grid); }
+.check-row:last-child { border-bottom: 0; }
+.check-row:hover { background: var(--surface-2); }
+.check-row .t1 { font-size: 13.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.check-row .t2 { font-size: 11.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.check-row .t3 { font-size: 11px; color: var(--warning); margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.check-amt { flex: 0 0 auto; font-weight: 700; font-variant-numeric: tabular-nums; font-size: 13.5px;
+  display: flex; align-items: center; gap: 4px; }
+.check-amt .go { color: var(--ink-3); font-weight: 400; }
+.chip.on { background: var(--good); border-color: var(--good); color: #fff; }
+/* A count riding on the tab, so a problem is visible before you go looking. */
+.tab-badge { display: inline-block; margin-left: 5px; min-width: 16px; padding: 0 4px;
+  border-radius: 999px; background: var(--warning); color: #23282f;
+  font-size: 10px; font-weight: 800; line-height: 16px; text-align: center; }
