@@ -5,6 +5,7 @@
    ========================================================================== */
 
 :root {
+  --jf-css: "1.24";        /* bumped with every stylesheet change */
   color-scheme: light;
   --page:        #f9f9f7;
   --surface:     #fcfcfb;
