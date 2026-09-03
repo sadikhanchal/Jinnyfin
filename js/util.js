@@ -195,7 +195,10 @@ export function csvCell(v) {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 export function downloadFile(name, content, type = 'text/csv;charset=utf-8') {
-  const blob = content instanceof Blob ? content : new Blob(['﻿' + content], { type });
+  // Excel needs a byte-order mark to read a UTF-8 CSV; JSON must NOT have one,
+  // or every other program refuses to parse the backup we just handed them.
+  const bom = /csv|text\/plain/i.test(type) ? '\ufeff' : '';
+  const blob = content instanceof Blob ? content : new Blob([bom + content], { type });
   const a = el('a', { href: URL.createObjectURL(blob), download: name });
   document.body.append(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);

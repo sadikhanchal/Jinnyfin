@@ -12,7 +12,7 @@ import * as A from './alerts.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.20', date: '2026-09-02' };
+export const BUILD = { version: '1.21', date: '2026-09-03' };
 
 const ROUTES = {
   dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },

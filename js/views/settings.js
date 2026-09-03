@@ -9,12 +9,14 @@ import * as C from '../calc.js';
 import { hashPin } from '../crypto.js';
 import { topbar, toggleTheme, BUILD, askSignOut } from '../app.js';
 import { kpi } from './report.js';
+import { openTxEditor } from './editor.js';
 
 let tab = 'general', host = null;
 let showInactive = false;      // closed accounts stay out of the way by default
 let asOf = null;               // reconcile up to this date (null = today)
 const TABS = [['general', 'General'], ['accounts', 'Accounts'], ['categories', 'Categories'],
-  ['fx', 'Exchange rates'], ['reconcile', 'Reconcile'], ['data', 'Backup & import']];
+  ['fx', 'Exchange rates'], ['reconcile', 'Reconcile'], ['check', 'Data check'],
+  ['data', 'Backup & import']];
 
 export async function render(root) { host = root; draw(); }
 export function refresh() { if (host) draw(); }
@@ -22,9 +24,11 @@ export function refresh() { if (host) draw(); }
 function draw() {
   host.innerHTML = '';
   host.append(topbar('Settings'));
+  const odd = checkCount();
   host.append(el('div', { class: 'seg', style: 'margin-bottom:14px;flex-wrap:wrap' },
-    TABS.map(([k, t]) => el('button', { class: tab === k ? 'on' : '', onclick: () => { tab = k; draw(); } }, t))));
-  ({ general, accounts, categories, fx, reconcile, data })[tab]();
+    TABS.map(([k, t]) => el('button', { class: tab === k ? 'on' : '', onclick: () => { tab = k; draw(); } },
+      t, k === 'check' && odd ? el('span', { class: 'tab-badge' }, String(odd)) : null))));
+  ({ general, accounts, categories, fx, reconcile, check, data })[tab]();
 }
 
 // ------------------------------------------------------------------ general
@@ -364,15 +368,11 @@ async function tidyLendBorrow() {
 
 function categories() {
   const strays = lbStrays().length;
-  if (strays || DB.categories.some(c => c.type === 'Lend/Borrow' && !c.sub)) {
-    host.append(el('div', { class: 'card', style: 'margin-bottom:12px' },
-      el('div', { class: 'card-head' }, el('h3', {}, 'Tidy up Lend / Borrow')),
-      el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-        strays
-          ? `${strays.toLocaleString('en-IN')} entries are filed under old labels like a bare “Repayment” category. `
-            + 'Lend / Borrow should only ever be Lend (Lend · Collecting debts) and Borrow (Borrow · Repayment).'
-          : 'Some empty Lend / Borrow categories are left over from the import.'),
-      el('button', { class: 'btn primary', onclick: tidyLendBorrow }, '✓ Fix them')));
+  if (strays) {
+    host.append(el('div', { class: 'alert slim', style: 'margin-bottom:12px' },
+      el('span', { class: 'ico' }, '⚠'),
+      el('div', {}, `${strays.toLocaleString('en-IN')} Lend / Borrow entries sit under old labels — `,
+        el('a', { href: '#', onclick: e => { e.preventDefault(); tab = 'check'; draw(); } }, 'see them in Data check'))));
   }
 
   const byType = {};
@@ -666,6 +666,92 @@ async function restore(e) {
   for (const t of TABLES) if (Array.isArray(json[t]) && json[t].length) await putMany(t, json[t]);
   await sync();
   toast('Backup restored'); draw();
+}
+
+// -------------------------------------------------------------- data check
+/**
+ * Everything the app has noticed but will not touch on its own. Each group is
+ * a real list of entries, and every line opens the entry itself — so a wrong
+ * row gets looked at and decided on, not silently rewritten underneath you.
+ */
+
+/** A row whose currency disagrees with the account it sits on. */
+const currencyOdd = () => {
+  const cur = new Map(DB.accounts.map(a => [a.name, a.currency]));
+  return DB.transactions.filter(t => !t.deleted && cur.has(t.account) && cur.get(t.account) !== t.currency)
+    .map(t => ({ t, why: `account is ${cur.get(t.account)}, this row says ${t.currency}` }));
+};
+
+/** A Lend/Borrow entry still filed under an old label from the workbook. */
+const lbOdd = () => lbStrays().map(t => {
+  const w = LB_MAP(t);
+  return { t, why: `filed as ${[t.parent, t.sub].filter(Boolean).join(' · ') || 'nothing'} — should be ${w.parent} · ${w.sub}` };
+});
+
+/** An entry with no category at all, so it lands nowhere in a report. */
+const noCategory = () => DB.transactions
+  .filter(t => !t.deleted && !t.parent && t.type !== 'Transfer' && t.type !== 'Opening Balance')
+  .map(t => ({ t, why: 'no category, so it is missing from every breakdown' }));
+
+const SHOW = 60;                       // enough to work through, not a wall of rows
+
+function checkGroup(host2, title, blurb, rows, extra) {
+  const card = el('div', { class: 'card', style: 'margin-bottom:12px' });
+  card.append(el('div', { class: 'card-head' },
+    el('h3', {}, title),
+    el('div', { class: 'spacer' }),
+    el('span', { class: 'chip' + (rows.length ? '' : ' on') },
+      rows.length ? rows.length.toLocaleString('en-IN') + ' to look at' : '✓ clean')));
+  if (blurb) card.append(el('p', { class: 'small muted', style: 'margin:0 0 8px' }, blurb));
+  if (extra) card.append(el('div', { class: 'row', style: 'margin-bottom:8px' }, extra));
+
+  if (!rows.length) { host2.append(card); return; }
+
+  for (const { t, why } of rows.slice(0, SHOW)) {
+    const amt = +t.expense || +t.income || 0;
+    card.append(el('div', { class: 'check-row', onclick: () => openTxEditor(t) },
+      el('div', { style: 'min-width:0;flex:1' },
+        el('div', { class: 't1' }, `${fmtDate(t.date)} · ${t.account}`),
+        el('div', { class: 't2' }, [t.note, t.parent, t.payee].filter(Boolean).join(' · ') || t.type),
+        el('div', { class: 't3' }, why)),
+      el('div', { class: 'check-amt' }, money(amt, t.currency), el('span', { class: 'go' }, '›'))));
+  }
+  if (rows.length > SHOW) card.append(el('p', { class: 'small muted', style: 'margin:8px 0 0' },
+    `Showing the first ${SHOW}. Fix these and the rest will come up.`));
+  host2.append(card);
+}
+
+function check() {
+  const cur = currencyOdd(), lb = lbOdd(), nc = noCategory();
+  const total = cur.length + lb.length + nc.length;
+
+  host.append(el('div', { class: 'alert ' + (total ? 'soon' : 'ok'), style: 'margin-bottom:12px' },
+    el('span', { class: 'ico' }, total ? '⚠' : '✓'),
+    el('div', {}, el('b', {}, total
+      ? `${total.toLocaleString('en-IN')} entries worth a second look`
+      : 'Nothing looks out of place'),
+      el('div', { class: 'small muted' },
+        'Nothing here is wrong on its own — the app will not change any of it. '
+        + 'Tap a line to open that entry and decide for yourself.'))));
+
+  checkGroup(host, 'Currency does not match the account',
+    'The account is in one currency and the entry says another. Balances use the account’s currency, '
+    + 'reports use the entry’s — so the same money can read two different ways.',
+    cur);
+
+  checkGroup(host, 'Lend / Borrow under old labels',
+    'These came from the workbook filed under labels like a bare “Repayment”. '
+    + 'Lend / Borrow should only ever be Lend (Lend · Collecting debts) or Borrow (Borrow · Repayment). '
+    + 'No amount changes either way — only the label.',
+    lb,
+    lb.length ? el('button', { class: 'btn sm primary', onclick: tidyLendBorrow }, '✓ Fix all ' + lb.length) : null);
+
+  checkGroup(host, 'No category', 'These land nowhere in any breakdown.', nc);
+}
+
+/** How many entries the Data check tab would show — used for the tab badge. */
+function checkCount() {
+  try { return currencyOdd().length + lbOdd().length + noCategory().length; } catch { return 0; }
 }
 
 function exportAllCSV() {
