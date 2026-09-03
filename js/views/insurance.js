@@ -6,6 +6,7 @@ import { DB, put, remove, getSettings, setSettings } from '../store.js';
 import * as C from '../calc.js';
 import { topbar } from '../app.js';
 import { kpi } from './report.js';
+import * as P from '../push.js';
 
 let host = null;
 
@@ -128,6 +129,65 @@ function cardSection(cards) {
   host.append(grid);
 }
 
+/**
+ * Reminders that arrive with the app shut.
+ *
+ * Everything above this row only works while Jinnyfin is open on screen — a
+ * page that is not running cannot ring. This row hands the phone itself the
+ * job: it agrees to listen, and a job on the server pokes it every few minutes
+ * whether the app is open, in the background, or closed for a week.
+ *
+ * Per device on purpose. The phone and the PC each say yes for themselves, so
+ * turning it off on the office machine does not silence the phone.
+ */
+function pushRow() {
+  const row = el('div', { class: 'row switch-row', style: 'margin-top:8px' });
+  const body = el('div', { style: 'min-width:0;flex:1' });
+  const acts = el('div', { class: 'row', style: 'gap:6px' });
+  row.append(el('span', {}, '📲'), body, el('div', { class: 'spacer' }), acts);
+
+  const paint = async () => {
+    body.replaceChildren(el('b', {}, 'Push to this device'));
+    acts.replaceChildren();
+    const say = t => body.append(el('div', { class: 'small muted' }, t));
+
+    if (!P.supported()) return say('This browser cannot receive notifications with the app closed.');
+    if (!P.configured()) return say('Not set up yet — see PUSH-SETUP.md in the repo.');
+
+    const sub = await P.current();
+    const installed = matchMedia?.('(display-mode: standalone)').matches;
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    if (sub) {
+      say('On. Reminders reach this device even when Jinnyfin is closed.');
+      acts.append(el('button', { class: 'btn sm', onclick: async () => {
+        const r = await P.test();
+        toast(r.ok ? '📲 ' + r.why : r.why, r.ok ? 'ok' : 'warn', 7000);
+      } }, 'Test'),
+      el('button', { class: 'btn sm ghost', onclick: async () => {
+        if (!(await confirmBox('Stop sending notifications to this device?'))) return;
+        await P.disable(); toast('Stopped on this device'); paint();
+      } }, 'Turn off'));
+      return;
+    }
+
+    // iOS will not offer push to a page running in a Safari tab — the app has
+    // to be on the Home Screen first. Saying so beats a button that fails.
+    if (isIOS && !installed) {
+      return say('On iPhone this needs the app added to the Home Screen first — '
+        + 'Share → Add to Home Screen, then open it from there and come back.');
+    }
+    say('Off. Reminders only ring while the app is open on this device.');
+    acts.append(el('button', { class: 'btn sm primary', onclick: async () => {
+      const r = await P.enable();
+      toast(r.why, r.ok ? 'ok' : 'warn', 8000);
+      paint();
+    } }, 'Turn on'));
+  };
+  paint();
+  return row;
+}
+
 // -------------------------------------------------------- notifications ---
 /**
  * A switch, not a mirror. What it shows is YOUR choice, kept in settings and
@@ -176,8 +236,10 @@ function notifyCard() {
   card.append(el('label', { class: 'row switch-row', style: 'cursor:pointer;margin-top:8px' },
     el('span', {}, '🔊'),
     el('div', { style: 'min-width:0' }, el('b', {}, 'Sound'),
-      el('div', { class: 'small muted' }, 'A short chime when a reminder rings.')),
+      el('div', { class: 'small muted' }, 'A short chime when a reminder rings inside the app.')),
     el('div', { class: 'spacer' }), sndSw));
+
+  card.append(pushRow());
 
   const acts = el('div', { class: 'row', style: 'margin-top:8px' });
   if (needsAsking || blocked) {

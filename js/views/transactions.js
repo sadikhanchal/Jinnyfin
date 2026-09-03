@@ -13,6 +13,7 @@ const blank = () => ({ text: '', type: 'All', account: 'All', parent: 'All', pay
 let f = blank();
 let shown = PAGE, host = null;
 let picking = false;            // multi-select mode
+let focusBack = null;           // the date box to hand the keyboard back to
 const picked = new Set();       // ids chosen while picking
 
 // Selection is a mode, not a setting: arriving at this screen always starts
@@ -100,9 +101,26 @@ function draw() {
     s.onchange = () => { f[key] = s.value; shown = PAGE; draw(); };
     return el('div', { class: 'field' }, el('label', {}, label), s);
   };
+  /**
+   * A date box that lets you finish typing the year.
+   *
+   * A native date field fires `change` the moment its three parts make any
+   * complete date — so typing the "2" of 2026 handed us the year 2 (05-12-0002),
+   * redrew the screen, destroyed the very box being typed into and took the
+   * keyboard with it. Two things stop that: a year below 1000 is treated as
+   * half-typed and ignored, and whichever box had the cursor gets it back after
+   * the redraw, caret and all.
+   */
   const dateIn = (label, key) => {
-    const i = el('input', { type: 'date', value: f[key] || '' });
-    i.onchange = () => { f[key] = i.value; shown = PAGE; draw(); };
+    const i = el('input', { type: 'date', value: f[key] || '', dataset: { dk: key } });
+    const apply = () => {
+      const v = i.value;
+      if (v && +v.slice(0, 4) < 1000) return;       // still mid-year, leave it alone
+      if (v === (f[key] || '')) return;
+      f[key] = v; shown = PAGE; focusBack = key; draw();
+    };
+    i.onchange = apply;
+    i.onblur = apply;                                // committed by leaving the box
     return el('div', { class: 'field' }, el('label', {}, label), i);
   };
   host.append(el('div', { class: 'filters' },
@@ -176,6 +194,11 @@ function draw() {
   // Only when the redraw was triggered from inside this screen. On a fresh
   // arrival the router restores where you last were, and must not be fought.
   if (keepScroll) requestAnimationFrame(() => window.scrollTo(0, keepScroll));
+  // The redraw threw away the box you were typing in. Put the cursor back.
+  if (focusBack) {
+    const key = focusBack; focusBack = null;
+    requestAnimationFrame(() => host.querySelector(`input[data-dk="${key}"]`)?.focus());
+  }
 }
 
 function mini(label, value, cls = '') {

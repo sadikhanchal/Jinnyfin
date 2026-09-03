@@ -45,39 +45,65 @@ function draw() {
   for (const r of rows) {
     const pct = Math.min(150, r.pct * 100);
     const col = r.pct > 1 ? 'var(--critical)' : r.pct > 0.85 ? 'var(--warning)' : S.income;
+    // A riyal budget is read in riyals — that is the number he set. The rupee
+    // figure follows underneath, because the spending itself is in both.
+    const sar = r.currency === 'SAR';
+    const headline = sar
+      ? `${money(r.spentOwn, 'SAR', false)} / ${money(r.limitOwn, 'SAR', false)}`
+      : `${money(r.spent, 'INR', false)} / ${money(r.limit, 'INR', false)}`;
+    const leftLine = sar
+      ? (r.leftOwn >= 0 ? `${money(r.leftOwn, 'SAR', false)} left` : `over by ${money(-r.leftOwn, 'SAR', false)}`)
+      : (r.left >= 0 ? `${money(r.left, 'INR', false)} left` : `over by ${money(-r.left, 'INR', false)}`);
     list.append(el('div', { class: 'card tight', style: 'cursor:pointer', onclick: () => edit(r) },
       el('div', { class: 'row', style: 'justify-content:space-between' },
         el('b', {}, r.parent + (r.sub ? ' · ' + r.sub : '')),
-        el('span', { class: 'tnum small' }, `${money(r.spent, 'INR', false)} / ${money(r.limit, 'INR', false)}`)),
+        el('span', { class: 'tnum small' }, headline)),
       el('div', { class: 'bar-track', style: 'margin:7px 0 4px' },
         el('div', { class: 'bar-fill', style: `width:${Math.min(100, pct)}%;background:${col}` })),
       el('div', { class: 'small muted' },
-        r.left >= 0 ? `${money(r.left, 'INR', false)} left · ${(r.pct * 100).toFixed(0)}% used`
-          : `over by ${money(-r.left, 'INR', false)}`)));
+        `${leftLine} · ${(r.pct * 100).toFixed(0)}% used`,
+        sar ? ` · ≈ ${money(r.spent, 'INR', false)} / ${money(r.limit, 'INR', false)}` : '')));
   }
   host.append(list);
 }
 
 function edit(b = null) {
   const v = b || { parent: '', sub: '', amount: 0, currency: 'INR', period: 'monthly' };
-  const parent = el('input', { value: v.parent, list: 'dl-bp', placeholder: 'Food and Dining' });
-  const sub = el('input', { value: v.sub || '', placeholder: 'optional' });
+  // A budget can only mean something if it points at a category that exists.
+  // These were free-text boxes with a suggestion list, and a suggestion list is
+  // only ever a suggestion — "adasdasdas" was accepted and then matched nothing,
+  // so the budget silently watched no spending at all. Both are lists now.
+  const cats = C.parentsFor('Expense');
+  const parent = el('select', {},
+    el('option', { value: '' }, '— pick a category —'),
+    // keep a category that has since been renamed away, so editing an old
+    // budget cannot quietly repoint it at something else
+    ...(v.parent && !cats.includes(v.parent) ? [v.parent] : []).concat(cats)
+      .map(p => el('option', { value: p, selected: v.parent === p }, p)));
+  const sub = el('select', {});
+  const fillSubs = () => {
+    const list = parent.value ? C.subsFor('Expense', parent.value) : [];
+    sub.replaceChildren(el('option', { value: '' }, 'All sub-categories'),
+      ...list.map(s => el('option', { value: s, selected: v.sub === s }, s)));
+    if (v.sub && !list.includes(v.sub)) sub.append(el('option', { value: v.sub, selected: true }, v.sub));
+  };
+  fillSubs();
+  parent.onchange = () => { v.sub = ''; fillSubs(); };
   const amount = el('input', { type: 'number', step: 'any', value: v.amount || '' });
   const cur = el('select', {}, ...['INR', 'SAR'].map(c => el('option', { value: c, selected: v.currency === c }, c)));
   const period = el('select', {}, el('option', { value: 'monthly', selected: v.period !== 'yearly' }, 'Per month'),
     el('option', { value: 'yearly', selected: v.period === 'yearly' }, 'Per year'));
-  const dl = el('datalist', { id: 'dl-bp' }); C.parentsFor('Expense').forEach(p => dl.append(el('option', { value: p })));
   const fld = (l, n, cls = '') => el('div', { class: 'field ' + cls }, el('label', {}, l), n);
   const body = el('div', { class: 'form-grid' },
     fld('Category', parent, 'full'), fld('Sub-category', sub, 'full'),
-    fld('Amount', amount), fld('Currency', cur), fld('Period', period, 'full'), dl);
+    fld('Amount', amount), fld('Currency', cur), fld('Period', period, 'full'));
   const m = modal(b ? 'Edit budget' : 'New budget', body, {
     footer: [
       b ? el('button', { class: 'btn ghost', style: 'margin-right:auto;color:var(--critical)',
         onclick: async () => { if (await confirmBox('Remove this budget?')) { await remove('budgets', b.id); m.close(); } } }, 'Delete') : null,
       el('button', { class: 'btn primary', onclick: async () => {
-        if (!parent.value.trim()) return toast('Pick a category', 'warn');
-        await put('budgets', { ...v, parent: parent.value.trim(), sub: sub.value.trim() || null,
+        if (!parent.value) return toast('Pick a category', 'warn');
+        await put('budgets', { ...v, parent: parent.value, sub: sub.value || null,
           amount: +amount.value || 0, currency: cur.value, period: period.value });
         m.close();
       } }, 'Save'),

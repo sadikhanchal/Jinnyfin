@@ -9,10 +9,11 @@ import { insuranceHeadline } from './calc.js';
 import { checkPin } from './crypto.js';
 import { openTxEditor } from './views/editor.js';
 import * as A from './alerts.js';
+import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.25', date: '2026-09-03' };
+export const BUILD = { version: '1.26', date: '2026-09-03' };
 
 const ROUTES = {
   dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
@@ -463,7 +464,7 @@ S.onChange(what => {
   updateChip();
   paintBell();
   if (what === 'auth') {
-    if (!state.user) loginScreen(); else start();
+    if (!state.user) loginScreen(); else { start(); Push.refresh(); }
   } else if (what === 'data' && currentView?.refresh) {
     // Redrawing in place must not move anything. The page has one scrollbar but
     // the tables have their own, and a rebuild resets every one of them.

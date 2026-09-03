@@ -264,7 +264,16 @@ export async function boot() {
 }
 
 function sortAll() {
-  DB.transactions.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.no || 0) - (b.no || 0)));
+  // Date, then the clock time, then the row number. The time used to be ignored
+  // altogether, so two entries on the same day sat in whatever order they were
+  // typed — an evening payment could end up above a morning one, and the newest
+  // entry of the day was not the one at the top of the list.
+  // Times are stored as zero-padded HH:MM, so comparing them as text is right;
+  // an entry with no time at all counts as the earliest of that day.
+  DB.transactions.sort((a, b) =>
+    (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
+    || String(a.time || '').localeCompare(String(b.time || ''))
+    || (a.no || 0) - (b.no || 0));
   DB.fx_rates.sort((a, b) => a.month < b.month ? -1 : 1);
   DB.accounts.sort((a, b) => (a.sort - b.sort) || a.name.localeCompare(b.name));
 }

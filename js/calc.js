@@ -559,7 +559,12 @@ export function budgetStatus(year, month) {
     if (b.sub) f.sub = b.sub;
     const spent = filterTx(f).reduce((s, t) => s + inrOut(t), 0);
     const limit = b.currency === 'SAR' ? Number(b.amount) * rates().sar : Number(b.amount);
-    out.push({ ...b, spent, limit, pct: limit ? spent / limit : 0, left: limit - spent });
+    // A budget set in riyals was converted to rupees here and then shown only in
+    // rupees, so the currency you picked disappeared. Carry the figures in the
+    // budget's own currency as well, and let the screen show both.
+    const own = b.currency === 'SAR' ? 1 / rates().sar : 1;
+    out.push({ ...b, spent, limit, pct: limit ? spent / limit : 0, left: limit - spent,
+      spentOwn: spent * own, limitOwn: Number(b.amount), leftOwn: (limit - spent) * own });
   }
   return out.sort((a, b) => b.pct - a.pct);
 }

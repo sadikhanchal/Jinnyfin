@@ -194,7 +194,22 @@ export function makeReport(kind) {
   }
 
   return {
-    render: async root => { host = root; draw(); },
+    render: async root => {
+      host = root;
+      // Arrived from a tap on a category somewhere else (the dashboard's
+      // "Expense by source", say). Open on that category, in the month that was
+      // on screen there, and put the breakdown under the thumb instead of
+      // leaving it to be scrolled to and filtered again by hand.
+      const q = new URLSearchParams(location.hash.split('?')[1] || '');
+      const wanted = q.get('parent');
+      if (wanted) {
+        f = { ...f, parent: wanted, sub: 'All',
+          year: q.get('year') || f.year, month: q.get('month') || f.month, account: 'All' };
+      }
+      draw();
+      if (wanted) requestAnimationFrame(() =>
+        host.querySelector('.jf-bd')?.scrollIntoView({ block: 'start', behavior: 'instant' }));
+    },
     // A sync landing while you are reading must not move the page either.
     refresh: () => { if (host) redraw(host.querySelector('.jf-bd')); },
   };

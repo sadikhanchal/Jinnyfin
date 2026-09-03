@@ -70,8 +70,8 @@ function draw() {
   // ---- income / expense by source ----------------------------------------
   const inc = C.bySource('Income', f), exp = C.bySource('Expense', f);
   const two = el('div', { class: 'grid g2', style: 'margin-top:12px' });
-  two.append(sourceCard('Income by source', inc, S.income, 'income'));
-  two.append(sourceCard('Expense by source', exp, S.expense, 'expense'));
+  two.append(sourceCard('Income by source', inc, S.income, 'income', f));
+  two.append(sourceCard('Expense by source', exp, S.expense, 'expense', f));
   host.append(two);
 
   // ---- monthly in/out -----------------------------------------------------
@@ -129,7 +129,7 @@ function tile(label, value, sub, cls = '') {
     el('div', { class: 'sub' }, sub));
 }
 
-function sourceCard(title, rows, color, kind) {
+function sourceCard(title, rows, color, kind, period = {}) {
   const card = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, title), el('div', { class: 'spacer' }),
       el('span', { class: 'small muted' }, rows.length + ' categories')));
@@ -138,7 +138,15 @@ function sourceCard(title, rows, color, kind) {
   barList(bars, rows.slice(0, 10).map(r => ({
     label: r.name, value: r.equiv, color,
     sub: [r.sar ? num(r.sar, 0) + ' SAR' : null, r.inr ? '₹' + num(r.inr, 0) : null].filter(Boolean).join(' + '),
-  })), { format: v => money(v, 'INR', false), onClick: r => go(kind === 'income' ? 'income' : 'expense') });
+  })), { format: v => money(v, 'INR', false),
+    // Tapping a category used to open the report showing everything, so you had
+    // to find the same category again by hand. Carry the category — and the
+    // month you were looking at — across, and the report opens on that breakdown.
+    onClick: r => {
+      const q = new URLSearchParams({ parent: r.label,
+        year: String(period.year ?? 'All'), month: String(period.month ?? 'All') });
+      location.hash = '#/' + (kind === 'income' ? 'income' : 'expense') + '?' + q;
+    } });
   if (rows.length > 10) card.append(el('p', { class: 'small muted', style: 'margin:8px 0 0' },
     `+ ${rows.length - 10} more · `, el('a', { href: '#/' + (kind === 'income' ? 'income' : 'expense') }, 'full report')));
   return card;
