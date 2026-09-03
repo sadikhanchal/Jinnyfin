@@ -169,6 +169,20 @@ export function confirmBox(msg, okLabel = 'Yes, do it') {
   });
 }
 
+/**
+ * Close an overlay and only THEN do the thing. Closing unwinds the history
+ * entry the overlay pushed, and that lands on a later tick — so navigating
+ * straight away gets undone a beat later by the popstate still in flight.
+ * This is what made "Open reminders" and the sheet's history button do nothing.
+ */
+export function closeThen(overlay, fn) {
+  let done = false;
+  const go = () => { if (done) return; done = true; removeEventListener('popstate', go); fn(); };
+  addEventListener('popstate', go);
+  setTimeout(go, 300);            // nothing was pushed, or the browser stayed quiet
+  overlay.close();
+}
+
 export function modal(title, body, { wide = false, footer = null, lead = null } = {}) {
   const wrap = el('div', { class: 'modal-wrap' });
   let disarm = () => {};

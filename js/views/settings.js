@@ -123,6 +123,19 @@ function general() {
     el('p', { class: 'small', style: 'margin:0 0 8px' },
       el('b', {}, `${BUILD.version} \u00b7 ${BUILD.date}`),
       el('span', { class: 'muted' }, '  \u2014 compare this with the version I sent you.')),
+    // The stylesheet carries its own stamp, because a stale CSS file is
+    // invisible otherwise: the app looks almost right and you cannot tell.
+    (() => {
+      const css = (getComputedStyle(document.documentElement)
+        .getPropertyValue('--jf-css') || '').replace(/["'\s]/g, '');
+      const ok = css === BUILD.version;
+      return el('p', { class: 'small', style: 'margin:0 0 8px' },
+        el('b', {}, 'Stylesheet: '),
+        el('span', { class: ok ? 'pos' : 'neg' }, css || 'not stamped'),
+        el('span', { class: 'muted' }, ok ? '  \u2014 matches the app.'
+          : css ? '  \u2014 OLDER THAN THE APP. css/app.css did not land; upload it again.'
+            : '  \u2014 this stylesheet is older than 1.24, so it has no stamp yet.'));
+    })(),
     el('p', { class: 'small muted', style: 'margin:0 0 10px' },
       'If it is behind, this device is holding an old copy. The button below throws that copy '
       + 'away and re-downloads everything. Your data is untouched \u2014 it lives on the server and in the ledger.'),

@@ -1,7 +1,7 @@
 // ============================================================================
 //  editor.js — add / edit a transaction (shared by every screen).
 // ============================================================================
-import { el, modal, toast, todayISO, uuid, evalAmount, confirmBox, money, round2 } from '../util.js';
+import { el, modal, toast, todayISO, uuid, evalAmount, confirmBox, money, round2, closeThen } from '../util.js';
 import { DB, put, remove } from '../store.js';
 import { fxFor, currencyOf, convertAmount, parentsFor, subsFor, payeeNames, eventNames,
   activeAccounts as liveAccounts } from '../calc.js';
@@ -597,13 +597,7 @@ export function openTxEditor(existing = null, presets = {}) {
   // yesterday", now that Transactions is no longer a tab.
   const history_ = el('button', {
     class: 'icon-btn lead-btn', title: 'Past transactions',
-    // Closing unwinds the sheet's history entry, which is asynchronous — so the
-    // navigation waits for that to land or it would be undone a beat later.
-    onclick: () => {
-      addEventListener('popstate', () => { location.hash = '#/transactions'; }, { once: true });
-      m.close();
-      setTimeout(() => { if (location.hash !== '#/transactions') location.hash = '#/transactions'; }, 250);
-    },
+    onclick: () => closeThen(m, () => { location.hash = '#/transactions'; }),
   }, '\ud83d\udd52');
   const m = modal(existing ? 'Edit transaction' : 'New transaction', body, { footer, lead: history_ });
   setTimeout(() => amountIn.focus(), 60);

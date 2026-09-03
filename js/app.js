@@ -2,7 +2,7 @@
 //  app.js — shell, router, auth gate, screen lock.
 // ============================================================================
 import { CONFIG } from '../config.js';
-import { $, el, toast, todayISO, store as safeStore, storageBlocked, confirmBox, modal } from './util.js';
+import { $, el, toast, todayISO, store as safeStore, storageBlocked, confirmBox, modal, closeThen } from './util.js';
 import * as S from './store.js';
 import { DB, state, getSettings, setSettings } from './store.js';
 import { insuranceHeadline } from './calc.js';
@@ -12,7 +12,7 @@ import * as A from './alerts.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.23', date: '2026-09-03' };
+export const BUILD = { version: '1.24', date: '2026-09-03' };
 
 const ROUTES = {
   dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
@@ -228,12 +228,14 @@ async function openBell() {
     const list = A.alerts();
     if (!list.length) {
       body.append(el('p', { class: 'small muted', style: 'margin:6px 2px' }, 'Nothing needs you right now.'));
-    } else for (const a of list) body.append(alertRow(a, () => { fill(); paintBell(); }));
+    } else for (const a of list) body.append(alertRow(a,
+      () => { fill(); paintBell(); },
+      alert => closeThen(m, () => { location.hash = alert.go; })));
   };
   fill();
   const m = modal('Reminders', body, { footer: [
     el('button', { class: 'btn', onclick: async () => { await A.markAllRead(); fill(); paintBell(); } }, 'Mark all read'),
-    el('button', { class: 'btn primary', onclick: () => { m.close(); go('tasks'); } }, 'Open reminders'),
+    el('button', { class: 'btn primary', onclick: () => closeThen(m, () => go('tasks')) }, 'Open reminders'),
   ] });
 }
 

@@ -106,14 +106,16 @@ function draw() {
 }
 
 /** One line in the inbox, with everything you can do to it. */
-export function alertRow(a, after) {
+export function alertRow(a, after, open) {
   const ICON = { task: '⏰', policy: '🛡️', doc: '🪪', card: '💳' };
   const row = el('div', { class: 'alert-row ' + a.level + (a.read ? '' : ' unread') });
   row.append(
     el('span', { class: 'ai' }, ICON[a.kind] || '🔔'),
     el('div', { style: 'min-width:0;flex:1;cursor:pointer', onclick: async () => {
       await A.markRead(a.id);
-      location.hash = a.go;
+      // Inside the bell panel the sheet has to come down first, or its own
+      // history entry unwinds a moment later and takes the navigation with it.
+      if (open) open(a); else location.hash = a.go;
     } },
       el('div', { class: 't1' }, a.title),
       el('div', { class: 't2' }, [a.body, a.when ? fmtDate(a.when) : null].filter(Boolean).join(' · '))),
