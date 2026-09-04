@@ -464,7 +464,7 @@ S.onChange(what => {
   updateChip();
   paintBell();
   if (what === 'auth') {
-    if (!state.user) loginScreen(); else { start(); Push.refresh(); }
+    if (!state.user) loginScreen(); else { start(); Push.refresh(); Push.syncZone(); }
   } else if (what === 'data' && currentView?.refresh) {
     // Redrawing in place must not move anything. The page has one scrollbar but
     // the tables have their own, and a rebuild resets every one of them.
