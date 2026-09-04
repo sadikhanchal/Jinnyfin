@@ -10,7 +10,7 @@
 //  app; that setting lives in the phone, per app, and you can change it there.
 // ============================================================================
 import { CONFIG } from '../config.js';
-import { state, initSupabase } from './store.js';
+import { state, initSupabase, getSettings, setSettings } from './store.js';
 
 /** The push service wants the key as raw bytes, not as text. */
 function urlBase64ToUint8Array(base64) {
@@ -125,6 +125,26 @@ export async function refresh() {
   } catch { /* never let this get in the way of the app starting */ }
 }
 
+/**
+ * Tell the server which clock you keep.
+ *
+ * The server runs on UTC and has no other way of knowing. Without this a
+ * reminder set for 11:45 in Jeddah arrives at 14:45; with it, 11:45 means 11:45
+ * wherever you are standing — so open the app once after landing in another
+ * country and everything you already set moves onto that country's clock. It
+ * keeps its wall-clock time: a 7 am reminder is 7 am there, not 7 am back home.
+ *
+ * Written only when it actually changes, so it costs nothing on a normal start.
+ */
+export async function syncZone() {
+  try {
+    if (!state.user) return;
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!tz || getSettings().tz === tz) return;
+    await setSettings({ tz });
+  } catch { /* never let this get in the way of the app starting */ }
+}
+
 /** Ask the server to post one to this device right now, as a test. */
 export async function test() {
   const sb = await initSupabase();
@@ -144,5 +164,11 @@ export async function test() {
       ? 'The jinnyfin-push function is not deployed yet — see PUSH-SETUP.md.'
       : `The server said: ${res.status} ${res.statusText || ''}`.trim() };
   }
-  return { ok: true, why: 'Sent — it should arrive in a moment.' };
+  // The server rings every device you have switched on, not just this one, so
+  // say how many — that is the whole point of pressing Test.
+  const out = await res.json().catch(() => ({}));
+  const n = Number(out.sent) || 1;
+  return { ok: true, why: n > 1
+    ? `Sent to all ${n} of your devices — they should arrive in a moment.`
+    : 'Sent — it should arrive in a moment.' };
 }
