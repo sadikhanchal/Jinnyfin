@@ -1,6 +1,6 @@
 # Jinnyfin
 
-A personal-finance PWA rebuilt from `MISA Entry 06.xlsm` — installable on
+A personal-finance PWA  — installable on
 phone and PC, works offline, syncs both devices through Supabase.
 
 **Setup: [SETUP.md](SETUP.md) · Method: [VERIFICATION.md](VERIFICATION.md)**
