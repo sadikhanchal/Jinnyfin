@@ -2,13 +2,13 @@
 //  sw.js — service worker: makes the app installable and fully offline.
 //  Bump CACHE when you change any file, so devices pick up the new version.
 // ============================================================================
-const CACHE = 'jinnyfin-1.26.2';
+const CACHE = 'jinnyfin-1.27';
 
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './config.js',
   './css/app.css',
   './js/app.js', './js/util.js', './js/store.js', './js/calc.js', './js/charts.js', './js/crypto.js',
-  './js/alerts.js', './js/push.js',
+  './js/alerts.js', './js/push.js', './js/files.js',
   './js/views/editor.js', './js/views/dashboard.js', './js/views/transactions.js', './js/views/tasks.js',
   './js/views/report.js', './js/views/incexp.js',
   './js/views/statement.js', './js/views/payee.js', './js/views/business.js', './js/views/equity.js',
