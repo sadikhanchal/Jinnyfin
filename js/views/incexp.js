@@ -1,7 +1,8 @@
 // ============================================================================
 //  incexp.js — Income vs Expense for any period, grouped and sorted.
 // ============================================================================
-import { el, money, num, MONTHS, endOfMonth, downloadCSV, todayISO, fmtDate } from '../util.js';
+import { el, money, num, MONTHS, endOfMonth, downloadCSV, todayISO, fmtDate,
+  dateGuard, restoreDateFocus } from '../util.js';
 import { DB } from '../store.js';
 import * as C from '../calc.js';
 import { groupedBars, SERIES } from '../charts.js';
@@ -41,7 +42,10 @@ function draw() {
   };
   const dateIn = (label, key) => {
     const i = el('input', { type: 'date', value: f[key] || '' });
-    i.onchange = () => { f[key] = i.value; f.year = 'All'; f.month = 'All'; draw(); };
+    dateGuard(i, v => {
+      if (v === (f[key] || '')) return;
+      f[key] = v; f.year = 'All'; f.month = 'All'; draw();
+    }, key);
     return el('div', { class: 'field' }, el('label', {}, label), i);
   };
   const segment = (opts, cur, on) => el('div', { class: 'seg' },
@@ -100,6 +104,7 @@ function draw() {
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Breakdown')),
     el('div', { class: 'table-wrap', style: 'max-height:65vh;overflow:auto' }, t)));
+  restoreDateFocus(host);        // put the cursor back in the date box the redraw ate
 }
 
 function exportCSV(res) {

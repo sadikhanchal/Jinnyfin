@@ -6,7 +6,7 @@
 //  ringing right now (a policy, a card, an overdue reminder). The second list
 //  is the same one behind the bell, so a thing marked read here is read there.
 // ============================================================================
-import { el, modal, toast, todayISO, fmtDate, confirmBox } from '../util.js';
+import { el, modal, toast, todayISO, fmtDate, confirmBox, daysBetween, badYear } from '../util.js';
 import { DB, put, remove } from '../store.js';
 import { topbar } from '../app.js';
 import * as A from '../alerts.js';
@@ -25,10 +25,17 @@ export function refresh() { if (host) draw(); }
 const dueText = t => {
   if (!t.due_date) return 'No date';
   const at = A.dueAt(t);
-  const days = Math.ceil((at - new Date()) / 86400000);
   const when = fmtDate(t.due_date) + (t.due_time ? ' · ' + t.due_time : '');
   if (t.done) return when;
-  if (days < 0) return `${when} · ${-days} day${days === -1 ? '' : 's'} late`;
+  // Calendar days apart, not hours. Dividing milliseconds by a day made
+  // yesterday 18:30 read as "today" — Math.ceil(-0.69) is -0, and -0 < 0 is
+  // false in JavaScript, so it fell straight through to the "today" line — and
+  // made a reminder set for 11:06 today read "tomorrow" until 11:06 arrived.
+  const days = daysBetween(todayISO(), t.due_date);
+  if (at <= new Date()) {
+    return days === 0 ? `${when} · due now`
+      : `${when} · ${-days} day${days === -1 ? '' : 's'} late`;
+  }
   if (days === 0) return `${when} · today`;
   if (days === 1) return `${when} · tomorrow`;
   return `${when} · in ${days} days`;
@@ -192,6 +199,8 @@ function edit(v = null) {
       }, 'Delete') : null,
       el('button', { class: 'btn primary', onclick: async () => {
         if (!title.value.trim()) { toast('Give it a name', 'warn'); title.focus(); return; }
+        // A reminder dated year 2 never comes due, and never says why.
+        if (badYear(date.value)) { toast('Finish the date first', 'warn'); date.focus(); return; }
         await put('tasks', { ...t, title: title.value.trim(), note: note.value.trim() || null,
           due_date: date.value || null, due_time: time.value || null,
           repeat: rep.value, priority: pri.value });

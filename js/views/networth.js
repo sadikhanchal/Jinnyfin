@@ -1,7 +1,8 @@
 // ============================================================================
 //  networth.js — the full net-worth build-up plus fixed assets at market value.
 // ============================================================================
-import { el, money, num, fmtDate, todayISO, modal, toast, confirmBox, downloadCSV, MON3 } from '../util.js';
+import { el, money, num, fmtDate, todayISO, modal, toast, confirmBox, downloadCSV, MON3,
+  dateGuard, restoreDateFocus, badYear } from '../util.js';
 import { DB, put, remove } from '../store.js';
 import * as C from '../calc.js';
 import { lineChart, barList, SERIES } from '../charts.js';
@@ -28,7 +29,8 @@ function draw() {
   const nw = C.netWorth(asOf);
   const fa = nw.parts.fa, inv = nw.parts.inv, lb = nw.parts.lb;
 
-  const dateIn = el('input', { type: 'date', value: asOf, onchange: e => { asOf = e.target.value; draw(); } });
+  const dateIn = dateGuard(el('input', { type: 'date', value: asOf }),
+    v => { if (v === asOf) return; asOf = v; draw(); }, 'asof');
   host.append(topbar('Net Worth & Assets',
     el('div', { class: 'field' }, el('label', { class: 'hint' }, 'As of'), dateIn),
     el('button', { class: 'btn sm', onclick: () => addAsset() }, '+ Asset'),
@@ -133,6 +135,7 @@ function draw() {
   host.append(el('p', { class: 'small muted', style: 'margin-top:10px' },
     `Open lend/borrow positions: ${lb.openCount}. `,
     el('a', { href: '#/payee' }, 'See who owes whom →')));
+  restoreDateFocus(host);        // put the cursor back in the date box the redraw ate
 }
 
 function addAsset(a = null) {
@@ -157,6 +160,8 @@ function addAsset(a = null) {
         onclick: async () => { if (await confirmBox('Remove this asset?')) { await remove('assets', a.id); m.close(); } } }, 'Delete') : null,
       el('button', { class: 'btn primary', onclick: async () => {
         if (!name.value.trim()) return toast('Name?', 'warn');
+        // The valuation date is what dates the whole net-worth line.
+        if (badYear(md.value)) { toast('Finish the valuation date', 'warn'); md.focus(); return; }
         await put('assets', { ...v, name: name.value.trim(), category_tag: tag.value.trim() || null,
           opening_cost: +open.value || 0, market_value: +mv.value || 0, market_date: md.value, note: note.value.trim() });
         m.close();

@@ -1,7 +1,7 @@
 // ============================================================================
 //  equity.js — Geojit equity portfolio: open positions, realised P&L, dividends.
 // ============================================================================
-import { el, money, num, fmtDate, modal, toast, confirmBox, downloadCSV, todayISO } from '../util.js';
+import { el, money, num, fmtDate, modal, toast, confirmBox, downloadCSV, todayISO, badYear } from '../util.js';
 import { DB, put, remove } from '../store.js';
 import * as C from '../calc.js';
 import { barList, SERIES } from '../charts.js';
@@ -145,6 +145,8 @@ function editPos(p = null) {
         onclick: async () => { if (await confirmBox('Delete this position?')) { await remove('equity_positions', p.id); m.close(); } } }, 'Delete') : null,
       el('button', { class: 'btn primary', onclick: async () => {
         if (!symbol.value.trim()) return toast('Symbol?', 'warn');
+        // "Priced as of" is what makes the valuation mean anything.
+        if (badYear(pdate.value)) { toast('Finish the price date', 'warn'); pdate.focus(); return; }
         await put('equity_positions', { ...v, symbol: symbol.value.trim().toUpperCase(), company: company.value.trim(),
           qty: +qty.value || 0, avg_cost: +avg.value || 0, price: +price.value || 0, price_date: pdate.value,
           closed: closed.checked, buy_qty: +bq.value || 0, buy_value: +bv.value || 0,

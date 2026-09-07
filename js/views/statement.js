@@ -1,7 +1,8 @@
 // ============================================================================
 //  statement.js — account statement with a running balance.
 // ============================================================================
-import { el, money, num, fmtDate, MONTHS, downloadCSV, todayISO, endOfMonth } from '../util.js';
+import { el, money, num, fmtDate, MONTHS, downloadCSV, todayISO, endOfMonth,
+  dateGuard, restoreDateFocus } from '../util.js';
 import { printStatement, printDate } from './printable.js';
 import { DB } from '../store.js';
 import * as C from '../calc.js';
@@ -12,17 +13,30 @@ import { kpi } from './report.js';
 let f = { account: '', tag: '', from: '', to: '', month: 'All', year: 'All' };
 let host = null, showClosed = false;
 
-/** What is open lives in the address, not in a variable — so a background sync,
- *  an Alt-Tab, or the back gesture cannot quietly throw you back to the list. */
+/**
+ * A deep link says what to open; nothing else is allowed to.
+ *
+ * This used to clear the account whenever the address carried no query — and
+ * the menu navigates to a bare `#/statement`, so stepping across to
+ * Transactions and back threw away the account, the period and the scroll, and
+ * every one of them had to be picked again. Only an explicit ?account= or ?tag=
+ * changes what is open now. Report does the same thing and has always been
+ * fine; this is that guard.
+ */
 function readUrl() {
   const q = new URLSearchParams(location.hash.split('?')[1] || '');
-  f.account = q.get('account') || '';
-  f.tag = q.get('tag') || '';
+  const acct = q.get('account'), tag = q.get('tag');
+  if (acct || tag) { f.account = acct || ''; f.tag = tag || ''; }
 }
 function openThing(kind, name) {
-  f.from = f.to = ''; f.year = f.month = 'All';
+  // Set here rather than leaving it to readUrl, because going back to the list
+  // navigates to a bare #/statement, which readUrl now deliberately ignores.
+  f.account = kind === 'account' ? (name || '') : '';
+  f.tag = kind === 'tag' ? (name || '') : '';
+  // The period stays. Picking a second account to compare against the first is
+  // the whole reason you set a period, so throwing it away made no sense.
   location.hash = name ? `#/statement?${kind}=${encodeURIComponent(name)}` : '#/statement';
-  readUrl(); draw(); window.scrollTo(0, 0);
+  draw(); window.scrollTo(0, 0);
 }
 
 export async function render(root) { host = root; readUrl(); draw(); }
@@ -38,7 +52,10 @@ document.addEventListener('keydown', e => {
   history.back();
 });
 
-function draw() { f.tag ? drawHolding() : f.account ? drawOne() : drawList(); }
+function draw() {
+  f.tag ? drawHolding() : f.account ? drawOne() : drawList();
+  restoreDateFocus(host);          // the redraw threw away the box you were typing in
+}
 
 // --------------------------------------------------------- all accounts ----
 /**
@@ -66,8 +83,9 @@ function drawList() {
 
   const cards = [];
   for (const [key, label] of GROUPS) {
-    const list = all.filter(a => (key ? a.grp === key : !a.grp || !['primary', 'investment'].includes(a.grp)))
-      .sort((x, y) => x.name.localeCompare(y.name));
+    // Grouped, but not re-sorted: within a group the accounts stay in the order
+    // set on Settings → Reconcile, which is the whole point of setting one.
+    const list = all.filter(a => (key ? a.grp === key : !a.grp || !['primary', 'investment'].includes(a.grp)));
     if (!list.length) continue;
     const sum = list.reduce((n, a) => n + inr(a), 0);
     total += sum;
@@ -147,7 +165,10 @@ function periodFilters() {
   };
   const dateIn = (label, key) => {
     const i = el('input', { type: 'date', value: f[key] || '' });
-    i.onchange = () => { f[key] = i.value; f.year = 'All'; f.month = 'All'; draw(); };
+    dateGuard(i, v => {
+      if (v === (f[key] || '')) return;
+      f[key] = v; f.year = 'All'; f.month = 'All'; draw();
+    }, key);
     return el('div', { class: 'field' }, el('label', {}, label), i);
   };
   return el('div', { class: 'filters' },

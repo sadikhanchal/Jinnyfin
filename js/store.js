@@ -34,7 +34,7 @@ export const DB = {
 export const COLUMNS = {
   accounts: ['id', 'user_id', 'name', 'currency', 'grp', 'opening_bal', 'active', 'pinned',
     'created_at', 'stated_balance', 'reconciled_at', 'sort', 'icon', 'deleted', 'updated_at'],
-  categories: ['id', 'user_id', 'type', 'parent', 'sub', 'icon', 'color', 'deleted', 'updated_at'],
+  categories: ['id', 'user_id', 'type', 'parent', 'sub', 'icon', 'color', 'active', 'deleted', 'updated_at'],
   payees: ['id', 'user_id', 'name', 'note', 'deleted', 'updated_at'],
   transactions: ['id', 'user_id', 'no', 'date', 'time', 'type', 'account', 'currency', 'income',
     'expense', 'parent', 'sub', 'payee', 'event', 'note', 'fx', 'transfer_group', 'to_account',
@@ -43,7 +43,7 @@ export const COLUMNS = {
   assets: ['id', 'user_id', 'name', 'category_tag', 'opening_cost', 'market_value', 'market_date',
     'note', 'deleted', 'updated_at'],
   insurance: ['id', 'user_id', 'label', 'policy', 'policy_no', 'renewal_date', 'premium', 'currency',
-    'notify_days', 'kind', 'pay_account', 'last_paid', 'note', 'deleted', 'updated_at'],
+    'notify_days', 'kind', 'pay_account', 'last_paid', 'note', 'files', 'deleted', 'updated_at'],
   cards: ['id', 'user_id', 'label', 'bank', 'network', 'kind', 'last4', 'expiry_hint',
     'enc_blob', 'enc_iv', 'enc_salt', 'deleted', 'updated_at'],
   equity_positions: ['id', 'user_id', 'symbol', 'company', 'qty', 'avg_cost', 'price', 'price_date',
@@ -314,7 +314,9 @@ export async function put(table, row, { silent = false } = {}) {
   else if (i >= 0) arr[i] = r; else arr.push(r);
   await idbPut(table, [r]);
   await queuePush(table, r);
-  if (table === 'transactions') sortAll();
+  // Accounts too: renaming or adding one left DB.accounts out of its arranged
+  // order until the next sync, so the new row sat at the bottom of every list.
+  if (table === 'transactions' || table === 'accounts') sortAll();
   if (!silent) { emit('data'); syncSoon(); }
   return r;
 }

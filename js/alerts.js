@@ -75,14 +75,16 @@ export function alerts({ all = false } = {}) {
     if (t.deleted || t.done) continue;
     const at = dueAt(t);
     if (!at) continue;
-    const late = Math.round((now - at) / 86400000);
+    // Whole days on the calendar, not hours divided by 24 — otherwise something
+    // due at 09:00 this morning reads "1 day late" by ten in the evening.
+    const late = -daysBetween(today, t.due_date);
     if (!all && at > now) continue;
     push({
       id: keyFor('task', t.id, t.due_date),
       kind: 'task', ref: t.id, title: t.title,
       body: t.note || '',
       when: t.due_date, time: t.due_time || null,
-      overdue: at <= now, daysLeft: -late,
+      overdue: at <= now, daysLeft: daysBetween(today, t.due_date),
       level: at > now ? 'ok' : late >= 1 ? 'expired' : 'critical',
       priority: t.priority || 'normal',
       go: '#/tasks',

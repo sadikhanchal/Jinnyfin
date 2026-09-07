@@ -1,8 +1,10 @@
 // ============================================================================
 //  insurance.js — policies and documents that expire, with reminders.
 // ============================================================================
-import { el, money, fmtDate, todayISO, modal, toast, confirmBox, addDays, downloadCSV, daysBetween } from '../util.js';
+import { el, money, fmtDate, todayISO, modal, toast, confirmBox, addDays, downloadCSV, daysBetween,
+  uuid, badYear } from '../util.js';
 import { DB, put, remove, getSettings, setSettings } from '../store.js';
+import * as F from '../files.js';
 import * as C from '../calc.js';
 import { topbar } from '../app.js';
 import { kpi } from './report.js';
@@ -300,6 +302,71 @@ function edit(p = null, startKind = 'insurance') {
   payFrom.addEventListener('change', followAccount);
   followAccount();
   const postIt = el('input', { type: 'checkbox', checked: true });
+
+  // ---------------------------------------------------------- attachments --
+  // The invoice and the warranty card for a machine, so a service desk can be
+  // shown them here rather than after a trip home to the drawer.
+  // The id is settled now rather than at save time, because the file path
+  // carries it and a file cannot wait for the record to be written.
+  const recId = v.id || uuid();
+  let files = Array.isArray(v.files) ? [...v.files] : [];
+  const fileList = el('div', { style: 'margin-top:6px' });
+  const picker = el('input', { type: 'file', accept: 'image/*,application/pdf', multiple: true, style: 'display:none' });
+  const busy = el('span', { class: 'small muted' });
+  const addBtn = el('button', { type: 'button', class: 'btn sm', onclick: () => picker.click() }, '📎 Attach');
+
+  async function openFile(f) {
+    // The tab is opened BEFORE the await. Asking for the link first and opening
+    // afterwards is a pop-up blocker's definition of suspicious.
+    const w = window.open('', '_blank');
+    const r = await F.link(f.path);
+    if (!r.ok) { w?.close(); return toast(r.why, 'warn', 4500); }
+    if (w) { w.opener = null; w.location = r.url; } else window.location.href = r.url;
+  }
+
+  async function dropFile(f) {
+    if (!await confirmBox(`Remove “${f.name}”?`)) return;
+    const r = await F.remove(f.path);
+    if (!r.ok) return toast(r.why, 'warn', 4500);
+    files = files.filter(x => x.path !== f.path);
+    paintFiles();
+    toast('Removed — press Save to keep the change');
+  }
+
+  function paintFiles() {
+    fileList.replaceChildren();
+    if (!files.length) {
+      fileList.append(el('p', { class: 'hint', style: 'margin:0' },
+        'Invoices, warranty cards, receipts. Photos or PDF, up to '
+        + `${F.prettySize(F.MAX_BYTES)} each. Kept private — opening one makes a link that dies after an hour.`));
+      return;
+    }
+    for (const f of files) {
+      fileList.append(el('div', { class: 'file-row' },
+        el('span', {}, /pdf/i.test(f.type || '') ? '📄' : '🖼'),
+        el('span', { class: 'file-name' }, f.name),
+        el('span', { class: 'small muted' }, F.prettySize(f.size || 0)),
+        el('button', { type: 'button', class: 'btn xs', onclick: () => openFile(f) }, 'Open'),
+        el('button', { type: 'button', class: 'btn xs ghost', onclick: () => dropFile(f) }, 'Remove')));
+    }
+  }
+
+  picker.addEventListener('change', async () => {
+    const picked = [...picker.files];
+    picker.value = '';                       // so the same file can be picked again
+    addBtn.disabled = true;
+    for (const file of picked) {
+      busy.textContent = `Uploading ${file.name}…`;
+      const r = await F.upload(file, recId);
+      if (!r.ok) { toast(r.why, 'warn', 5000); continue; }
+      files.push(r.file);
+      paintFiles();
+    }
+    busy.textContent = '';
+    addBtn.disabled = false;
+  });
+  paintFiles();
+
   const fld = (l, n, cls = '') => el('div', { class: 'field ' + cls }, el('label', {}, l), n);
   const body = el('div', { class: 'form-grid' },
     fld('Short label', label), fld('Type', kind),
@@ -310,20 +377,30 @@ function edit(p = null, startKind = 'insurance') {
     fld('Pay from', payFrom, 'full'),
     el('label', { class: 'field full row', style: 'flex-direction:row;gap:8px;align-items:center' },
       postIt, ' Record the premium as a transaction when I renew'),
-    fld('Note', note, 'full'));
-  const m = modal(p ? 'Edit policy' : 'New policy', body, {
+    fld('Note', note, 'full'),
+    el('div', { class: 'field full' }, el('label', {}, 'Attachments'),
+      el('div', { class: 'row gap wrap', style: 'align-items:center' }, addBtn, busy, picker),
+      fileList));
+  // An Iqama is not a policy. The section you pressed Add in already says which
+  // of the two this is, so the sheet should say it back to you.
+  const noun = v.kind === 'document' ? 'document' : 'policy';
+  const m = modal(`${p ? 'Edit' : 'New'} ${noun}`, body, {
     footer: [
       p ? el('button', { class: 'btn ghost', style: 'margin-right:auto;color:var(--critical)',
-        onclick: async () => { if (await confirmBox('Remove this policy?')) { await remove('insurance', p.id); m.close(); } } }, 'Delete') : null,
+        onclick: async () => { if (await confirmBox(`Remove this ${noun}?`)) { await remove('insurance', p.id); m.close(); } } }, 'Delete') : null,
       p ? el('button', { class: 'btn', onclick: () => renew(v, m, {
         premium: +prem.value || 0, currency: cur.value, account: payFrom.value,
         record: postIt.checked, label: label.value.trim() || v.label,
       }) }, '↻ Renewed +1 yr') : null,
       el('button', { class: 'btn primary', onclick: async () => {
         if (!label.value.trim()) return toast('Give it a label', 'warn');
-        await put('insurance', { ...v, label: label.value.trim(), policy: policy.value.trim(),
+        // The renewal date is the whole reason this row exists — filed as year 2
+        // it expires two thousand years ago and the reminder never comes.
+        if (badYear(date.value)) { toast('Finish the renewal date', 'warn'); date.focus(); return; }
+        await put('insurance', { ...v, id: recId, label: label.value.trim(), policy: policy.value.trim(),
           policy_no: pno.value.trim(), renewal_date: date.value, premium: +prem.value || 0,
-          currency: cur.value, notify_days: +days.value || 30, kind: kind.value, note: note.value.trim() });
+          currency: cur.value, notify_days: +days.value || 30, kind: kind.value,
+          note: note.value.trim(), files });
         m.close();
       } }, 'Save'),
     ].filter(Boolean),

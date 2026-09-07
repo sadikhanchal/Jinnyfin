@@ -5,7 +5,7 @@
 //  and the last four digits. Everything else — full number, expiry, CVV, ATM PIN,
 //  notes — is AES-256-GCM ciphertext that only your vault PIN can open.
 // ============================================================================
-import { el, modal, toast, confirmBox, fmtDate, todayISO, daysBetween } from '../util.js';
+import { el, modal, toast, confirmBox, fmtDate, todayISO, daysBetween, dismissOnBackdrop } from '../util.js';
 import { DB, put, remove } from '../store.js';
 import { encryptJSON, decryptJSON, maskCard, groupCard, last4, luhnValid, cardNetwork } from '../crypto.js';
 import { topbar } from '../app.js';
@@ -77,7 +77,7 @@ async function askPin(reason = 'Enter your vault PIN') {
         if (remember.checked) sessionPin = v;
         res(v);
       } }, 'Unlock')] });
-    m.wrap.addEventListener('click', e => { if (e.target === m.wrap) res(null); });
+    dismissOnBackdrop(m.wrap, () => res(null));
     pin.addEventListener('keydown', e => { if (e.key === 'Enter') m.box.querySelector('.btn.primary').click(); });
     setTimeout(() => pin.focus(), 60);
   });

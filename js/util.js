@@ -10,7 +10,17 @@ export const uuid = () =>
       }));
 
 // ------------------------------------------------------------------- dates
-export const todayISO = () => new Date().toISOString().slice(0, 10);
+/**
+ * Today where you are standing, not where the prime meridian is.
+ *
+ * toISOString() answers in UTC, so in Jeddah (UTC+3) everything between
+ * midnight and 3am was dated to the day before — an entry made at 1am carried
+ * yesterday's date with today's time on it.
+ */
+export const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 export const iso = d => (d instanceof Date ? d.toISOString().slice(0, 10) : String(d || '').slice(0, 10));
 export const monthKey = d => iso(d).slice(0, 7);
 export const monthStart = d => iso(d).slice(0, 8) + '01';
@@ -152,6 +162,71 @@ function armBack(onBack) {
   return () => { off(); if (pushed) { pushed = false; history.back(); } };
 }
 
+/**
+ * Close an overlay by clicking the dimmed area around it — and only by that.
+ *
+ * A plain `click` listener is not enough. The browser fires click at the common
+ * ancestor of where the button went DOWN and where it came UP, so pressing
+ * inside a text field, dragging past the edge of the sheet and letting go
+ * counts as a click on the backdrop. That is what threw away a half-typed
+ * transaction whenever a description was selected with a slightly wide drag.
+ * Both ends of the press have to land on the backdrop for it to be a dismissal.
+ */
+export function dismissOnBackdrop(wrap, close) {
+  let began = false;
+  wrap.addEventListener('pointerdown', e => { began = e.target === wrap; });
+  wrap.addEventListener('pointerup', e => {
+    const real = began && e.target === wrap;
+    began = false;
+    if (real) close();
+  });
+  wrap.addEventListener('pointercancel', () => { began = false; });
+}
+
+/**
+ * A date that is still being typed rather than one somebody means.
+ *
+ * A native date field reports a COMPLETE value the moment its three parts make
+ * any valid date. Type the "2" of 2026 into a box whose day and month are
+ * already filled and the field says year 2 — a real date, 2023 years before the
+ * one being aimed at. Every date in this app is a modern one, so a year under
+ * 1000 can only mean the person has not finished typing.
+ */
+export const badYear = v => !!v && +String(v).slice(0, 4) < 1000;
+
+/**
+ * Wire a date box on a screen that redraws itself when the date changes.
+ *
+ * Without this, typing the "2" of 2026 hands over the year 2, the screen
+ * redraws, and the box being typed into is destroyed with the keyboard still in
+ * it — on a PC that means reaching for the mouse to get back in. `commit` is
+ * called only for a date worth acting on, and again on the way out of the box.
+ *
+ * Pass a `key` and the screen can hand the cursor back afterwards with
+ * restoreDateFocus(host).
+ */
+export function dateGuard(input, commit, key = null) {
+  if (key) input.dataset.dk = key;
+  const apply = () => {
+    const v = input.value;
+    if (badYear(v)) return;                     // still mid-year, leave it alone
+    if (key) pendingDateFocus = key;
+    commit(v);
+  };
+  input.onchange = apply;
+  input.onblur = apply;                         // committed by leaving the box
+  return input;
+}
+
+let pendingDateFocus = null;
+
+/** Put the cursor back in the date box the redraw threw away. */
+export function restoreDateFocus(host) {
+  if (!pendingDateFocus || !host) return;
+  const key = pendingDateFocus; pendingDateFocus = null;
+  requestAnimationFrame(() => host.querySelector(`input[data-dk="${key}"]`)?.focus());
+}
+
 export function confirmBox(msg, okLabel = 'Yes, do it') {
   return new Promise(res => {
     const wrap = el('div', { class: 'modal-wrap' });
@@ -163,7 +238,7 @@ export function confirmBox(msg, okLabel = 'Yes, do it') {
         el('button', { class: 'btn ghost', onclick: () => done(false) }, 'Cancel'),
         el('button', { class: 'btn danger', onclick: () => done(true) }, okLabel)));
     wrap.append(box);
-    wrap.addEventListener('click', e => { if (e.target === wrap) done(false); });
+    dismissOnBackdrop(wrap, () => done(false));
     document.body.append(wrap);
     disarm = armBack(() => { wrap.remove(); res(false); });
   });
@@ -195,7 +270,7 @@ export function modal(title, body, { wide = false, footer = null, lead = null } 
     el('div', { class: 'modal-body' }, body),
     footer ? el('div', { class: 'modal-foot' }, footer) : null);
   wrap.append(box);
-  wrap.addEventListener('click', e => { if (e.target === wrap) close(); });
+  dismissOnBackdrop(wrap, close);
   document.addEventListener('keydown', onKey);
   document.body.append(wrap);
   // Back closes the sheet you are looking at, not the screen behind it.

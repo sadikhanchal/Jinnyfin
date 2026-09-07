@@ -2,7 +2,8 @@
 //  payee.js — Lend / Borrow: who owes whom, every movement per payee, and a
 //  statement you can hand to the person on the other side of the debt.
 // ============================================================================
-import { el, money, num, fmtDate, fmtDateShort, downloadCSV, todayISO, esc, toast } from '../util.js';
+import { el, money, num, fmtDate, fmtDateShort, downloadCSV, todayISO, esc, toast,
+  dateGuard, restoreDateFocus } from '../util.js';
 import { DB, state, getSettings } from '../store.js';
 import * as C from '../calc.js';
 import { topbar } from '../app.js';
@@ -98,6 +99,7 @@ function draw() {
   else host.append(el('p', { class: 'small muted', style: 'margin-top:10px' }, 'Tap a payee to open their ledger.'));
 
   if (keep) requestAnimationFrame(() => window.scrollTo(0, keep));
+  restoreDateFocus(host);        // put the cursor back in the date box the redraw ate
 }
 
 // ------------------------------------------------------------ one ledger ---
@@ -121,7 +123,10 @@ function ledgerCard(lb) {
   // ------------------------------------------------------------- period --
   const dateIn = key => {
     const i = el('input', { type: 'date', value: range[key] || '' });
-    i.onchange = () => { range[key] = i.value; draw(); };
+    dateGuard(i, v => {
+      if (v === (range[key] || '')) return;
+      range[key] = v; draw();
+    }, key);
     return i;
   };
   const quick = (label, from, to) => el('button', {

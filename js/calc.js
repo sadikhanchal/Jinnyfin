@@ -178,6 +178,26 @@ export function txUpTo(asOf) {
  * Generic filter used by every report screen.
  * { from, to, year, month, account, type, parent, sub, payee, text, currency }
  */
+/**
+ * Does one row's text answer the query?
+ *
+ * A star means "and then, somewhere later". `Fruits*Jaseena` finds "Fruits to
+ * Jaseena" and leaves "Fruits to Faisal" alone — the parts have to turn up in
+ * the order they were typed. With no star it is the plain substring search it
+ * has always been, so nothing anyone already types changes meaning.
+ */
+function matches(hay, q) {
+  if (!q.includes('*')) return hay.includes(q);
+  let at = 0;
+  for (const part of q.split('*')) {
+    if (!part) continue;                        // a leading, trailing or doubled star
+    const i = hay.indexOf(part, at);
+    if (i < 0) return false;
+    at = i + part.length;
+  }
+  return true;
+}
+
 export function filterTx(f = {}) {
   const q = (f.text || '').toLowerCase().trim();
   return DB.transactions.filter(t => {
@@ -193,8 +213,10 @@ export function filterTx(f = {}) {
     if (f.currency && f.currency !== 'All' && t.currency !== f.currency) return false;
     if (f.event && f.event !== 'All' && t.event !== f.event) return false;
     if (q) {
-      const hay = `${t.note || ''} ${t.parent || ''} ${t.sub || ''} ${t.payee || ''} ${t.account || ''} ${t.event || ''} ${t.income || ''}${t.expense || ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
+      // The space before `expense` matters: without it a row of income 0 and
+      // expense 1200 read as "01200", so a search for 12000 found ₹1,200.
+      const hay = `${t.note || ''} ${t.parent || ''} ${t.sub || ''} ${t.payee || ''} ${t.account || ''} ${t.event || ''} ${t.income || ''} ${t.expense || ''}`.toLowerCase();
+      if (!matches(hay, q)) return false;
     }
     return true;
   });
@@ -573,13 +595,18 @@ export function budgetStatus(year, month) {
 export const yearsPresent = () =>
   [...new Set(DB.transactions.map(t => yearOf(t.date)))].sort((a, b) => b - a);
 
+// `active !== false` rather than `active === true`, so a database that has not
+// had the 1.27 migration run against it — where the column simply is not there
+// — carries on showing everything instead of emptying every dropdown.
 export function parentsFor(type) {
-  const set = new Set(DB.categories.filter(c => !type || c.type === type).map(c => c.parent));
+  const set = new Set(DB.categories
+    .filter(c => (!type || c.type === type) && c.active !== false)
+    .map(c => c.parent));
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 export function subsFor(type, parent) {
   const set = new Set(DB.categories
-    .filter(c => (!type || c.type === type) && c.parent === parent && c.sub)
+    .filter(c => (!type || c.type === type) && c.parent === parent && c.sub && c.active !== false)
     .map(c => c.sub));
   return [...set].sort((a, b) => a.localeCompare(b));
 }

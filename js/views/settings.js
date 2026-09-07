@@ -1,7 +1,8 @@
 // ============================================================================
 //  settings.js — accounts, categories, FX rates, reconciliation, backup, import.
 // ============================================================================
-import { el, money, num, fmtDate, todayISO, modal, toast, confirmBox, downloadCSV, downloadFile, monthStart, MONTHS } from '../util.js';
+import { el, money, num, fmtDate, todayISO, modal, toast, confirmBox, downloadCSV, downloadFile, monthStart, MONTHS,
+  dateGuard, restoreDateFocus } from '../util.js';
 import { DB, put, remove, putMany, getSettings, setSettings, sync, state, resetLocal, signOut,
   changePassword, sendPasswordReset, TABLES } from '../store.js';
 import { store as safeStore } from '../util.js';
@@ -14,6 +15,7 @@ import { openTxEditor } from './editor.js';
 
 let tab = 'general', host = null;
 let showInactive = false;      // closed accounts stay out of the way by default
+let showArchivedCats = false;  // and so do archived categories
 let asOf = null;               // reconcile up to this date (null = today)
 const TABS = [['general', 'General'], ['accounts', 'Accounts'], ['categories', 'Categories'],
   ['fx', 'Exchange rates'], ['reconcile', 'Reconcile'], ['check', 'Data check'],
@@ -30,6 +32,7 @@ function draw() {
     TABS.map(([k, t]) => el('button', { class: tab === k ? 'on' : '', onclick: () => { tab = k; draw(); } },
       t, k === 'check' && odd ? el('span', { class: 'tab-badge' }, String(odd)) : null))));
   ({ general, accounts, categories, fx, reconcile, check, data })[tab]();
+  restoreDateFocus(host);        // put the cursor back in the date box the redraw ate
 }
 
 // ------------------------------------------------------------------ general
@@ -264,7 +267,8 @@ function accounts() {
   const bals = C.allAccountBalances();
   const seen = C.lastActivity();
   const st = a => C.accountStatus(a, seen);
-  const all = [...DB.accounts].sort((x, y) => (x.grp || '').localeCompare(y.grp || '') || x.name.localeCompare(y.name));
+  // Your arrangement, the same one Reconcile and every dropdown now shows.
+  const all = [...DB.accounts];
   const dead = all.filter(a => !st(a).live).length;
   const list = showInactive ? all : all.filter(a => st(a).live);
   const t = el('table');
@@ -326,6 +330,9 @@ function editAccount(a = null) {
         if (!name.value.trim()) return toast('Name?', 'warn');
         const oldName = a?.name;
         await put('accounts', { ...v, created_at: v.created_at || todayISO(),
+          // A new account joins at the end of your arrangement. Without this it
+          // keeps the default 0 and jumps to the top of every list.
+          sort: v.sort ?? (Math.max(-1, ...DB.accounts.map(x => x.sort || 0)) + 1),
           name: name.value.trim(), currency: cur.value, grp: grp.value,
           opening_bal: +ob.value || 0, stated_balance: stated.value === '' ? null : +stated.value, pinned: act.checked });
         if (oldName && oldName !== name.value.trim()) {
@@ -391,22 +398,51 @@ function categories() {
 
   const byType = {};
   for (const c of DB.categories) {
+    if (c.active === false && !showArchivedCats) continue;
     if (!byType[c.type]) byType[c.type] = {};
     byType[c.type][c.parent] = [...(byType[c.type][c.parent] || []), c];
   }
+  const archived = DB.categories.filter(c => c.active === false).length;
   host.append(el('div', { class: 'row', style: 'margin-bottom:10px' },
-    el('button', { class: 'btn sm primary', onclick: () => editCat() }, '+ Category')));
+    el('button', { class: 'btn sm primary', onclick: () => editCat() }, '+ Category'),
+    archived ? el('label', { class: 'chip', style: 'cursor:pointer' },
+      el('input', { type: 'checkbox', checked: showArchivedCats,
+        onchange: e => { showArchivedCats = e.target.checked; draw(); } }),
+      ` show ${archived} archived`) : null));
+  host.append(el('p', { class: 'small muted', style: 'margin:0 0 10px' },
+    'Archiving takes a category out of every picker and leaves it on every entry that already uses it. '
+    + 'Use it for something like Family Visit that you may need again years later.'));
   for (const [type, parents] of Object.entries(byType)) {
     const card = el('div', { class: 'card', style: 'margin-bottom:12px' },
       el('div', { class: 'card-head' }, el('h3', {}, `${type} — ${Object.keys(parents).length} categories`)));
     for (const [parent, list] of Object.entries(parents).sort()) {
       const subs = list.filter(c => c.sub);
+      const live = list.some(c => c.active !== false);
+      const used = DB.transactions.filter(t => t.parent === parent).length;
       card.append(el('div', { style: 'padding:7px 0;border-bottom:1px solid var(--grid)' },
-        el('div', { class: 'row' }, el('b', {}, parent), el('div', { class: 'spacer' }),
-          el('span', { class: 'small muted' }, DB.transactions.filter(t => t.parent === parent).length + ' entries'),
-          el('button', { class: 'icon-btn', onclick: () => editCat({ type, parent, sub: null }) }, '+')),
+        el('div', { class: 'row' },
+          el('b', { style: live ? '' : 'opacity:.55' }, parent),
+          live ? null : el('span', { class: 'small muted' }, ' · archived'),
+          el('div', { class: 'spacer' }),
+          el('span', { class: 'small muted' }, used + ' entries'),
+          el('button', { class: 'icon-btn',
+            title: live
+              ? `Archive — the ${used} entries keep it, the pickers lose it`
+              : 'Bring it back into the pickers',
+            onclick: async () => {
+              // Every row under the name flips together, so the parent leaves
+              // the dropdown as one thing rather than half of one.
+              await putMany('categories', list.map(c => ({ ...c, active: !live })));
+              toast(live ? `${parent} archived` : `${parent} is back`);
+              draw();
+            } }, live ? '🗄' : '↩'),
+          el('button', { class: 'icon-btn', title: 'Add a sub-category',
+            onclick: () => editCat({ type, parent, sub: null }) }, '+')),
         subs.length ? el('div', { class: 'pill-list', style: 'margin-top:5px' },
-          subs.map(c => el('button', { class: 'chip', onclick: () => editCat(c) }, c.sub))) : null));
+          subs.map(c => el('button', {
+            class: 'chip', style: c.active === false ? 'opacity:.55' : '',
+            onclick: () => editCat(c),
+          }, c.sub + (c.active === false ? ' · archived' : '')))) : null));
     }
     host.append(card);
   }
@@ -418,15 +454,20 @@ function editCat(c = null) {
   const parent = el('input', { value: v.parent || '', list: 'dl-cp' });
   const sub = el('input', { value: v.sub || '' });
   const dl = el('datalist', { id: 'dl-cp' }); C.parentsFor(null).forEach(p => dl.append(el('option', { value: p })));
+  const live = el('input', { type: 'checkbox', checked: v.active !== false });
   const fld = (l, n) => el('div', { class: 'field full' }, el('label', {}, l), n);
   const m = modal(c?.id ? 'Edit category' : 'New category',
-    el('div', { class: 'form-grid' }, fld('Type', type), fld('Category', parent), fld('Sub-category', sub), dl), {
+    el('div', { class: 'form-grid' }, fld('Type', type), fld('Category', parent), fld('Sub-category', sub),
+      el('label', { class: 'field full row', style: 'flex-direction:row;gap:8px;align-items:center' },
+        live, ' Show in the pickers — untick to archive it without losing the old entries'),
+      dl), {
     footer: [
       c?.id ? el('button', { class: 'btn ghost', style: 'margin-right:auto;color:var(--critical)',
         onclick: async () => { if (await confirmBox('Remove this category?')) { await remove('categories', c.id); m.close(); } } }, 'Delete') : null,
       el('button', { class: 'btn primary', onclick: async () => {
         if (!parent.value.trim()) return toast('Category name?', 'warn');
-        await put('categories', { ...v, type: type.value, parent: parent.value.trim(), sub: sub.value.trim() || null });
+        await put('categories', { ...v, type: type.value, parent: parent.value.trim(),
+          sub: sub.value.trim() || null, active: live.checked });
         m.close();
       } }, 'Save'),
     ].filter(Boolean),
@@ -477,7 +518,10 @@ function reconcile() {
   const totalDiff = diffs.reduce((n, r) => n + (r.currency === 'SAR' ? r.diff * C.rates().sar : r.diff), 0);
 
   const dateIn = el('input', { type: 'date', value: asOf || todayISO(), style: 'max-width:180px' });
-  dateIn.onchange = () => { asOf = dateIn.value || null; draw(); };
+  dateGuard(dateIn, v => {
+    if ((v || null) === asOf) return;
+    asOf = v || null; draw();
+  }, 'asof');
 
   host.append(el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Balances & reconciliation'), el('div', { class: 'spacer' }),

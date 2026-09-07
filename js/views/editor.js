@@ -1,7 +1,8 @@
 // ============================================================================
 //  editor.js — add / edit a transaction (shared by every screen).
 // ============================================================================
-import { el, modal, toast, todayISO, uuid, evalAmount, confirmBox, money, round2, closeThen } from '../util.js';
+import { el, modal, toast, todayISO, uuid, evalAmount, confirmBox, money, round2, closeThen,
+  badYear } from '../util.js';
 import { DB, put, remove } from '../store.js';
 import { fxFor, currencyOf, convertAmount, parentsFor, subsFor, payeeNames, eventNames,
   activeAccounts as liveAccounts } from '../calc.js';
@@ -24,16 +25,27 @@ const INFLOW = new Set(['Borrow', 'Collecting debts', 'Interest/Return', 'Withdr
 
 /** Holdings you can invest in — from your own category list, so it grows with you. */
 const holdings = () => {
-  const seen = new Set(DB.categories.filter(c => c.type === 'Investment').map(c => c.parent));
-  for (const t of DB.transactions) if (t.type === 'Investment' && t.parent) seen.add(t.parent);
+  const rows = DB.categories.filter(c => c.type === 'Investment');
+  const known = new Set(rows.map(c => c.parent));
+  const seen = new Set(rows.filter(c => c.active !== false).map(c => c.parent));
+  // A holding that only ever appeared on old entries still counts — but one
+  // that has been archived on purpose stays out.
+  for (const t of DB.transactions) {
+    if (t.type === 'Investment' && t.parent && !known.has(t.parent)) seen.add(t.parent);
+  }
   return [...seen].filter(Boolean).sort((a, b) => a.localeCompare(b));
 };
 
-const byGroup = (a, b) => (a.grp === b.grp ? a.name.localeCompare(b.name) : a.grp === 'primary' ? -1 : 1);
-/** The same 60-day rule the rest of the app uses — not the stale flag the
- *  workbook import brought with it. */
-const activeAccounts = () => liveAccounts().slice().sort(byGroup);
-const everyAccount = () => DB.accounts.filter(a => !a.deleted).slice().sort(byGroup);
+/**
+ * The same 60-day rule the rest of the app uses — not the stale flag the
+ * workbook import brought with it.
+ *
+ * No sorting here. `DB.accounts` is already held in the arrangement set on
+ * Settings → Reconcile, and this dropdown re-sorting it by group and name is
+ * what made that arrangement look like it only worked on the Reconcile page.
+ */
+const activeAccounts = () => liveAccounts().slice();
+const everyAccount = () => DB.accounts.filter(a => !a.deleted);
 
 // ── what may live in an amount box ─────────────────────────────────────────
 // Digits, one dot per number, and the four operators. Nothing else — no commas,
@@ -58,6 +70,28 @@ function lastUsedAccount() {
     if (DB.accounts.some(a => a.name === n && a.active !== false)) return n;
   }
   return activeAccounts()[0]?.name || '';
+}
+
+/**
+ * What a typed value should become once you leave the box.
+ *
+ *   exact — it already is one of them; keep it
+ *   one   — it narrows to exactly one; finish the word
+ *   many  — still ambiguous ("F" across a dozen categories); clear it, because
+ *           a half-typed name is not a category and saving it would invent one
+ *   none  — nothing remotely like it; keep it and offer to add it
+ *   empty — nothing typed
+ */
+export function settleList(raw, options) {
+  const v = String(raw ?? '').trim();
+  if (!v) return { state: 'empty', value: '' };
+  const low = v.toLowerCase();
+  const exact = options.find(o => String(o).toLowerCase() === low);
+  if (exact) return { state: 'exact', value: exact };
+  const hits = options.filter(o => String(o).toLowerCase().startsWith(low));
+  if (hits.length === 1) return { state: 'one', value: hits[0] };
+  if (hits.length) return { state: 'many', value: '' };
+  return { state: 'none', value: v };
 }
 
 function datalist(id, values) {
@@ -176,8 +210,11 @@ export function openTxEditor(existing = null, presets = {}) {
   // it, hands focus straight back, and lowers it again. Any later blur is real.
   let keyPress = false;
   const claim = () => { keyPress = true; };
+  // tabindex -1: these are for the thumb, not the keyboard. On a PC the number
+  // row and the numeric keypad already carry + − × ÷, so making Tab walk through
+  // five buttons on the way from Amount to Account only slowed entry down.
   const key = (label, run, cls = '') => el('button', {
-    type: 'button', class: 'calc-key' + cls,
+    type: 'button', class: 'calc-key' + cls, tabindex: '-1',
     onpointerdown: claim, ontouchstart: claim, onmousedown: claim,
     onclick: e => { e.preventDefault(); keyPress = false; run(); },
   }, label);
@@ -209,6 +246,53 @@ export function openTxEditor(existing = null, presets = {}) {
   const eventIn = el('input', { list: 'dl-event', value: t.event || '', placeholder: 'Tag / event (optional)' });
   const noteIn = el('input', { value: t.note || '', placeholder: 'Description' });
   const fxNote = el('div', { class: 'hint' });
+
+  // ── boxes backed by a list ───────────────────────────────────────────────
+  // Anything at all used to be typeable here, and save() then created it
+  // without asking — so one slip of the keyboard left "dfasdaasd" sitting in
+  // the dropdown for good. Now the box settles itself when you leave it, and
+  // anything genuinely new has to be agreed to first.
+  const approved = new Set();                 // new names said yes to, this sheet
+  const chipFor = () => el('div', { class: 'newchip', hidden: true });
+  const parentChip = chipFor(), subChip = chipFor(), payeeChip = chipFor(), eventChip = chipFor();
+
+  function listBox(input, chip, optionsFor, noun, requires = null) {
+    let onChip = false;
+    // A pointer going down on the chip must not let the blur tear it away
+    // before the click lands — the same trick the calculator keys use.
+    chip.addEventListener('pointerdown', () => { onChip = true; });
+    const clear = () => { chip.replaceChildren(); chip.hidden = true; };
+    const settle = () => {
+      clear();
+      // A sub-category with no category above it has nothing to belong to.
+      if (requires && !requires().trim()) { input.value = ''; refreshLists(); return; }
+      const r = settleList(input.value, optionsFor());
+      input.value = r.value;
+      refreshLists();
+      if (r.state !== 'none' || approved.has(`${noun}:${r.value}`)) return;
+      chip.hidden = false;
+      chip.append(
+        el('span', {}, `“${r.value}” is not in your list yet.`),
+        el('button', { type: 'button', class: 'btn xs primary', tabindex: '-1',
+          onclick: () => { approved.add(`${noun}:${r.value}`); clear(); } }, 'Add it'),
+        el('button', { type: 'button', class: 'btn xs ghost', tabindex: '-1',
+          onclick: () => { input.value = ''; clear(); refreshLists(); } }, 'Clear'));
+    };
+    input.addEventListener('blur', () => {
+      if (onChip) { onChip = false; return; }
+      settle();
+    });
+    return settle;
+  }
+
+  const settleParent = listBox(parentIn, parentChip,
+    () => parentsFor(type === 'Transfer' ? null : type), 'category');
+  const settleSub = listBox(subIn, subChip,
+    () => subsFor(type === 'Transfer' ? null : type, parentIn.value), 'sub-category',
+    () => parentIn.value);
+  const settlePayee = listBox(payeeIn, payeeChip, payeeNames, 'payee');
+  const settleEvent = listBox(eventIn, eventChip, eventNames, 'event');
+  const settleAll = () => { settleParent(); settleSub(); settlePayee(); settleEvent(); };
 
   // Fixed-choice category pickers, kept in step with parentIn / subIn so that
   // save() never has to care which control the value came from.
@@ -268,7 +352,9 @@ export function openTxEditor(existing = null, presets = {}) {
   // Idle accounts are out of the way by default, but one tick brings them all
   // back — which is how you give an old unlinked transfer its real other side.
   let showIdle = false;
-  const idleTick = el('input', { type: 'checkbox' });
+  // Also out of the tab run, for the same reason: it sits between Amount and
+  // Account, and it is a once-in-a-while tick, not part of entering a row.
+  const idleTick = el('input', { type: 'checkbox', tabindex: '-1' });
   idleTick.addEventListener('change', () => {
     showIdle = idleTick.checked;
     fillAccounts();
@@ -377,7 +463,12 @@ export function openTxEditor(existing = null, presets = {}) {
   };
   acctSel.addEventListener('change', syncCurrency);
   toSel.addEventListener('change', () => { amountBoxB.touched = false; refreshLanded(); });
-  dateIn.addEventListener('change', () => { amountBoxB.touched = false; refreshLanded(); updateFx(); });
+  // Half a year is not a date to convert money at — the rate line would flash
+  // "Rate for 0002-09" at somebody in the middle of typing 2026.
+  dateIn.addEventListener('change', () => {
+    if (badYear(dateIn.value)) return;
+    amountBoxB.touched = false; refreshLanded(); updateFx();
+  });
 
   function refreshLists() {
     const catType = type === 'Transfer' ? null : type;
@@ -412,12 +503,12 @@ export function openTxEditor(existing = null, presets = {}) {
       add(type === 'Investment' ? 'Holding' : 'Category', catSel);
       add(type === 'Investment' ? 'Action' : 'Sub-category', subSel);
     } else if (type !== 'Transfer') {
-      add('Category', parentIn);
-      add('Sub-category', subIn);
+      add('Category', parentIn, '', parentChip);
+      add('Sub-category', subIn, '', subChip);
     }
 
-    if (type === 'Lend/Borrow') add('Payee', payeeIn, 'full');
-    else { add('Payee / tag', payeeIn); add('Event', eventIn); }
+    if (type === 'Lend/Borrow') add('Payee', payeeIn, 'full', payeeChip);
+    else { add('Payee / tag', payeeIn, '', payeeChip); add('Event', eventIn, '', eventChip); }
     add('Description', noteIn, 'full');
     if (type === 'Transfer' && !linked && !isNew) {
       form.append(el('div', { class: 'full alert soon' }, el('span', { class: 'ico' }, '🔗'),
@@ -449,9 +540,16 @@ export function openTxEditor(existing = null, presets = {}) {
 
   // -------------------------------------------------------------- save ----
   async function save(andAnother = false) {
+    // Tidy the list boxes first, in case Save was reached without leaving one.
+    settleAll();
     const amt = amountBoxA.value();
     if (!isFinite(amt) || amt === 0) { toast('Enter an amount', 'warn'); amountIn.focus(); return; }
     if (!acctSel.value) { toast('Pick an account', 'warn'); return; }
+    // Saving straight after typing the first digit of the year would file this
+    // in the year 2 — and then every date range in the app steps around it.
+    if (badYear(dateIn.value) || !dateIn.value) {
+      toast('Finish the date first', 'warn'); dateIn.focus(); return;
+    }
     const fx = fxFor(dateIn.value);
     const base = {
       date: dateIn.value, time: timeIn.value || null, account: acctSel.value,
@@ -459,6 +557,26 @@ export function openTxEditor(existing = null, presets = {}) {
       payee: payeeIn.value.trim() || null, event: eventIn.value.trim() || null,
       note: noteIn.value.trim() || null, fx,
     };
+
+    // Anything still new gets asked about ONCE, before a single row is written.
+    // Cancelling leaves the sheet exactly as it is so the spelling can be fixed
+    // — which is the whole point, and better than discovering "fghdfgdh" in the
+    // dropdown next month.
+    {
+      const catType = type === 'Transfer' ? null : type;
+      const pending = [];
+      if (base.parent && !approved.has('category:' + base.parent)
+        && !parentsFor(catType).includes(base.parent)) pending.push(`category “${base.parent}”`);
+      if (base.parent && base.sub && !approved.has('sub-category:' + base.sub)
+        && !subsFor(catType, base.parent).includes(base.sub))
+        pending.push(`sub-category “${base.sub}” under ${base.parent}`);
+      if (base.payee && !approved.has('payee:' + base.payee)
+        && !payeeNames().includes(base.payee)) pending.push(`payee “${base.payee}”`);
+      if (base.event && !approved.has('event:' + base.event)
+        && !eventNames().includes(base.event)) pending.push(`tag “${base.event}”`);
+      if (pending.length && !(await confirmBox(
+        `Add ${pending.join(' and ')} to your lists?`, 'Add'))) return;
+    }
 
     if (type === 'Transfer') {
       const from = acctSel.value, to = toSel.value;
@@ -530,14 +648,31 @@ export function openTxEditor(existing = null, presets = {}) {
       toast(isNew ? 'Saved' : 'Updated');
     }
     if (base.payee && !DB.payees.some(p => p.name === base.payee)) await put('payees', { name: base.payee });
-    if (base.parent && !DB.categories.some(c => c.parent === base.parent && (c.sub || '') === (base.sub || '')))
+    // `c.type === type` matters: without it, using a name that already exists
+    // under Expense in an Income entry matched here and no row was made, so the
+    // name never turned up in Income's own dropdown.
+    if (base.parent && !DB.categories.some(c => c.type === type
+      && c.parent === base.parent && (c.sub || '') === (base.sub || '')))
       await put('categories', { type, parent: base.parent, sub: base.sub || null });
 
     if (andAnother) reset(); else m.close();
   }
 
-  /** Ready for the next entry, with the amount back at its starting 0. */
+  /**
+   * Ready for the next entry, with the amount back at its starting 0.
+   *
+   * The identity has to be thrown away and minted again. `put` is an upsert
+   * keyed on id, so carrying the same id into the next save rewrote the row
+   * just written instead of adding one — five entries down "Save + add another"
+   * left a single row, the last one, and the four before it were gone. The row
+   * number and the transfer links go with it: they belong to the entry that was
+   * just saved, not to the blank one now on screen.
+   */
   function reset() {
+    t.id = uuid();
+    t.no = undefined;
+    t.transfer_group = null;
+    t.to_account = null;
     amountBoxA.set(0); amountBoxB.set(0);
     noteIn.value = '';
     amountIn.focus();
