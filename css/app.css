@@ -5,7 +5,11 @@
    ========================================================================== */
 
 :root {
-  --jf-css: "1.27";        /* bumped with every stylesheet change */
+  /* Must match BUILD.version in js/app.js. Settings compares the two to tell
+     you whether this device is holding an old stylesheet, so it is bumped with
+     every release — not only when the stylesheet itself changes, or the check
+     cries wolf. */
+  --jf-css: "1.27.6";
   color-scheme: light;
   --page:        #f9f9f7;
   --surface:     #fcfcfb;
