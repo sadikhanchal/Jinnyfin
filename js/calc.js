@@ -81,7 +81,10 @@ export function lastActivity() {
  * An account is live if money has moved on it in the last 60 days — or if it is
  * younger than that and simply has not been used yet. A brand new account must
  * not vanish the moment it is created; it gets the same 60 days to prove itself.
- * A ticked-off "Active" box in Settings still wins, so a decision can be forced.
+ * "Always show" forces the answer for one you want kept regardless.
+ *
+ * This is the app's ONLY meaning of active: the pickers, the account list,
+ * Reconcile and the net-worth totals all ask this same question.
  */
 export function accountStatus(a, seen = lastActivity(), today = todayISO()) {
   const last = seen.get(a.name) || null;
@@ -159,8 +162,23 @@ export function holdings() {
   }
   return out;
 }
-export const cashAccounts = () => DB.accounts.filter(a => a.grp === 'primary' && a.active !== false);
-export const investmentAccounts = () => DB.accounts.filter(a => a.grp === 'investment' && a.active !== false);
+/**
+ * The accounts a group's total is made of: in the group, and alive by the one
+ * rule the whole app uses — used lately, pinned, or new. An account you have
+ * finished with drops out of net worth; put a single entry in it and it is back,
+ * carrying its balance with it.
+ *
+ * `seen` and `today` are passed in when a PAST month is being totalled, so the
+ * chart asks whether each account was alive THEN rather than judging 2019 by
+ * what has been busy this week.
+ */
+function liveIn(grp, seen, today) {
+  const s = seen || lastActivity();
+  const d = today || todayISO();
+  return DB.accounts.filter(a => a.grp === grp && accountStatus(a, s, d).live);
+}
+export const cashAccounts = () => liveIn('primary');
+export const investmentAccounts = () => liveIn('investment');
 export function investmentCategories() {
   const s = getSettings();
   return s.investment_categories ||
@@ -268,6 +286,9 @@ export function allAccountBalances(asOf) {
 function accumulate(t, acc) {
   const inc = Number(t.income || 0), exp = Number(t.expense || 0);
   acc.bal.set(t.account, (acc.bal.get(t.account) || 0) + inc - exp);
+  // Rows arrive in date order, so the last one to touch an account is also the
+  // latest — which is what says whether it was still alive at this point.
+  if (t.account) acc.seen.set(t.account, iso(t.date));
   if (t.parent) {
     const iv = acc.inv.get(t.parent);
     if (iv) { iv.dep += exp; if (t.sub === 'Withdrawal') iv.wd += inc; else iv.interest += inc; }
@@ -281,20 +302,20 @@ function accumulate(t, acc) {
   }
 }
 function newAcc() {
-  const acc = { bal: new Map(), inv: new Map(), asset: new Map(), payee: new Map(), assetTags: new Set() };
+  const acc = { bal: new Map(), seen: new Map(), inv: new Map(), asset: new Map(), payee: new Map(), assetTags: new Set() };
   for (const a of DB.accounts) acc.bal.set(a.name, Number(a.opening_bal || 0));
   for (const c of investmentCategories()) acc.inv.set(c, { dep: 0, interest: 0, wd: 0 });
   for (const a of DB.assets) if (a.category_tag) acc.assetTags.add(a.category_tag);
   return acc;
 }
-function summarise(acc) {
+function summarise(acc, asOf = null) {
   const eq = equitySummary();
   let cash = 0;
-  for (const a of cashAccounts()) cash += liveINR(acc.bal.get(a.name) || 0, a.currency);
+  for (const a of liveIn('primary', acc.seen, asOf)) cash += liveINR(acc.bal.get(a.name) || 0, a.currency);
 
   const detail = [];
   let invTotal = 0;
-  for (const a of investmentAccounts()) {
+  for (const a of liveIn('investment', acc.seen, asOf)) {
     const v = liveINR(acc.bal.get(a.name) || 0, a.currency);
     detail.push({ name: a.name, value: v, kind: 'account' }); invTotal += v;
   }
@@ -342,23 +363,23 @@ function snapshot(asOf) {
 }
 
 /** Cash & bank total, converted to INR at today's rate. */
-export function cashTotalINR(asOf) { return summarise(snapshot(asOf)).cash; }
+export function cashTotalINR(asOf) { return summarise(snapshot(asOf), asOf).cash; }
 
 /** Investments: accounts (income − expense) + categories (deposits + returns − withdrawals). */
-export function investmentsINR(asOf) { return summarise(snapshot(asOf)).parts.inv; }
+export function investmentsINR(asOf) { return summarise(snapshot(asOf), asOf).parts.inv; }
 
 /** Fixed assets = cumulative spend on the tagged categories + pre-ledger cost. */
-export function fixedAssetsINR(asOf) { return summarise(snapshot(asOf)).parts.fa; }
+export function fixedAssetsINR(asOf) { return summarise(snapshot(asOf), asOf).parts.fa; }
 
 /**
  * Net lend/borrow. Payees settled in BOTH currencies drop out — their
  * historical-rate equivalent is only exchange-rate noise. Negative = you owe.
  */
-export function lendBorrowPositions(asOf) { return summarise(snapshot(asOf)).parts.lb; }
+export function lendBorrowPositions(asOf) { return summarise(snapshot(asOf), asOf).parts.lb; }
 
 export function netWorth(asOf) {
   const d = asOf || todayISO();
-  return { asOf: d, ...summarise(snapshot(d)) };
+  return { asOf: d, ...summarise(snapshot(d), d) };
 }
 
 /** Month-end net-worth series — one pass over the ledger for the whole chart. */
@@ -380,7 +401,7 @@ export function netWorthSeries(fromYear) {
   let i = 0;
   for (const mark of marks) {
     while (i < DB.transactions.length && DB.transactions[i].date <= mark) accumulate(DB.transactions[i++], acc);
-    const s = summarise(acc);
+    const s = summarise(acc, mark);
     out.push({ month: mark, cash: s.cash, investments: s.investments, assets: s.assets,
       lendBorrow: s.lendBorrow, total: s.total });
   }
@@ -638,10 +659,19 @@ export const payeeNames = () =>
 export const eventNames = () =>
   [...new Set(DB.transactions.map(t => t.event).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
-/** Reconciliation: app balance vs a figure you typed in from the bank/app. */
+/**
+ * Reconciliation: app balance vs a figure you typed in from the bank/app.
+ *
+ * Which accounts appear follows the same rule as every picker in the app — used
+ * lately, pinned, or new. It used to read the `active` column instead, a flag
+ * carried over from the workbook that no screen can change, so an account that
+ * came back to life by being used again stayed missing from this list with
+ * nothing on screen explaining why.
+ */
 export function reconciliation(asOf = null) {
   const bals = allAccountBalances(asOf);
-  return DB.accounts.filter(a => a.active !== false).map(a => {
+  const seen = lastActivity();
+  return DB.accounts.filter(a => accountStatus(a, seen).live).map(a => {
     const app = bals.get(a.name) || 0;
     const stated = a.stated_balance;
     return {

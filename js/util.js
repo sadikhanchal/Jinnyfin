@@ -152,14 +152,36 @@ export function toast(msg, kind = 'ok', ms = 2600, action = null) {
  * Make the phone's back gesture close an overlay instead of leaving the page.
  * Returns a disarm function: call it when the overlay closes by other means,
  * and it unwinds the history entry so no dead back press is left behind.
+ *
+ * Overlays stack — a confirmation opens on top of the transaction sheet — and
+ * only the topmost one may answer a back press. Each used to listen for
+ * popstate on its own, so closing the confirmation ran its own history.back(),
+ * and the sheet underneath heard that pop and closed itself too: press Cancel
+ * on "Add this category?" and the whole half-typed transaction vanished. One
+ * listener and a stack instead, with the pops we cause ourselves swallowed.
  */
+const backStack = [];
+let backSwallow = 0;
+
+if (typeof addEventListener === 'function') {
+  addEventListener('popstate', () => {
+    if (backSwallow > 0) { backSwallow--; return; }   // our own unwinding, not a press
+    const top = backStack.pop();
+    if (top) top.onBack();
+  });
+}
+
 function armBack(onBack) {
   let pushed = false;
-  const pop = () => { pushed = false; off(); onBack(); };
-  const off = () => removeEventListener('popstate', pop);
   try { history.pushState({ jfOverlay: 1 }, ''); pushed = true; } catch { pushed = false; }
-  addEventListener('popstate', pop);
-  return () => { off(); if (pushed) { pushed = false; history.back(); } };
+  const entry = { onBack, pushed };
+  backStack.push(entry);
+  return () => {
+    const i = backStack.indexOf(entry);
+    if (i < 0) return;                    // the back press already dealt with it
+    backStack.splice(i, 1);
+    if (entry.pushed) { backSwallow++; history.back(); }
+  };
 }
 
 /**

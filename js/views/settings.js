@@ -874,7 +874,7 @@ async function splitOffCurrency(acct, group) {
   const before = C.netWorth().total;
   // Only 'primary' and 'investment' accounts feed the totals — an account filed
   // under Other is already outside them, so splitting it moves no money at all.
-  const counted = ['primary', 'investment'].includes(acct.grp) && acct.active !== false;
+  const counted = ['primary', 'investment'].includes(acct.grp);
   const shift = counted
     ? round2(C.liveINR(group.net, group.currency) - C.liveINR(group.net, acct.currency))
     : 0;
@@ -928,7 +928,7 @@ function mixedCard() {
             `${m.ownRows} in ${m.account.currency} · ${g.rows.length} in ${g.currency}`),
           el('div', { class: 't3' },
             `${g.currency} ${num(g.net)} is being counted as ${m.account.currency}`
-            + (['primary', 'investment'].includes(m.account.grp) && m.account.active !== false
+            + (['primary', 'investment'].includes(m.account.grp)
               ? '' : ' · this account is outside your totals, so nothing moves'))),
         el('button', { class: 'btn sm', onclick: () => splitOffCurrency(m.account, g) },
           `Split off ${g.currency}`)));

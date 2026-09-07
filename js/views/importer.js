@@ -24,7 +24,7 @@ export function runImport() {
       // ---- reference tables ------------------------------------------------
       await putMany('accounts', D.accounts.map(a => ({
         id: uuid(), name: a.name, currency: a.currency, grp: a.group,
-        opening_bal: 0, active: a.active !== false, sort: 0,
+        opening_bal: 0, sort: 0,
       })));
       step(14, 'Accounts in.');
 

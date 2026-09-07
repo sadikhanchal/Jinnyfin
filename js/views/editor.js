@@ -67,7 +67,7 @@ export function sanitizeAmount(raw) {
 function lastUsedAccount() {
   for (let i = DB.transactions.length - 1; i >= Math.max(0, DB.transactions.length - 50); i--) {
     const n = DB.transactions[i].account;
-    if (DB.accounts.some(a => a.name === n && a.active !== false)) return n;
+    if (DB.accounts.some(a => a.name === n)) return n;
   }
   return activeAccounts()[0]?.name || '';
 }
@@ -266,8 +266,9 @@ export function openTxEditor(existing = null, presets = {}) {
       clear();
       const r = settleList(input.value, optionsFor());
       input.value = r.value;
-      if (after) after(r);
+      if (after) after(r, chip);
       refreshLists();
+      if (!chip.hidden) return;              // the hook already has something to say
       if (r.state !== 'none' || approved.has(`${noun}:${r.value}`)) return;
       chip.hidden = false;
       chip.append(
@@ -289,14 +290,26 @@ export function openTxEditor(existing = null, presets = {}) {
   // The sub-category box searches the whole type when no category is named, and
   // then names the category itself. Nobody should have to remember which of
   // twenty categories "Diesel" was filed under in order to be allowed to type
-  // it. A sub that two categories share cannot be resolved this way, so the
-  // category box is left for him and save() will not let it through empty.
+  // it. When two categories share the sub — a "Gifts" under Personal and
+  // another under Family — the app cannot know which, so it says so and offers
+  // the actual two to choose from rather than leaving him to guess at the list.
   const settleSub = listBox(subIn, subChip,
     () => subsFor(type === 'Transfer' ? null : type, parentIn.value), 'sub-category',
-    r => {
+    (r, chip) => {
       if (!r.value || parentIn.value.trim()) return;
       const owners = parentsOfSub(type === 'Transfer' ? null : type, r.value);
-      if (owners.length === 1) parentIn.value = owners[0];
+      if (owners.length === 1) { parentIn.value = owners[0]; return; }
+      if (owners.length < 2) return;
+      chip.hidden = false;
+      chip.append(el('span', {}, `“${r.value}” is in ${owners.length} categories — which one?`));
+      for (const p of owners) {
+        chip.append(el('button', { type: 'button', class: 'btn xs primary', tabindex: '-1',
+          onclick: () => {
+            parentIn.value = p;
+            chip.replaceChildren(); chip.hidden = true;
+            refreshLists();
+          } }, p));
+      }
     });
   const settlePayee = listBox(payeeIn, payeeChip, payeeNames, 'payee');
   const settleEvent = listBox(eventIn, eventChip, eventNames, 'event');
@@ -558,11 +571,18 @@ export function openTxEditor(existing = null, presets = {}) {
     if (badYear(dateIn.value) || !dateIn.value) {
       toast('Finish the date first', 'warn'); dateIn.focus(); return;
     }
-    // A sub-category usually fills the category in by itself. When two
-    // categories share the sub's name it cannot, and a sub filed under nothing
-    // is invisible to every report — so this is where it stops.
-    if (type !== 'Transfer' && subIn.value.trim() && !parentIn.value.trim()) {
-      toast(`“${subIn.value.trim()}” is under more than one category — pick which`, 'warn', 4200);
+    // Every entry needs a category. Without one it is money that happened and
+    // belongs to nothing: no report counts it, no budget sees it, and it can
+    // only ever be found by scrolling. A transfer is the exception — it carries
+    // "Transfer" — and an opening balance is not a spend at all.
+    if (type !== 'Transfer' && type !== 'Opening Balance' && !parentIn.value.trim()) {
+      const s = subIn.value.trim();
+      const owners = s ? parentsOfSub(type, s) : [];
+      // Naming them is the whole point: being told a sub is "under more than
+      // one category" without being told WHICH ones leaves you guessing at a
+      // dropdown of fifty.
+      if (owners.length > 1) toast(`“${s}” is under ${owners.join(' or ')} — pick which one`, 'warn', 6000);
+      else toast('Pick a category', 'warn');
       parentIn.focus(); return;
     }
     const fx = fxFor(dateIn.value);
