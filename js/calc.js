@@ -604,10 +604,32 @@ export function parentsFor(type) {
     .map(c => c.parent));
   return [...set].sort((a, b) => a.localeCompare(b));
 }
+/**
+ * Sub-categories to offer. With no category named, that is EVERY sub of the
+ * type — because remembering that "Diesel" lives under "Vehicle" is the app's
+ * job, not the person's. Pick the sub and the category follows; see
+ * parentsOfSub. Callers that genuinely want one category's subs pass it.
+ */
 export function subsFor(type, parent) {
   const set = new Set(DB.categories
-    .filter(c => (!type || c.type === type) && c.parent === parent && c.sub && c.active !== false)
+    .filter(c => (!type || c.type === type) && (!parent || c.parent === parent)
+      && c.sub && c.active !== false)
     .map(c => c.sub));
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Which categories own a sub-category. Usually one — and then the category box
+ * can fill itself in. Two means the name is genuinely shared (a "Fuel" under
+ * Vehicle and another under Generator) and only the person knows which.
+ */
+export function parentsOfSub(type, sub) {
+  const want = String(sub || '').trim().toLowerCase();
+  if (!want) return [];
+  const set = new Set(DB.categories
+    .filter(c => (!type || c.type === type) && c.active !== false
+      && String(c.sub || '').trim().toLowerCase() === want)
+    .map(c => c.parent));
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 export const payeeNames = () =>

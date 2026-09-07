@@ -418,7 +418,9 @@ function categories() {
     for (const [parent, list] of Object.entries(parents).sort()) {
       const subs = list.filter(c => c.sub);
       const live = list.some(c => c.active !== false);
-      const used = DB.transactions.filter(t => t.parent === parent).length;
+      // By type as well as name: "Gift" can be an Income category and an Expense
+      // one, and counting them together overstated both.
+      const used = DB.transactions.filter(t => !t.deleted && t.type === type && t.parent === parent).length;
       card.append(el('div', { style: 'padding:7px 0;border-bottom:1px solid var(--grid)' },
         el('div', { class: 'row' },
           el('b', { style: live ? '' : 'opacity:.55' }, parent),
@@ -448,6 +450,17 @@ function categories() {
   }
 }
 
+/**
+ * How many entries this category row is actually on. A row naming a sub counts
+ * that sub alone; a row that is only a category counts everything filed under
+ * the name, sub or no sub, because the name is what would be going away.
+ */
+function usageOf(c) {
+  if (!c || !c.parent) return 0;
+  return DB.transactions.filter(t => !t.deleted && t.type === c.type && t.parent === c.parent
+    && (c.sub ? t.sub === c.sub : true)).length;
+}
+
 function editCat(c = null) {
   const v = c || { type: 'Expense', parent: '', sub: '' };
   const type = el('select', {}, ...['Expense', 'Income', 'Lend/Borrow', 'Investment'].map(t => el('option', { value: t, selected: v.type === t }, t)));
@@ -463,7 +476,28 @@ function editCat(c = null) {
       dl), {
     footer: [
       c?.id ? el('button', { class: 'btn ghost', style: 'margin-right:auto;color:var(--critical)',
-        onclick: async () => { if (await confirmBox('Remove this category?')) { await remove('categories', c.id); m.close(); } } }, 'Delete') : null,
+        onclick: async () => {
+          // Deleting a name that entries still carry does not tidy anything up:
+          // the entries keep the text and the category behind it is gone, so
+          // they answer to nothing in any picker or report. Archiving is what
+          // he actually wants in that case, and it is offered here.
+          const used = usageOf(c);
+          if (used) {
+            const what = c.sub ? `${c.parent} · ${c.sub}` : c.parent;
+            const many = used === 1 ? '1 entry' : `${used} entries`;
+            if (await confirmBox(
+              `“${what}” is on ${many}. Deleting it leaves them pointing at a category that no longer exists. `
+              + `Archive it instead — it goes out of the pickers and those ${used === 1 ? 'entries keeps' : 'entries keep'} their name. `
+              + `To delete it for good, change ${used === 1 ? 'that entry' : 'those entries'} to another category first.`,
+              'Archive it')) {
+              await put('categories', { ...c, active: false });
+              toast(`${what} archived`);
+              m.close();
+            }
+            return;
+          }
+          if (await confirmBox('Remove this category?')) { await remove('categories', c.id); m.close(); }
+        } }, 'Delete') : null,
       el('button', { class: 'btn primary', onclick: async () => {
         if (!parent.value.trim()) return toast('Category name?', 'warn');
         await put('categories', { ...v, type: type.value, parent: parent.value.trim(),
@@ -679,8 +713,30 @@ function data() {
       el('button', { class: 'btn danger', onclick: wipeAll }, '⚠ Delete everything'))));
 
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
+    el('div', { class: 'card-head' }, el('h3', {}, 'Tidy up')),
+    el('p', { class: 'small muted', style: 'margin:6px 0 10px' },
+      'Older transfers were written with the category on the side the money left and nothing on the '
+      + 'side it arrived, so the same transfer reads “Transfer” on one account statement and shows an '
+      + 'empty Category column on the other. New ones no longer do this; these are the ones already saved.'),
+    el('button', { class: 'btn', onclick: fixTransferCategories }, 'Fill in blank transfer categories')));
+
+  host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Numbers check')),
     verifyBlock()));
+}
+
+/** Give every transfer entry the category its other half already had. */
+async function fixTransferCategories() {
+  const legs = DB.transactions.filter(t => !t.deleted && t.type === 'Transfer' && !t.parent);
+  if (!legs.length) { toast('Nothing to fix — every transfer already carries its category'); return; }
+  const one = legs.length === 1;
+  if (!(await confirmBox(
+    `${legs.length} transfer ${one ? 'entry has' : 'entries have'} an empty Category column. `
+    + `Fill ${one ? 'it' : 'them'} in with “Transfer”? Nothing else about ${one ? 'that entry' : 'those entries'} changes — `
+    + 'no amount, no account, no date.', 'Fill them in'))) return;
+  await putMany('transactions', legs.map(t => ({ ...t, parent: 'Transfer' })));
+  toast(`${legs.length} ${one ? 'entry' : 'entries'} fixed`);
+  draw();
 }
 
 function verifyBlock() {

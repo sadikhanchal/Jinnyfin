@@ -4,7 +4,7 @@
 import { el, modal, toast, todayISO, uuid, evalAmount, confirmBox, money, round2, closeThen,
   badYear } from '../util.js';
 import { DB, put, remove } from '../store.js';
-import { fxFor, currencyOf, convertAmount, parentsFor, subsFor, payeeNames, eventNames,
+import { fxFor, currencyOf, convertAmount, parentsFor, subsFor, parentsOfSub, payeeNames, eventNames,
   activeAccounts as liveAccounts } from '../calc.js';
 
 const TYPES = ['Expense', 'Income', 'Transfer', 'Lend/Borrow', 'Investment'];
@@ -256,7 +256,7 @@ export function openTxEditor(existing = null, presets = {}) {
   const chipFor = () => el('div', { class: 'newchip', hidden: true });
   const parentChip = chipFor(), subChip = chipFor(), payeeChip = chipFor(), eventChip = chipFor();
 
-  function listBox(input, chip, optionsFor, noun, requires = null) {
+  function listBox(input, chip, optionsFor, noun, after = null) {
     let onChip = false;
     // A pointer going down on the chip must not let the blur tear it away
     // before the click lands — the same trick the calculator keys use.
@@ -264,10 +264,9 @@ export function openTxEditor(existing = null, presets = {}) {
     const clear = () => { chip.replaceChildren(); chip.hidden = true; };
     const settle = () => {
       clear();
-      // A sub-category with no category above it has nothing to belong to.
-      if (requires && !requires().trim()) { input.value = ''; refreshLists(); return; }
       const r = settleList(input.value, optionsFor());
       input.value = r.value;
+      if (after) after(r);
       refreshLists();
       if (r.state !== 'none' || approved.has(`${noun}:${r.value}`)) return;
       chip.hidden = false;
@@ -287,9 +286,18 @@ export function openTxEditor(existing = null, presets = {}) {
 
   const settleParent = listBox(parentIn, parentChip,
     () => parentsFor(type === 'Transfer' ? null : type), 'category');
+  // The sub-category box searches the whole type when no category is named, and
+  // then names the category itself. Nobody should have to remember which of
+  // twenty categories "Diesel" was filed under in order to be allowed to type
+  // it. A sub that two categories share cannot be resolved this way, so the
+  // category box is left for him and save() will not let it through empty.
   const settleSub = listBox(subIn, subChip,
     () => subsFor(type === 'Transfer' ? null : type, parentIn.value), 'sub-category',
-    () => parentIn.value);
+    r => {
+      if (!r.value || parentIn.value.trim()) return;
+      const owners = parentsOfSub(type === 'Transfer' ? null : type, r.value);
+      if (owners.length === 1) parentIn.value = owners[0];
+    });
   const settlePayee = listBox(payeeIn, payeeChip, payeeNames, 'payee');
   const settleEvent = listBox(eventIn, eventChip, eventNames, 'event');
   const settleAll = () => { settleParent(); settleSub(); settlePayee(); settleEvent(); };
@@ -550,6 +558,13 @@ export function openTxEditor(existing = null, presets = {}) {
     if (badYear(dateIn.value) || !dateIn.value) {
       toast('Finish the date first', 'warn'); dateIn.focus(); return;
     }
+    // A sub-category usually fills the category in by itself. When two
+    // categories share the sub's name it cannot, and a sub filed under nothing
+    // is invisible to every report — so this is where it stops.
+    if (type !== 'Transfer' && subIn.value.trim() && !parentIn.value.trim()) {
+      toast(`“${subIn.value.trim()}” is under more than one category — pick which`, 'warn', 4200);
+      parentIn.focus(); return;
+    }
     const fx = fxFor(dateIn.value);
     const base = {
       date: dateIn.value, time: timeIn.value || null, account: acctSel.value,
@@ -591,7 +606,7 @@ export function openTxEditor(existing = null, presets = {}) {
           currency: currencyOf(rowIsIn ? to : from),
           income: rowIsIn ? amt : 0, expense: rowIsIn ? 0 : amt,
           transfer_group: t.transfer_group || null, to_account: t.to_account || null,
-          parent: rowIsIn ? base.parent : 'Transfer', no: t.no ?? null });
+          parent: 'Transfer', no: t.no ?? null });
         toast('Saved this side only — the other half is still unlinked', 'warn', 5000);
         if (andAnother) { reset(); return; }
         m.close(); return;
@@ -632,9 +647,12 @@ export function openTxEditor(existing = null, presets = {}) {
         income: 0, expense: amt, transfer_group: grp, to_account: to, parent: 'Transfer',
         no: outRow?.no ?? null, note: base.note || `To ${to}`,
       });
+      // Both legs carry the same category. The arriving side used to be left
+      // blank, so the very same transfer read "Transfer" on the account it left
+      // and showed an empty Category column on the account it landed in.
       await put('transactions', {
         ...base, id: inRow?.id ?? uuid(), type: 'Transfer', account: to, currency: inCur,
-        income: inAmt, expense: 0, transfer_group: grp, to_account: null, parent: null,
+        income: inAmt, expense: 0, transfer_group: grp, to_account: null, parent: 'Transfer',
         no: inRow?.no ?? null, note: base.note || `From ${from}`,
       });
       toast(linked || (outRow && inRow) ? 'Transfer saved' : 'Transfer saved and linked');
@@ -706,7 +724,9 @@ export function openTxEditor(existing = null, presets = {}) {
         // copy would be money arriving from nowhere.
         const date = todayISO();
         const time = new Date().toTimeString().slice(0, 5);
-        let no = Math.max(0, ...DB.transactions.map(x => x.no || 0));
+        // Spreading a whole ledger into Math.max is an argument per row, which
+        // a long history can push past what the engine accepts. Walk it.
+        let no = DB.transactions.reduce((m2, x) => Math.max(m2, +x.no || 0), 0);
         const legs = t.transfer_group
           ? DB.transactions.filter(x => x.transfer_group === t.transfer_group && !x.deleted) : [];
         if (legs.length > 1) {
@@ -716,6 +736,11 @@ export function openTxEditor(existing = null, presets = {}) {
               fx: fxFor(date), transfer_group: grp, no: ++no });
           }
           toast(`Both sides copied to today`);
+        } else if (t.type === 'Transfer') {
+          // Half a transfer copied on its own is money appearing out of nowhere
+          // on one account. Link the other side first, then copy the pair.
+          toast('This transfer has only one side linked — fix that before copying it', 'warn', 5000);
+          return;
         } else {
           await put('transactions', { ...t, id: uuid(), date, time,
             fx: fxFor(date), transfer_group: null, no: ++no });
@@ -735,7 +760,11 @@ export function openTxEditor(existing = null, presets = {}) {
     onclick: () => closeThen(m, () => { location.hash = '#/transactions'; }),
   }, '\ud83d\udd52');
   const m = modal(existing ? 'Edit transaction' : 'New transaction', body, { footer, lead: history_ });
-  setTimeout(() => amountIn.focus(), 60);
+  // Selected, not just focused. A new sheet opens on "0" and the focus handler
+  // selects that for you; an existing entry opens on a real figure and used to
+  // drop the caret at the far left, so correcting 3,849 meant deleting it by
+  // hand first. Typing now replaces the number outright, as it should.
+  setTimeout(() => { amountIn.focus(); amountIn.select(); }, 60);
   body.addEventListener('keydown', e => { if (e.key === 'Enter' && e.metaKey) save(false); });
   return m;
 }
