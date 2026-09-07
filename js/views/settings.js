@@ -15,6 +15,7 @@ import { openTxEditor } from './editor.js';
 
 let tab = 'general', host = null;
 let showInactive = false;      // closed accounts stay out of the way by default
+let pendingRecFocus = null;    // whose "Bank says" box gets the cursor after a redraw
 let showArchivedCats = false;  // and so do archived categories
 let asOf = null;               // reconcile up to this date (null = today)
 const TABS = [['general', 'General'], ['accounts', 'Accounts'], ['categories', 'Categories'],
@@ -580,13 +581,21 @@ function reconcile() {
   for (const r of rows) {
     const inp = el('input', {
       type: 'number', step: 'any', class: 'inline-num', value: r.stated ?? '',
-      placeholder: '—', inputmode: 'decimal',
+      placeholder: '—', inputmode: 'decimal', dataset: { rk: r.id },
     });
     // Saving on change (not on every keystroke) keeps the sync queue quiet.
     inp.onchange = async () => {
       const acct = DB.accounts.find(a => a.id === r.id);
       if (!acct) return;
       const v = inp.value.trim() === '' ? null : +inp.value;
+      // Saving redraws the whole tab, which destroys the box being typed in —
+      // and the Tab that triggered it then landed on the first thing in the
+      // card, the "As of" date. Name the account whose box should have it
+      // instead: the next one down, so a column of balances can be typed
+      // straight through. On the last account there is no next one, and focus
+      // is left to fall where it will.
+      const i = rows.findIndex(x => x.id === r.id);
+      pendingRecFocus = rows[i + 1]?.id || null;
       await put('accounts', { ...acct, stated_balance: v, reconciled_at: v == null ? null : (asOf || todayISO()) });
       draw();
     };
@@ -616,6 +625,15 @@ function reconcile() {
     el('p', { class: 'hint', style: 'margin-top:10px' },
       'A positive difference means the app counts more than the bank does — usually an entry that never happened, '
       + 'or one entered twice. A negative difference means an entry is missing. Fix it in Transactions and this goes to zero.')));
+
+  if (pendingRecFocus) {
+    const key = pendingRecFocus; pendingRecFocus = null;
+    // After the paint, or the box is not on screen yet to take it.
+    requestAnimationFrame(() => {
+      const box = host.querySelector(`input[data-rk="${key}"]`);
+      if (box) { box.focus(); box.select(); }
+    });
+  }
 }
 
 function exportRecon(rows) {

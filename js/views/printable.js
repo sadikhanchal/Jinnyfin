@@ -12,8 +12,7 @@ const OWNER_SITE = 'sadikhanchal.com';
  *  without one is useless the moment it leaves your hands. */
 export const printDate = d => {
   const [y, m, dd] = String(d || '').split('-');
-  const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return y ? `${dd} ${MON[+m - 1]} ${y}` : '';
+  return y ? `${dd}-${m}-${y}` : '';
 };
 
 /**

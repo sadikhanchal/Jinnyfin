@@ -41,15 +41,18 @@ export function addDays(d, n) {
 export function daysBetween(a, b) {
   return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
 }
+// Day-month-year, all digits, everywhere the app writes a date itself. The one
+// place this cannot reach is the native date box: that widget is drawn by the
+// phone or the PC in ITS OWN region format, and no page can override it.
 export function fmtDate(d) {
   if (!d) return '';
   const [y, m, dd] = iso(d).split('-');
-  return `${dd} ${MON3[+m - 1]} ${y}`;
+  return `${dd}-${m}-${y}`;
 }
 export function fmtDateShort(d) {
   if (!d) return '';
-  const [y, m, dd] = iso(d).split('-');
-  return `${dd} ${MON3[+m - 1]}`;
+  const [, m, dd] = iso(d).split('-');
+  return `${dd}-${m}`;
 }
 
 // ------------------------------------------------------------------ money
