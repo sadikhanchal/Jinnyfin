@@ -5,7 +5,7 @@
    ========================================================================== */
 
 :root {
-  --jf-css: "1.26";        /* bumped with every stylesheet change */
+  --jf-css: "1.27";        /* bumped with every stylesheet change */
   color-scheme: light;
   --page:        #f9f9f7;
   --surface:     #fcfcfb;
@@ -249,6 +249,29 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--brand); }
 .btn.danger { background: var(--critical); border-color: var(--critical); color: #fff; }
 .btn.ghost { background: none; }
 .btn.sm { padding: 5px 9px; font-size: 12.5px; }
+.btn.xs { padding: 2px 8px; font-size: 11.5px; border-radius: 7px; }
+
+/* The quiet line under a Category / Payee box when what was typed is not on
+   the list yet. It asks rather than assuming, so a typo cannot become a
+   category. It sits inside .field, below the input, and never steals focus. */
+.newchip {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 4px; padding: 4px 6px;
+  font-size: 11.5px; color: var(--ink-2);
+  background: var(--surface-2); border: 1px dashed var(--hair); border-radius: 8px;
+}
+.newchip > span { flex: 1 1 auto; min-width: 0; }
+
+/* One attached invoice or warranty card. */
+.file-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 7px; margin-top: 5px;
+  background: var(--surface-2); border: 1px solid var(--hair); border-radius: 8px;
+}
+.file-name {
+  flex: 1 1 auto; min-width: 0; font-size: 12.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .icon-btn { border: 0; background: none; cursor: pointer; padding: 5px 7px; border-radius: 7px; color: var(--ink-2); font-size: 15px; }
 .icon-btn:hover { background: var(--surface-2); color: var(--ink); }
