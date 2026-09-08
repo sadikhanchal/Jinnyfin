@@ -35,6 +35,47 @@ function draw() {
     }, b.name)));
   host.append(chips);
 
+  // Every business on one page. Tapping through the chips one at a time tells
+  // you how each did but never what they did together — which is the first
+  // thing a P&L sheet is for, and the one thing this page could not answer.
+  {
+    const all = DB.businesses.map(b => ({ b, pl: C.businessPL(b, {}) }));
+    const t = el('table');
+    t.append(el('thead', {}, el('tr', {},
+      el('th', {}, 'Business'), el('th', { class: 'n' }, '▲ Income'),
+      el('th', { class: 'n' }, '▼ Expense'), el('th', { class: 'n' }, 'Net'),
+      el('th', { class: 'n' }, 'Entries'))));
+    const tb = el('tbody');
+    let ti = 0, te = 0;
+    for (const [i, { b, pl }] of all.entries()) {
+      ti += pl.income.equiv; te += pl.expense.equiv;
+      tb.append(el('tr', {
+        class: i === pick ? 'picked' : '', style: 'cursor:pointer',
+        onclick: () => { pick = i; draw(); },
+      },
+        el('td', {}, b.name),
+        el('td', { class: 'n' }, pl.income.equiv ? num(pl.income.equiv) : '—'),
+        el('td', { class: 'n' }, pl.expense.equiv ? num(pl.expense.equiv) : '—'),
+        el('td', { class: 'n ' + (pl.netEquiv > 0 ? 'pos' : pl.netEquiv < 0 ? 'neg' : '') },
+          pl.rows.length ? num(pl.netEquiv) : '—'),
+        el('td', { class: 'n muted' }, pl.rows.length
+          ? pl.rows.length.toLocaleString('en-IN')
+          : el('span', { style: 'color:var(--warning)' }, 'nothing matches'))));
+    }
+    tb.append(el('tr', { class: 'total' },
+      el('td', {}, el('b', {}, 'All businesses')),
+      el('td', { class: 'n' }, el('b', {}, num(ti))),
+      el('td', { class: 'n' }, el('b', {}, num(te))),
+      el('td', { class: 'n ' + (ti - te > 0 ? 'pos' : ti - te < 0 ? 'neg' : '') }, el('b', {}, num(ti - te))),
+      el('td', {})));
+    t.append(tb);
+    host.append(el('div', { class: 'card', style: 'margin-bottom:12px' },
+      el('div', { class: 'card-head' }, el('h3', {}, 'All businesses — all time (≈ INR)')),
+      el('p', { class: 'small muted', style: 'margin:0 0 8px' },
+        'Every business together, whatever period is chosen below. Tap a row to open it.'),
+      el('div', { class: 'table-wrap' }, t)));
+  }
+
   const sel = (label, key, opts, all) => {
     const s = el('select', {}, el('option', { value: 'All' }, all),
       ...opts.map(o => el('option', { value: o.v ?? o, selected: String(f[key]) === String(o.v ?? o) }, o.t ?? o)));
@@ -48,6 +89,39 @@ function draw() {
       el('button', { class: 'btn sm', onclick: () => editBusiness(biz) }, '✎ Edit setup'))));
 
   const pl = C.businessPL(biz, f);
+
+  // A business whose categories match nothing showed a confident ₹0 and said
+  // nothing. Two of them sat that way for years over a single capital letter —
+  // "Business Profit" in the setup against "Business profit" on 58 entries,
+  // ₹2.4 lakh of income invisible. So when a side matches nothing at all, say
+  // so, and if the only difference is spelling, name the category that would
+  // have worked.
+  const near = (kind, parent, sub) => {
+    if (!parent) return null;
+    if (DB.transactions.some(t => t.type === kind && t.parent === parent
+      && (!sub || t.sub === sub) && !t.deleted)) return null;
+    const low = String(parent).toLowerCase();
+    const hit = DB.transactions.find(t => t.type === kind && !t.deleted
+      && String(t.parent || '').toLowerCase() === low
+      && (!sub || String(t.sub || '').toLowerCase() === String(sub).toLowerCase()));
+    return { parent, sub, kind, suggest: hit ? { parent: hit.parent, sub: hit.sub } : null };
+  };
+  const misses = [near('Income', biz.income_parent, biz.income_sub),
+    near('Expense', biz.expense_parent, biz.expense_sub)].filter(Boolean);
+  for (const m of misses) {
+    host.append(el('div', { class: 'alert slim' }, el('span', { class: 'ico' }, '⚠️'),
+      el('div', {}, `Nothing is filed under the ${m.kind.toLowerCase()} category `
+        + `“${m.parent}${m.sub ? ' › ' + m.sub : ''}”, so that side of this page reads zero.`,
+      m.suggest
+        ? el('span', {}, ' Entries do exist under ',
+          el('b', {}, `“${m.suggest.parent}${m.suggest.sub ? ' › ' + m.suggest.sub : ''}”`),
+          ' — the spelling differs. Open ',
+          el('a', { href: '#', onclick: e => { e.preventDefault(); editBusiness(biz); } }, 'Edit setup'),
+          ' and correct it.')
+        : el('span', {}, ' Check the category name in ',
+          el('a', { href: '#', onclick: e => { e.preventDefault(); editBusiness(biz); } }, 'Edit setup'), '.'))));
+  }
+
   host.append(el('div', { class: 'grid g4 keep2' },
     kpi('Income ≈ INR', money(pl.income.equiv, 'INR', false), 'income'),
     kpi('Expense ≈ INR', money(pl.expense.equiv, 'INR', false), 'expense'),

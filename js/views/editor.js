@@ -63,6 +63,15 @@ export function sanitizeAmount(raw) {
   return s.split(/([+\-*/])/).map(p => (/^[+\-*/]$/.test(p) ? p : oneDot(p))).join('');
 }
 
+/**
+ * The next entry number. Walking the ledger looks clumsier than
+ * `Math.max(...rows)`, but that spread is one argument per row: 25,000 is
+ * survivable on a desktop and JavaScriptCore on an iPhone gives out around
+ * 65,000, throwing while the row object is still being built — so Save would
+ * quietly do nothing at all, with no toast and no saved entry.
+ */
+const nextNo = () => DB.transactions.reduce((m, x) => Math.max(m, +x.no || 0), 0) + 1;
+
 /** The account you used last — a much better default than whatever sorts first. */
 function lastUsedAccount() {
   for (let i = DB.transactions.length - 1; i >= Math.max(0, DB.transactions.length - 50); i--) {
@@ -488,7 +497,12 @@ export function openTxEditor(existing = null, presets = {}) {
   // "Rate for 0002-09" at somebody in the middle of typing 2026.
   dateIn.addEventListener('change', () => {
     if (badYear(dateIn.value)) return;
-    amountBoxB.touched = false; refreshLanded(); updateFx();
+    // `touched` is deliberately NOT cleared here. Changing the To account
+    // changes the currency, so what landed really must be worked out again —
+    // but a date is corrected far more often than the landed figure is wrong,
+    // and clearing it rewrote 1,000 SAR that actually arrived as ₹22,400 into
+    // ₹25,239 the moment a one-day typo was fixed.
+    refreshLanded(); updateFx();
   });
 
   function refreshLists() {
@@ -549,7 +563,14 @@ export function openTxEditor(existing = null, presets = {}) {
       [...typeRow.children].forEach(c => c.classList.toggle('on', c.dataset.ty === ty));
       // A category belongs to its type. Carrying it across is how you end up
       // filing an investment under "Borrow".
-      if (!existing || existing.type !== ty) { parentIn.value = ''; subIn.value = ''; }
+      //
+      // Coming back to the row's OWN type restores the category it was saved
+      // with — not whatever the type you passed through left in the box. Going
+      // Expense → Lend → Expense used to bring "Borrow" back with it, and
+      // "Borrow" is an inflow: the row then saved a spend as money received.
+      const home = existing && existing.type === ty;
+      parentIn.value = home ? (t.parent || '') : '';
+      subIn.value = home ? (t.sub || '') : '';
       layout();
     }, dataset: { ty } },
       el('span', { class: 'ti' }, ICON[ty]),
@@ -560,6 +581,18 @@ export function openTxEditor(existing = null, presets = {}) {
   syncCurrency();
 
   // -------------------------------------------------------------- save ----
+  /**
+   * Nothing here may fail in silence. A write that rejects — no space left on
+   * the phone is the common one — used to leave the sheet sitting open with no
+   * message, looking exactly like a Save that had simply not been pressed.
+   */
+  async function guard(andAnother) {
+    try { await save(andAnother); } catch (e) {
+      console.error('[save]', e);
+      toast('Could not save: ' + (e?.message || e), 'warn', 6000);
+    }
+  }
+
   async function save(andAnother = false) {
     // Tidy the list boxes first, in case Save was reached without leaving one.
     settleAll();
@@ -662,26 +695,47 @@ export function openTxEditor(existing = null, presets = {}) {
       }
 
       const grp = t.transfer_group || outRow?.transfer_group || inRow?.transfer_group || uuid();
+      // Two rows, and both have to land. If the second write fails — a phone
+      // with no space left aborts the whole IndexedDB transaction — the first
+      // must not be left standing, or money has left one account and arrived
+      // nowhere, with nothing on screen to say so.
+      const outId = outRow?.id ?? uuid();
       await put('transactions', {
-        ...base, id: outRow?.id ?? uuid(), type: 'Transfer', account: from, currency: outCur,
-        income: 0, expense: amt, transfer_group: grp, to_account: to, parent: 'Transfer',
+        ...base, id: outId, type: 'Transfer', account: from, currency: outCur,
+        income: 0, expense: amt, transfer_group: grp, to_account: to,
+        // Keep the category the row already carried. Hard-writing 'Transfer'
+        // here wiped it: a KSFE installment filed as a transfer lost its tag
+        // the moment it was re-saved, and that money left net worth silently.
+        parent: base.parent || 'Transfer',
         no: outRow?.no ?? null, note: base.note || `To ${to}`,
       });
       // Both legs carry the same category. The arriving side used to be left
       // blank, so the very same transfer read "Transfer" on the account it left
       // and showed an empty Category column on the account it landed in.
-      await put('transactions', {
-        ...base, id: inRow?.id ?? uuid(), type: 'Transfer', account: to, currency: inCur,
-        income: inAmt, expense: 0, transfer_group: grp, to_account: null, parent: 'Transfer',
-        no: inRow?.no ?? null, note: base.note || `From ${from}`,
-      });
+      try {
+        await put('transactions', {
+          ...base, id: inRow?.id ?? uuid(), type: 'Transfer', account: to, currency: inCur,
+          income: inAmt, expense: 0, transfer_group: grp, to_account: null,
+          parent: base.parent || 'Transfer',
+          no: inRow?.no ?? null, note: base.note || `From ${from}`,
+        });
+      } catch (e) {
+        if (!outRow?.id) await remove('transactions', outId).catch(() => {});
+        throw e;
+      }
       toast(linked || (outRow && inRow) ? 'Transfer saved' : 'Transfer saved and linked');
     } else {
-      const isIn = type === 'Income' || INFLOW.has(base.sub);
+      // The same rule the Amount box paints itself by (see paintAmount). The
+      // two used to disagree: this line applied the inflow list to EVERY type,
+      // so an Expense whose sub happened to be one of those words was written
+      // as income while the screen showed it in red as a spend — and the
+      // account moved by twice the amount, the wrong way.
+      const isIn = type === 'Income'
+        || ((type === 'Lend/Borrow' || type === 'Investment') && INFLOW.has(base.sub));
       await put('transactions', {
         ...base, id: t.id, type,
         income: isIn ? amt : 0, expense: isIn ? 0 : amt,
-        no: t.no ?? (Math.max(0, ...DB.transactions.map(x => x.no || 0)) + 1),
+        no: t.no ?? nextNo(),
       });
       toast(isNew ? 'Saved' : 'Updated');
     }
@@ -769,8 +823,8 @@ export function openTxEditor(existing = null, presets = {}) {
         m.close();
       },
     }, '⧉ Duplicate') : null,
-    isNew ? el('button', { class: 'btn', onclick: () => save(true) }, 'Save + add another') : null,
-    el('button', { class: 'btn primary', onclick: () => save(false) }, existing ? 'Update' : 'Save'),
+    isNew ? el('button', { class: 'btn', onclick: () => guard(true) }, 'Save + add another') : null,
+    el('button', { class: 'btn primary', onclick: () => guard(false) }, existing ? 'Update' : 'Save'),
   ].filter(Boolean);
 
   // Straight to the ledger from here — the fastest route to "what did I enter
@@ -785,7 +839,7 @@ export function openTxEditor(existing = null, presets = {}) {
   // drop the caret at the far left, so correcting 3,849 meant deleting it by
   // hand first. Typing now replaces the number outright, as it should.
   setTimeout(() => { amountIn.focus(); amountIn.select(); }, 60);
-  body.addEventListener('keydown', e => { if (e.key === 'Enter' && e.metaKey) save(false); });
+  body.addEventListener('keydown', e => { if (e.key === 'Enter' && e.metaKey) guard(false); });
   return m;
 }
 
@@ -800,7 +854,7 @@ export async function fireTemplate(tpl) {
     expense: p.type === 'Income' ? 0 : Number(p.amount) || 0,
     parent: p.parent || null, sub: p.sub || null, payee: p.payee || null,
     note: p.note || tpl.label,
-    no: Math.max(0, ...DB.transactions.map(x => x.no || 0)) + 1,
+    no: nextNo(),
   });
   toast(tpl.label + ' added');
 }

@@ -41,7 +41,8 @@ function general() {
   const s = getSettings();
   const sar = el('input', { type: 'number', step: '0.0001', value: C.rates().sar });
   const usd = el('input', { type: 'number', step: '0.0001', value: C.rates().usd });
-  const invCats = el('input', { value: (s.investment_categories || C.investmentCategories()).join(', '), style: 'width:100%' });
+  const invCats = el('input', { value: C.investmentCategories().join(', '), style: 'width:100%' });
+  const invSkip = el('input', { value: (s.investment_skip || ['Share Trading']).join(', '), style: 'width:100%' });
 
   host.append(el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Today’s conversion rates')),
@@ -56,12 +57,22 @@ function general() {
         el('p', { class: 'hint' }, 'These convert current balances. Past transactions keep the rate of the month they happened in — that is what makes the historical totals match your sheet.')))));
 
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
-    el('div', { class: 'card-head' }, el('h3', {}, 'Investment categories')),
+    el('div', { class: 'card-head' }, el('h3', {}, 'Investment holdings')),
     el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-      'Holdings tracked by category rather than by account (deposits + returns − withdrawals). Comma separated.'),
+      'Holdings are tracked by category rather than by account: what you put in, plus returns, '
+      + 'less withdrawals. This list is built from your Investment categories, so anything the '
+      + 'Holding dropdown offers is counted in net worth — the two used to be separate lists, and '
+      + 'a deposit into a holding that was missing from this one left its bank and landed nowhere. '
+      + 'Add a name here only for a holding that has no category of its own.'),
     invCats,
+    el('p', { class: 'small muted', style: 'margin:10px 0 6px' },
+      'Left out of net worth. Share Trading belongs here because the equity portfolio already '
+      + 'values it at market price — counting its cash movements as well would add the same money twice.'),
+    invSkip,
     el('button', { class: 'btn', style: 'margin-top:8px', onclick: async () => {
-      await setSettings({ investment_categories: invCats.value.split(',').map(x => x.trim()).filter(Boolean) });
+      const split = v => v.split(',').map(x => x.trim()).filter(Boolean);
+      await setSettings({ investment_categories: split(invCats.value),
+        investment_skip: split(invSkip.value) });
       toast('Saved');
     } }, 'Save')));
 
