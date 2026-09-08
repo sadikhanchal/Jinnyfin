@@ -2,7 +2,7 @@
 //  settings.js — accounts, categories, FX rates, reconciliation, backup, import.
 // ============================================================================
 import { el, money, num, fmtDate, todayISO, modal, toast, confirmBox, downloadCSV, downloadFile, monthStart, MONTHS,
-  dateGuard, restoreDateFocus } from '../util.js';
+  dateGuard, restoreDateFocus, uuid } from '../util.js';
 import { DB, put, remove, putMany, getSettings, setSettings, sync, state, resetLocal, signOut,
   changePassword, sendPasswordReset, TABLES } from '../store.js';
 import { store as safeStore } from '../util.js';
@@ -730,13 +730,34 @@ function data() {
       } }, '↻ Rebuild local copy'),
       el('button', { class: 'btn danger', onclick: wipeAll }, '⚠ Delete everything'))));
 
+  const half = pairHalfTransfers();
+  const blank = DB.transactions.filter(t => !t.deleted && t.type === 'Transfer' && !t.parent).length;
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Tidy up')),
-    el('p', { class: 'small muted', style: 'margin:6px 0 10px' },
-      'Older transfers were written with the category on the side the money left and nothing on the '
-      + 'side it arrived, so the same transfer reads “Transfer” on one account statement and shows an '
-      + 'empty Category column on the other. New ones no longer do this; these are the ones already saved.'),
-    el('button', { class: 'btn', onclick: fixTransferCategories }, 'Fill in blank transfer categories')));
+
+    el('p', { class: 'small muted', style: 'margin:6px 0 4px' },
+      'A transfer is two rows — one for the money leaving, one for it arriving. Everything the workbook '
+      + 'brought in came as single rows with nothing tying the halves together, which is why opening one '
+      + 'shows the other side as “— not known —”. Linking changes no amount, date or account: it only '
+      + 'records that the two rows already in the ledger are one transfer.'),
+    el('p', { class: 'small', style: 'margin:0 0 10px' },
+      half.pairs.length
+        ? `${half.pairs.length} pairs can be tied back together (${half.loose} unlinked in all).`
+        : half.loose ? `${half.loose} unlinked, none of them pair up on their own.`
+          : 'Every transfer has both its halves.'),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn' + (half.pairs.length ? ' primary' : ''),
+        disabled: !half.pairs.length, onclick: linkHalfTransfers }, '⇄ Link half transfers')),
+
+    el('p', { class: 'small muted', style: 'margin:14px 0 4px' },
+      'Older transfers carried the category on the side the money left and nothing on the side it '
+      + 'arrived, so the same transfer reads “Transfer” on one statement and leaves the Category column '
+      + 'empty on the other. New ones no longer do this; these are the ones already saved.'),
+    el('p', { class: 'small', style: 'margin:0 0 10px' },
+      blank ? `${blank} entries have an empty Category column.` : 'Every transfer carries its category.'),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn', disabled: !blank, onclick: fixTransferCategories },
+        'Fill in blank transfer categories'))));
 
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Numbers check')),
@@ -754,6 +775,114 @@ async function fixTransferCategories() {
     + 'no amount, no account, no date.', 'Fill them in'))) return;
   await putMany('transactions', legs.map(t => ({ ...t, parent: 'Transfer' })));
   toast(`${legs.length} ${one ? 'entry' : 'entries'} fixed`);
+  draw();
+}
+
+// -------------------------------------------------- half-linked transfers ---
+/**
+ * A transfer is two rows sharing a group id. Everything the workbook import
+ * brought in arrived as single rows with no group at all, which is why opening
+ * one shows the other side as “— not known —”.
+ *
+ * This ties back together the halves that clearly belong to each other. Nothing
+ * is invented: no row is created, and no amount, date or account is touched.
+ * All that is written is a shared group id onto two rows already in the ledger.
+ *
+ * Three passes, most certain first, each row used at most once:
+ *   1. same day, same currency, the same amount to the paisa
+ *   2. row numbers next to each other, a day apart at most — how a pair typed
+ *      one after the other in the sheet looks, and the only way to catch a
+ *      cross-currency remittance, because 55 SAR arriving as ₹1,300 can never
+ *      match on amount
+ *   3. same day and the same minute on the clock
+ *
+ * Passes 2 and 3 still insist on the amount when both sides are in the SAME
+ * currency. Without that guard two same-day rows get crossed — 143.59 out tied
+ * to 42.00 in — and the ledger then tells a story that never happened.
+ */
+function pairHalfTransfers() {
+  const loose = DB.transactions.filter(t => !t.deleted && t.type === 'Transfer' && !t.transfer_group);
+  const byNo = (a, b) => (+a.no || 0) - (+b.no || 0);
+  const outs = loose.filter(t => +t.expense > 0).sort(byNo);
+  const ins = loose.filter(t => +t.income > 0).sort(byNo);
+
+  const inr = t => (+t.expense || +t.income || 0) * (+t.fx || 1);
+  const day = d => Date.parse(d + 'T00:00:00Z');
+  const used = new Set();
+  const byDate = new Map(), byNum = new Map();
+  for (const t of ins) {
+    if (!byDate.has(t.date)) byDate.set(t.date, []);
+    byDate.get(t.date).push(t);
+    if (t.no != null) byNum.set(+t.no, t);
+  }
+  // Same currency: the two sides must agree to the paisa. Different currencies:
+  // they never will, and the rate he actually got is his own business.
+  const amountOk = (o, i) => o.currency !== i.currency || Math.abs(inr(o) - inr(i)) < 0.02;
+  const usable = (o, i) => !!i && !used.has(i.id) && i.account !== o.account;
+
+  const pairs = [];
+  const take = (o, i) => { used.add(o.id); used.add(i.id); pairs.push([o, i]); };
+
+  for (const o of outs) {                                   // pass 1
+    if (used.has(o.id)) continue;
+    const hit = (byDate.get(o.date) || []).find(i => usable(o, i)
+      && o.currency === i.currency && Math.abs(inr(o) - inr(i)) < 0.02);
+    if (hit) take(o, hit);
+  }
+  for (const o of outs) {                                   // pass 2
+    if (used.has(o.id) || o.no == null) continue;
+    for (const step of [1, -1, 2, -2]) {
+      const i = byNum.get(+o.no + step);
+      if (!usable(o, i) || !amountOk(o, i)) continue;
+      if (Math.abs(day(o.date) - day(i.date)) > 864e5) continue;
+      take(o, i); break;
+    }
+  }
+  for (const o of outs) {                                   // pass 3
+    if (used.has(o.id) || !o.time) continue;
+    const hit = (byDate.get(o.date) || []).find(i => usable(o, i)
+      && i.time === o.time && amountOk(o, i));
+    if (hit) take(o, hit);
+  }
+  // Pass 4: cash walked into the bank on Monday and showed up on the statement
+  // on Wednesday. Same currency and the same amount to the paisa, a few days
+  // apart, nearest date wins. The amount is never waived here, so this cannot
+  // cross two unrelated rows the way a looser rule would.
+  for (const o of outs) {
+    if (used.has(o.id)) continue;
+    const near = ins
+      .filter(i => usable(o, i) && i.currency === o.currency
+        && Math.abs(inr(o) - inr(i)) < 0.02
+        && Math.abs(day(o.date) - day(i.date)) <= 3 * 864e5)
+      .sort((a, b) => Math.abs(day(o.date) - day(a.date)) - Math.abs(day(o.date) - day(b.date)));
+    if (near.length) take(o, near[0]);
+  }
+  return { pairs, loose: loose.length };
+}
+
+async function linkHalfTransfers() {
+  const { pairs, loose } = pairHalfTransfers();
+  if (!pairs.length) {
+    toast(loose
+      ? `${loose} transfers are still missing their other half, but none of them pair up on their own`
+      : 'Every transfer already has both its halves');
+    return;
+  }
+  const rest = loose - pairs.length * 2;
+  if (!(await confirmBox(
+    `${pairs.length} half-linked transfers can be tied back to their other side `
+    + `(${pairs.length * 2} entries). Every one keeps its own date, account and amount — `
+    + 'the only change is that the app will know the two rows are one transfer.'
+    + (rest ? ` ${rest} entries have no partner anywhere in the ledger and are left alone.` : ''),
+    'Link them'))) return;
+  const rows = [];
+  for (const [o, i] of pairs) {
+    const grp = uuid();
+    rows.push({ ...o, transfer_group: grp, to_account: i.account, parent: o.parent || 'Transfer' });
+    rows.push({ ...i, transfer_group: grp, to_account: null, parent: i.parent || 'Transfer' });
+  }
+  await putMany('transactions', rows);
+  toast(`${pairs.length} transfers linked`);
   draw();
 }
 

@@ -616,21 +616,16 @@ export function openTxEditor(existing = null, presets = {}) {
     if (type === 'Transfer') {
       const from = acctSel.value, to = toSel.value;
       const known = from !== UNKNOWN && to !== UNKNOWN;
-      if (known && from === to) { toast('From and To must differ', 'warn'); return; }
 
-      // An older row whose other half was never linked: save it alone, exactly
-      // as it stands. Nothing is invented, nothing is doubled.
+      // Both accounts must be selected — never save a one-legged transfer.
       if (!known) {
-        await put('transactions', { ...base, id: t.id, type: 'Transfer',
-          account: rowIsIn ? to : from,
-          currency: currencyOf(rowIsIn ? to : from),
-          income: rowIsIn ? amt : 0, expense: rowIsIn ? 0 : amt,
-          transfer_group: t.transfer_group || null, to_account: t.to_account || null,
-          parent: 'Transfer', no: t.no ?? null });
-        toast('Saved this side only — the other half is still unlinked', 'warn', 5000);
-        if (andAnother) { reset(); return; }
-        m.close(); return;
+        const missing = from === UNKNOWN ? 'From account' : 'To account';
+        toast(`Select ${missing}`, 'warn');
+        (from === UNKNOWN ? acctSel : toSel).focus();
+        return;
       }
+
+      if (from === to) { toast('From and To must differ', 'warn'); return; }
 
       const outCur = currencyOf(from), inCur = currencyOf(to);
       const inAmt = outCur === inCur ? amt : amountBoxB.value();
@@ -641,10 +636,15 @@ export function openTxEditor(existing = null, presets = {}) {
       let outRow = linked ? outLeg : (rowIsIn ? null : t);
       let inRow = linked ? inLeg : (rowIsIn ? t : null);
 
-      // Not linked, but he has now named the other side. Look for the entry
-      // that must already be sitting in the ledger and tie the two together —
-      // writing a fresh row instead is what used to double the money.
-      if (!linked) {
+      // An OLD row whose other half was never linked, and he has now named the
+      // other side: the partner is already sitting in the ledger, so find it and
+      // tie the two together — writing a fresh row instead doubles the money.
+      //
+      // A brand-new transfer is not this case. Both its rows are being written
+      // here and now, so there is nothing to search for and nothing to ask
+      // about — and searching would let it adopt an unrelated orphan that
+      // happens to share the date, account and amount.
+      if (!linked && !isNew) {
         const want = rowIsIn ? 'out' : 'in';
         const cand = DB.transactions.filter(x => x.id !== t.id && !x.deleted
           && x.type === 'Transfer' && x.date === base.date && !x.transfer_group
