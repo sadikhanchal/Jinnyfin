@@ -788,18 +788,46 @@ async function fixTransferCategories() {
  * is invented: no row is created, and no amount, date or account is touched.
  * All that is written is a shared group id onto two rows already in the ledger.
  *
- * Three passes, most certain first, each row used at most once:
+ * Five passes, most certain first, each row used at most once:
  *   1. same day, same currency, the same amount to the paisa
- *   2. row numbers next to each other, a day apart at most — how a pair typed
- *      one after the other in the sheet looks, and the only way to catch a
- *      cross-currency remittance, because 55 SAR arriving as ₹1,300 can never
- *      match on amount
- *   3. same day and the same minute on the clock
+ *   2. same day, and the two notes name the same thing — "Preethi (To Federal
+ *      bank NRO)" against "Preethi (From Big Ticket)". This has to come before
+ *      the clock and the row number, because two remittances sent in the same
+ *      minute are told apart by nothing else: 55 SAR and 220 SAR both leaving
+ *      Big Ticket at 17:10, arriving as ₹1,200 and ₹4,800, get crossed by any
+ *      rule that cannot read
+ *   3. row numbers next to each other, a day apart at most — a pair typed one
+ *      after the other in the sheet
+ *   4. same day and the same minute on the clock
+ *   5. same amount within three days, nearest day first
  *
- * Passes 2 and 3 still insist on the amount when both sides are in the SAME
+ * Passes 3-5 still insist on the amount when both sides are in the SAME
  * currency. Without that guard two same-day rows get crossed — 143.59 out tied
  * to 42.00 in — and the ledger then tells a story that never happened.
  */
+// Words that appear in half the notes in the book and so say nothing about
+// WHICH transfer this is. A shared "from" or "bank" is not evidence.
+const NOTE_NOISE = new Set(('from to the a an and of for in on at is was my our with by transfer'
+  + ' transferred sent send send bank banks account accounts federal fed nro nri sib indian south'
+  + ' cash home hand rajhi ahli jazira stc pay big ticket central gpay haseena money amount balance'
+  + ' received paid pay rs inr sar usd one two three gm gms gram grams no nos total').split(/\s+/));
+
+/**
+ * The distinctive words a note is made of — names, places, what it was for.
+ * Kept against the row itself: the matcher asks the same rows for their words
+ * thousands of times over a 25,000-row ledger, and splitting the string afresh
+ * every time is what turned a 20ms pass into half a second on a phone.
+ */
+const NOTE_CACHE = new WeakMap();
+function noteWords(t) {
+  let s = NOTE_CACHE.get(t);
+  if (s) return s;
+  s = new Set();
+  for (const w of String(t.note || '').toLowerCase().split(/[^a-z0-9]+/))
+    if (w.length >= 3 && !NOTE_NOISE.has(w) && !/^\d+$/.test(w)) s.add(w);
+  NOTE_CACHE.set(t, s);
+  return s;
+}
 function pairHalfTransfers() {
   const loose = DB.transactions.filter(t => !t.deleted && t.type === 'Transfer' && !t.transfer_group);
   const byNo = (a, b) => (+a.no || 0) - (+b.no || 0);
@@ -807,7 +835,15 @@ function pairHalfTransfers() {
   const ins = loose.filter(t => +t.income > 0).sort(byNo);
 
   const inr = t => (+t.expense || +t.income || 0) * (+t.fx || 1);
-  const day = d => Date.parse(d + 'T00:00:00Z');
+  // A ledger this long holds only a couple of thousand distinct dates, and the
+  // last pass compares nearly every row against every other one. Parsing the
+  // same forty strings a million times is most of what that pass costs.
+  const dayMemo = new Map();
+  const day = d => {
+    let v = dayMemo.get(d);
+    if (v === undefined) { v = Date.parse(d + 'T00:00:00Z'); dayMemo.set(d, v); }
+    return v;
+  };
   const used = new Set();
   const byDate = new Map(), byNum = new Map();
   for (const t of ins) {
@@ -829,7 +865,25 @@ function pairHalfTransfers() {
       && o.currency === i.currency && Math.abs(inr(o) - inr(i)) < 0.02);
     if (hit) take(o, hit);
   }
-  for (const o of outs) {                                   // pass 2
+  // Pass 2: the notes name the same thing. Only a CLEAR winner counts — the
+  // best-scoring candidate must beat every other one outright. Two notes that
+  // tie tell us nothing, and a guess here silently swaps two people's money.
+  for (const o of outs) {
+    if (used.has(o.id)) continue;
+    const mine = noteWords(o);
+    if (!mine.size) continue;
+    let best = null, bestScore = 0, tied = false;
+    for (const i of byDate.get(o.date) || []) {
+      if (!usable(o, i) || !amountOk(o, i)) continue;
+      let n = 0;
+      for (const w of noteWords(i)) if (mine.has(w)) n++;
+      if (!n) continue;
+      if (n > bestScore) { best = i; bestScore = n; tied = false; }
+      else if (n === bestScore) tied = true;
+    }
+    if (best && !tied) take(o, best);
+  }
+  for (const o of outs) {                                   // pass 3
     if (used.has(o.id) || o.no == null) continue;
     for (const step of [1, -1, 2, -2]) {
       const i = byNum.get(+o.no + step);
@@ -838,24 +892,32 @@ function pairHalfTransfers() {
       take(o, i); break;
     }
   }
-  for (const o of outs) {                                   // pass 3
+  for (const o of outs) {                                   // pass 4
     if (used.has(o.id) || !o.time) continue;
     const hit = (byDate.get(o.date) || []).find(i => usable(o, i)
       && i.time === o.time && amountOk(o, i));
     if (hit) take(o, hit);
   }
-  // Pass 4: cash walked into the bank on Monday and showed up on the statement
+  // Pass 5: cash walked into the bank on Monday and showed up on the statement
   // on Wednesday. Same currency and the same amount to the paisa, a few days
   // apart, nearest date wins. The amount is never waived here, so this cannot
   // cross two unrelated rows the way a looser rule would.
+  // Only seven days can hold a candidate, so ask byDate for those seven rather
+  // than walking the whole ledger for every row left over.
+  const iso = ms => new Date(ms).toISOString().slice(0, 10);
   for (const o of outs) {
     if (used.has(o.id)) continue;
-    const near = ins
-      .filter(i => usable(o, i) && i.currency === o.currency
-        && Math.abs(inr(o) - inr(i)) < 0.02
-        && Math.abs(day(o.date) - day(i.date)) <= 3 * 864e5)
-      .sort((a, b) => Math.abs(day(o.date) - day(a.date)) - Math.abs(day(o.date) - day(b.date)));
-    if (near.length) take(o, near[0]);
+    const base = day(o.date);
+    let best = null, bestGap = Infinity;
+    for (const gap of [0, 1, -1, 2, -2, 3, -3]) {
+      if (Math.abs(gap) >= bestGap) break;                 // nearer day already won
+      for (const i of byDate.get(iso(base + gap * 864e5)) || []) {
+        if (!usable(o, i) || i.currency !== o.currency) continue;
+        if (Math.abs(inr(o) - inr(i)) >= 0.02) continue;
+        best = i; bestGap = Math.abs(gap); break;
+      }
+    }
+    if (best) take(o, best);
   }
   return { pairs, loose: loose.length };
 }
