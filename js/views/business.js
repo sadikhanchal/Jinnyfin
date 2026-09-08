@@ -12,6 +12,11 @@ import { kpi } from './report.js';
 
 let pick = 0, f = { year: 'All', month: 'All' };
 let host = null;
+// Which filter the cursor was in when the redraw was triggered. Changing a
+// select fires `change` on every arrow press, and the redraw that follows
+// replaces the select — so the second press went nowhere and the keyboard was
+// dead after one step. The cursor is put back on the same field afterwards.
+let focusFilter = null;
 
 export async function render(root) { host = root; draw(); }
 export function refresh() { if (host) draw(); }
@@ -36,9 +41,9 @@ function draw() {
   host.append(chips);
 
   const sel = (label, key, opts, all) => {
-    const s = el('select', {}, el('option', { value: 'All' }, all),
+    const s = el('select', { dataset: { fk: key } }, el('option', { value: 'All' }, all),
       ...opts.map(o => el('option', { value: o.v ?? o, selected: String(f[key]) === String(o.v ?? o) }, o.t ?? o)));
-    s.onchange = () => { f[key] = s.value; draw(); };
+    s.onchange = () => { focusFilter = key; f[key] = s.value; draw(); };
     return el('div', { class: 'field' }, el('label', {}, label), s);
   };
   host.append(el('div', { class: 'filters' },
@@ -140,7 +145,16 @@ function draw() {
   }
   dt.append(dtb);
 
-  host.append(el('div', { class: 'grid g2', style: 'margin-top:12px' },
+  if (focusFilter) {
+    const k = focusFilter; focusFilter = null;
+    requestAnimationFrame(() => host.querySelector(`select[data-fk="${k}"]`)?.focus());
+  }
+
+  // Year by year is four short columns; Transactions is six with a description.
+  // An even split made the wide one scroll sideways while the narrow one sat in
+  // white space, so the room is divided the way the content needs it.
+  host.append(el('div', { class: 'grid g2',
+    style: 'margin-top:12px;grid-template-columns:minmax(0,5fr) minmax(0,7fr)' },
     el('div', { class: 'card' }, el('div', { class: 'card-head' }, el('h3', {}, 'Year by year')), el('div', { class: 'table-wrap' }, yt)),
     el('div', { class: 'card' }, el('div', { class: 'card-head' }, el('h3', {}, 'Transactions'),
       el('div', { class: 'spacer' }),

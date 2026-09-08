@@ -39,51 +39,9 @@ function draw() {
 // ------------------------------------------------------------------ general
 function general() {
   const s = getSettings();
-  const sar = el('input', { type: 'number', step: '0.0001', value: C.rates().sar });
-  const usd = el('input', { type: 'number', step: '0.0001', value: C.rates().usd });
-  // Read-only on purpose. This list is built from the Investment categories, so
-  // a name deleted here simply came back on the next redraw — an edit box that
-  // quietly ignores half of what you do with it is worse than no edit box.
-  // Removing a holding is what the skip list below is for.
-  const invCats = el('input', { value: C.investmentCategories().join(', '),
-    readonly: true, tabindex: '-1', class: 'locked', style: 'width:100%' });
-  const invSkip = el('input', { value: (s.investment_skip || ['Share Trading']).join(', '), style: 'width:100%' });
-
-  host.append(el('div', { class: 'card' },
-    el('div', { class: 'card-head' }, el('h3', {}, 'Today’s conversion rates')),
-    el('div', { class: 'form-grid' },
-      el('div', { class: 'field' }, el('label', {}, '1 SAR = ? INR'), sar),
-      el('div', { class: 'field' }, el('label', {}, '1 USD = ? SAR'), usd),
-      el('div', { class: 'field full' },
-        el('button', { class: 'btn primary', onclick: async () => {
-          await setSettings({ sar_to_inr: +sar.value, usd_to_sar: +usd.value });
-          toast('Rates updated'); draw();
-        } }, 'Save rates'),
-        el('p', { class: 'hint' }, 'These convert current balances. Past transactions keep the rate of the month they happened in — that is what makes the historical totals match your sheet.')))));
-
-  host.append(el('div', { class: 'card', style: 'margin-top:12px' },
-    el('div', { class: 'card-head' }, el('h3', {}, 'Investment holdings')),
-    el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-      'Holdings are tracked by category rather than by account: what you put in, plus returns, '
-      + 'less withdrawals. This list is built from your Investment categories, so anything the '
-      + 'Holding dropdown offers is counted in net worth — the two used to be separate lists, and '
-      + 'a deposit into a holding that was missing from this one left its bank and landed nowhere. '
-      + 'It is shown for reference and is not edited here — add or rename a holding in '
-      + 'Settings → Categories, under type Investment.'),
-    invCats,
-    el('p', { class: 'small muted', style: 'margin:10px 0 6px' },
-      'Left out of net worth. Share Trading belongs here because the equity portfolio already '
-      + 'values it at market price — counting its cash movements as well would add the same money twice.'),
-    invSkip,
-    el('button', { class: 'btn', style: 'margin-top:8px', onclick: async () => {
-      const split = v => v.split(',').map(x => x.trim()).filter(Boolean);
-      await setSettings({ investment_skip: split(invSkip.value) });
-      toast('Saved');
-    } }, 'Save')));
-
   // ------------------------------------------------------------ app lock --
   const pin = el('input', { type: 'password', inputmode: 'numeric', placeholder: 'New PIN (4+ digits)' });
-  host.append(el('div', { class: 'card', style: 'margin-top:12px' },
+  host.append(el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, 'App lock')),
     el('p', { class: 'small muted', style: 'margin:0 0 8px' },
       s.lock_hash ? 'A PIN is set — the app asks for it each time it is opened fresh.' : 'No PIN. Anyone holding your unlocked phone can read the ledger.'),
@@ -537,11 +495,31 @@ function fx() {
     await put('fx_rates', { ...(found || {}), month, rate: +rIn.value, source: 'Manual' });
     toast('Rate saved'); draw();
   } }, 'Save rate'));
-  host.append(el('div', { class: 'card' },
+  // Today's rates and the month-by-month history are the same subject read two
+  // ways, so they sit side by side rather than on two different tabs.
+  const st = getSettings();
+  const sar = el('input', { type: 'number', step: '0.0001', value: C.rates().sar });
+  const usd = el('input', { type: 'number', step: '0.0001', value: C.rates().usd });
+  const today = el('div', { class: 'card' },
+    el('div', { class: 'card-head' }, el('h3', {}, 'Today’s rates')),
+    el('p', { class: 'small muted', style: 'margin:0 0 8px' },
+      'These convert current balances. A past transaction keeps the rate of the month it '
+      + 'happened in — that is what makes the historical totals match your sheet.'),
+    el('div', { class: 'form-grid' },
+      el('div', { class: 'field' }, el('label', {}, '1 SAR = ? INR'), sar),
+      el('div', { class: 'field' }, el('label', {}, '1 USD = ? SAR'), usd),
+      el('div', { class: 'field full' },
+        el('button', { class: 'btn primary', onclick: async () => {
+          await setSettings({ sar_to_inr: +sar.value, usd_to_sar: +usd.value });
+          toast('Rates updated'); draw();
+        } }, 'Save rates'))));
+  const byMonth = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, 'SAR → INR by month')),
     el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-      'Each transaction is converted at the rate of its own month, exactly like the workbook. Add a rate whenever you transfer money and know the real rate you got.'),
-    add));
+      'Each transaction is converted at the rate of its own month, exactly like the workbook. '
+      + 'Add a rate whenever you transfer money and know the real rate you got.'),
+    add);
+  host.append(el('div', { class: 'grid g2' }, today, byMonth));
   const t = el('table');
   t.append(el('thead', {}, el('tr', {}, el('th', {}, 'Month'), el('th', { class: 'n' }, 'SAR → INR'), el('th', {}, 'Source'), el('th', { class: 'n' }, 'Entries that month'))));
   const tb = el('tbody');
