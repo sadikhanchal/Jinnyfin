@@ -35,47 +35,6 @@ function draw() {
     }, b.name)));
   host.append(chips);
 
-  // Every business on one page. Tapping through the chips one at a time tells
-  // you how each did but never what they did together — which is the first
-  // thing a P&L sheet is for, and the one thing this page could not answer.
-  {
-    const all = DB.businesses.map(b => ({ b, pl: C.businessPL(b, {}) }));
-    const t = el('table');
-    t.append(el('thead', {}, el('tr', {},
-      el('th', {}, 'Business'), el('th', { class: 'n' }, '▲ Income'),
-      el('th', { class: 'n' }, '▼ Expense'), el('th', { class: 'n' }, 'Net'),
-      el('th', { class: 'n' }, 'Entries'))));
-    const tb = el('tbody');
-    let ti = 0, te = 0;
-    for (const [i, { b, pl }] of all.entries()) {
-      ti += pl.income.equiv; te += pl.expense.equiv;
-      tb.append(el('tr', {
-        class: i === pick ? 'picked' : '', style: 'cursor:pointer',
-        onclick: () => { pick = i; draw(); },
-      },
-        el('td', {}, b.name),
-        el('td', { class: 'n' }, pl.income.equiv ? num(pl.income.equiv) : '—'),
-        el('td', { class: 'n' }, pl.expense.equiv ? num(pl.expense.equiv) : '—'),
-        el('td', { class: 'n ' + (pl.netEquiv > 0 ? 'pos' : pl.netEquiv < 0 ? 'neg' : '') },
-          pl.rows.length ? num(pl.netEquiv) : '—'),
-        el('td', { class: 'n muted' }, pl.rows.length
-          ? pl.rows.length.toLocaleString('en-IN')
-          : el('span', { style: 'color:var(--warning)' }, 'nothing matches'))));
-    }
-    tb.append(el('tr', { class: 'total' },
-      el('td', {}, el('b', {}, 'All businesses')),
-      el('td', { class: 'n' }, el('b', {}, num(ti))),
-      el('td', { class: 'n' }, el('b', {}, num(te))),
-      el('td', { class: 'n ' + (ti - te > 0 ? 'pos' : ti - te < 0 ? 'neg' : '') }, el('b', {}, num(ti - te))),
-      el('td', {})));
-    t.append(tb);
-    host.append(el('div', { class: 'card', style: 'margin-bottom:12px' },
-      el('div', { class: 'card-head' }, el('h3', {}, 'All businesses — all time (≈ INR)')),
-      el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-        'Every business together, whatever period is chosen below. Tap a row to open it.'),
-      el('div', { class: 'table-wrap' }, t)));
-  }
-
   const sel = (label, key, opts, all) => {
     const s = el('select', {}, el('option', { value: 'All' }, all),
       ...opts.map(o => el('option', { value: o.v ?? o, selected: String(f[key]) === String(o.v ?? o) }, o.t ?? o)));
