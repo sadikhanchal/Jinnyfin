@@ -16,7 +16,14 @@ export function rates() {
 
 let _fxCache = null, _fxStamp = null;
 function fxMap() {
-  const stamp = DB.fx_rates.length + ':' + (DB.fx_rates[DB.fx_rates.length - 1]?.updated_at || '');
+  // The newest stamp anywhere in the table, not the last row's. Correcting a
+  // rate for March 2024 replaces that row in place: the count does not change
+  // and neither does the final row, so keying on those two served the old map
+  // back — and every entry typed afterwards was stamped with the wrong rate
+  // and kept it.
+  let newest = '';
+  for (const r of DB.fx_rates) if (r.updated_at && r.updated_at > newest) newest = r.updated_at;
+  const stamp = DB.fx_rates.length + ':' + newest;
   if (_fxCache && _fxStamp === stamp) return _fxCache;
   const m = new Map();
   for (const r of DB.fx_rates) m.set(String(r.month).slice(0, 7), Number(r.rate) || 0);
@@ -33,10 +40,33 @@ export function fxFor(date) {
   return best ? m.get(best) : rates().sar;
 }
 
-export const inrOf = t => (t.currency === 'SAR' ? Number(t.income || 0) * (t.fx || fxFor(t.date)) : Number(t.income || 0));
-export const inrOut = t => (t.currency === 'SAR' ? Number(t.expense || 0) * (t.fx || fxFor(t.date)) : Number(t.expense || 0));
-export const sarOf = t => (t.currency === 'SAR' ? Number(t.income || 0) : Number(t.income || 0) / (t.fx || fxFor(t.date)));
-export const sarOut = t => (t.currency === 'SAR' ? Number(t.expense || 0) : Number(t.expense || 0) / (t.fx || fxFor(t.date)));
+/**
+ * What one side of a row is worth in rupees.
+ *
+ * A dollar row used to fall through the SAR test and be read as rupees at 1:1
+ * — a $100 charge counting as ₹100 in every report and budget, while the
+ * account's own balance converted correctly at ~₹95 to the dollar. Dollars go
+ * through riyals, the same way `liveINR` does it.
+ */
+const inrOfAmount = (t, amount) => {
+  const v = Number(amount || 0);
+  if (!v) return 0;
+  const sar = t.fx || fxFor(t.date);
+  if (t.currency === 'SAR') return v * sar;
+  if (t.currency === 'USD') return v * rates().usd * sar;
+  return v;
+};
+const sarOfAmount = (t, amount) => {
+  const v = Number(amount || 0);
+  if (!v) return 0;
+  if (t.currency === 'SAR') return v;
+  if (t.currency === 'USD') return v * rates().usd;
+  return v / (t.fx || fxFor(t.date));
+};
+export const inrOf = t => inrOfAmount(t, t.income);
+export const inrOut = t => inrOfAmount(t, t.expense);
+export const sarOf = t => sarOfAmount(t, t.income);
+export const sarOut = t => sarOfAmount(t, t.expense);
 
 /** Convert a live balance to INR using today's rate (what the sheet does). */
 export function liveINR(amount, currency) {
@@ -90,7 +120,12 @@ export function accountStatus(a, seen = lastActivity(), today = todayISO()) {
   const last = seen.get(a.name) || null;
   const age = last ? daysBetween(last, today) : null;
   const born = a.created_at ? iso(a.created_at) : null;
-  const grace = born ? daysBetween(born, today) <= IDLE_DAYS : false;
+  // `daysBetween` goes negative when `today` is before the account was opened,
+  // and a negative number is <= 60. The net-worth chart asks this question with
+  // each past month end as `today`, so a bank added this week counted as live
+  // — with its opening balance — in every month back to 2015.
+  const bornDays = born ? daysBetween(born, today) : null;
+  const grace = bornDays != null && bornDays >= 0 && bornDays <= IDLE_DAYS;
   // The rule decides. "Always show" is the one manual override, for an account
   // you want in the pickers even while it sits quiet.
   if (a.pinned) return { live: true, last, age, why: 'always shown (your choice)' };
@@ -119,12 +154,15 @@ export function holdingLedger(tag, f = {}) {
     .filter(t => t.parent === tag && (!f.from || t.date >= f.from) && (!f.to || t.date <= f.to))
     .map(t => ({ ...t }));
   const before = f.from ? DB.transactions.filter(t => t.parent === tag && t.date < f.from) : [];
-  // The same arithmetic the net-worth screen uses, so the two can never disagree:
-  // what you put in counts up, a return counts up, only a withdrawal counts down.
+  // The same arithmetic the net-worth screen uses, so the two can never
+  // disagree: what you put in counts up, a return counts up, anything else
+  // coming back out counts down. This test has to stay word for word the one
+  // in `accumulate` — the moment they drift, one screen is lying.
   // (An asset has no returns, so for one of those every payment simply counts up.)
   const isFund = investmentCategories().includes(tag);
+  const isReturn = t => t.type === 'Investment' && t.sub === 'Interest/Return';
   const step = t => (isFund
-    ? inrOut(t) + (t.sub === 'Withdrawal' ? -inrOf(t) : inrOf(t))
+    ? inrOut(t) + (isReturn(t) ? inrOf(t) : -inrOf(t))
     : inrOut(t) - inrOf(t));
   // An asset can carry cost from before the ledger began — the land was bought
   // years before the first row was ever typed. Net worth counts that opening
@@ -179,10 +217,27 @@ function liveIn(grp, seen, today) {
 }
 export const cashAccounts = () => liveIn('primary');
 export const investmentAccounts = () => liveIn('investment');
+/**
+ * Every holding net worth counts — and it must be the SAME list the editor's
+ * Holding dropdown offers, or money can be filed somewhere nothing adds up.
+ *
+ * It used to be a comma-separated line typed into Settings, four names long,
+ * while the dropdown was built from the category list and offered nine. A
+ * deposit into any of the other five left its bank account and landed nowhere:
+ * net worth fell by the whole deposit and no screen said why.
+ *
+ * So the list is the category list, plus anything hand-added in Settings, less
+ * whatever is named in the skip list. Share Trading is skipped by default
+ * because the equity portfolio already values it at market price — counting
+ * its cash movements here as well would put the same money in twice.
+ */
 export function investmentCategories() {
   const s = getSettings();
-  return s.investment_categories ||
-    ['KSFE', 'Millionaire Federal Savings', 'PO Savings - Afiya', 'PO Savings - Lamiya'];
+  const skip = new Set(s.investment_skip || ['Share Trading']);
+  const fromCats = DB.categories
+    .filter(c => c.type === 'Investment' && !c.deleted).map(c => c.parent);
+  return [...new Set([...fromCats, ...(s.investment_categories || [])])]
+    .filter(p => p && !skip.has(p));
 }
 export const assetCategories = () => DB.assets.filter(a => !a.deleted).map(a => a.category_tag).filter(Boolean);
 
@@ -291,7 +346,19 @@ function accumulate(t, acc) {
   if (t.account) acc.seen.set(t.account, iso(t.date));
   if (t.parent) {
     const iv = acc.inv.get(t.parent);
-    if (iv) { iv.dep += exp; if (t.sub === 'Withdrawal') iv.wd += inc; else iv.interest += inc; }
+    if (iv) {
+      // In rupees, not raw row amounts: a riyal deposit was being added to an
+      // INR total as though 1 SAR were ₹1, understating the holding 25-fold
+      // while the bank it left lost the full converted sum.
+      iv.dep += inrOut(t);
+      // Money coming back out of a holding is a withdrawal unless the row says
+      // plainly that it is a return. `sub` only means something on an
+      // Investment row; a transfer tagged with a holding carries none, and
+      // treating that as interest ADDED the returned principal to net worth
+      // instead of taking it out.
+      const isReturn = t.type === 'Investment' && t.sub === 'Interest/Return';
+      if (isReturn) iv.interest += inrOf(t); else iv.wd += inrOf(t);
+    }
     if (acc.assetTags.has(t.parent)) acc.asset.set(t.parent, (acc.asset.get(t.parent) || 0) + inrOut(t) - inrOf(t));
   }
   if (t.type === 'Lend/Borrow' && t.payee) {
@@ -305,7 +372,10 @@ function newAcc() {
   const acc = { bal: new Map(), seen: new Map(), inv: new Map(), asset: new Map(), payee: new Map(), assetTags: new Set() };
   for (const a of DB.accounts) acc.bal.set(a.name, Number(a.opening_bal || 0));
   for (const c of investmentCategories()) acc.inv.set(c, { dep: 0, interest: 0, wd: 0 });
-  for (const a of DB.assets) if (a.category_tag) acc.assetTags.add(a.category_tag);
+  // `holdings()` and `holdingLedger()` fall back to the asset's own name when
+  // no category was named, so net worth has to look under the same key or the
+  // Holdings statement shows the spend and Fixed Assets does not.
+  for (const a of DB.assets) if (!a.deleted) acc.assetTags.add(a.category_tag || a.name);
   return acc;
 }
 function summarise(acc, asOf = null) {
@@ -320,14 +390,22 @@ function summarise(acc, asOf = null) {
     detail.push({ name: a.name, value: v, kind: 'account' }); invTotal += v;
   }
   for (const [name, x] of acc.inv) {
-    const v = x.dep + x.interest - x.wd;
-    detail.push({ name, value: v, kind: 'category', deposits: x.dep, interest: x.interest, withdrawn: x.wd });
+    const raw = x.dep + x.interest - x.wd;
+    // A holding cannot hold less than nothing. A negative balance means more
+    // came back than went in — the workbook booked the profit as part of the
+    // returned principal instead of separately — and that profit is already
+    // sitting in whatever account it landed in. Counting the shortfall here as
+    // well would subtract the same gain twice. The raw figure is kept so the
+    // holding's own statement can still show what actually happened.
+    const v = Math.max(0, raw);
+    detail.push({ name, value: v, raw, closed: raw < 0, kind: 'category',
+      deposits: x.dep, interest: x.interest, withdrawn: x.wd });
     invTotal += v;
   }
   if (eq.marketValue) { detail.push({ name: 'Equity Shares (Geojit)', value: eq.marketValue, kind: 'equity' }); invTotal += eq.marketValue; }
 
   const assetRows = DB.assets.map(a => {
-    const cost = (acc.asset.get(a.category_tag) || 0) + Number(a.opening_cost || 0);
+    const cost = (acc.asset.get(a.category_tag || a.name) || 0) + Number(a.opening_cost || 0);
     const mv = Number(a.market_value || 0);
     return { ...a, cost, market: mv, used: mv > 0 ? mv : cost,
       gain: mv > 0 ? mv - cost : 0, gainPct: mv > 0 && cost ? (mv - cost) / cost : 0 };
@@ -335,18 +413,27 @@ function summarise(acc, asOf = null) {
   const assetTotal = assetRows.reduce((s, r) => s + r.used, 0);
 
   const rows = [...acc.payee.entries()].map(([payee, p]) => {
-    const open = round2(p.sar) !== 0 || round2(p.inr) !== 0;
-    const cur = round2(p.sar) !== 0 ? 'SAR' : 'INR';
-    const bal = cur === 'SAR' ? round2(p.sar) : round2(p.inr);
-    return { payee, ...p, open, currency: cur, balance: bal,
-      status: !open ? 'settled' : bal > 0 ? 'i-owe' : 'they-owe' };
+    // A person can owe you riyals AND rupees at the same time. Showing only
+    // the first of the two that was non-zero hid the other debt outright: a
+    // man owing ₹5,000 and ﷼30 appeared on the list owing ﷼30.
+    const parts = [['SAR', round2(p.sar)], ['INR', round2(p.inr)]]
+      .filter(([, v]) => v !== 0).map(([currency, balance]) => ({ currency, balance }));
+    const open = parts.length > 0;
+    const ways = new Set(parts.map(x => (x.balance > 0 ? 'i-owe' : 'they-owe')));
+    return { payee, ...p, open, parts,
+      currency: parts.map(x => x.currency).join(' + ') || 'INR',
+      balance: parts[0]?.balance ?? 0,
+      status: !open ? 'settled' : ways.size > 1 ? 'both' : [...ways][0] };
   }).sort((a, b) => Math.abs(b.equivINR ?? b.equiv) - Math.abs(a.equivINR ?? a.equiv));
   for (const r of rows) r.equivINR = r.equiv;
   const lbNet = -rows.filter(r => r.open).reduce((s, r) => s + r.equiv, 0);
   const lb = {
     rows, netINR: lbNet,
-    iOwe: rows.filter(r => r.status === 'i-owe').reduce((s, r) => s + r.equiv, 0),
-    theyOwe: -rows.filter(r => r.status === 'they-owe').reduce((s, r) => s + r.equiv, 0),
+    // Split on the INR equivalent, not on the status label: someone who owes
+    // you rupees while you owe him riyals belongs to whichever side he comes
+    // out on, and would otherwise fall out of both totals.
+    iOwe: rows.filter(r => r.open && r.equiv > 0).reduce((s, r) => s + r.equiv, 0),
+    theyOwe: -rows.filter(r => r.open && r.equiv < 0).reduce((s, r) => s + r.equiv, 0),
     openCount: rows.filter(r => r.open).length,
     settledCount: rows.filter(r => !r.open).length,
   };
@@ -508,13 +595,26 @@ export function statement(account, f = {}) {
   return { account, currency: currencyOf(account), opening, closing: run, rows, inSum, outSum, net: inSum - outSum };
 }
 
-/** Ledger for one payee, with a running balance (positive = you owe them). */
+/**
+ * Ledger for one payee, with a running balance (positive = you owe them).
+ *
+ * The balance is kept per CURRENCY. A running total may only add up money of
+ * the same kind: lending someone ₹3,000, then ₹2,000, then 30 riyals used to
+ * run one column down the page and finish at 5,030 — a number that is neither
+ * rupees nor riyals, and was then labelled with whichever currency the first
+ * row happened to be in. Each row now carries the balance its OWN currency has
+ * reached, which is the only figure that means anything.
+ */
 export function payeeLedger(payee) {
   const rows = DB.transactions
     .filter(t => t.type === 'Lend/Borrow' && t.payee === payee)
     .map(t => ({ ...t }));
-  let run = 0;
-  for (const r of rows) { run += (+r.income || 0) - (+r.expense || 0); r.balance = run; }
+  const run = new Map();
+  for (const r of rows) {
+    const c = r.currency || 'SAR';
+    run.set(c, (run.get(c) || 0) + (+r.income || 0) - (+r.expense || 0));
+    r.balance = round2(run.get(c));
+  }
   return rows;
 }
 

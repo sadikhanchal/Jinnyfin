@@ -401,9 +401,22 @@ export async function sync({ full = false } = {}) {
       pushed = q.length;
     }
     // 2 ── pull everything changed since the last sync
+    //
+    // The watermark has to be SERVER time. `updated_at` is written by a trigger
+    // on the server, so marking the pull with this device's own clock meant a
+    // phone running four minutes fast asked next time for everything after a
+    // moment the server had not reached yet — and every row written by another
+    // device in those four minutes fell in the gap. `lastSync` only ever moves
+    // forward, so those rows were never asked for again: present on the server,
+    // present on the device that wrote them, missing here for good.
+    //
+    // So the mark is the newest `updated_at` actually seen, less a second of
+    // overlap. Re-reading a handful of rows costs nothing and is idempotent;
+    // losing one is permanent.
     const since = full ? '1970-01-01T00:00:00Z' : (state.lastSync || '1970-01-01T00:00:00Z');
-    const stamp = new Date().toISOString();
-    let pulled = 0;
+    // Rows still waiting to go up are the only ones allowed to beat the server.
+    const held = new Set((await queueAll()).map(q => q.row?.id).filter(Boolean));
+    let pulled = 0, newest = '';
     for (const table of TABLES) {
       let from = 0, page = 1000, got;
       do {
@@ -412,11 +425,19 @@ export async function sync({ full = false } = {}) {
           .range(from, from + page - 1);
         if (error) throw error;
         got = data || [];
-        if (got.length) { await mergeRemote(table, got); pulled += got.length; }
+        if (got.length) {
+          await mergeRemote(table, got, held);
+          pulled += got.length;
+          for (const r of got) if (r.updated_at && r.updated_at > newest) newest = r.updated_at;
+        }
         from += page;
       } while (got.length === page);
     }
-    state.lastSync = stamp; await meta('lastSync', stamp);
+    if (newest) {
+      const back = new Date(Date.parse(newest) - 1000).toISOString();
+      const mark = back > since ? back : since;
+      state.lastSync = mark; await meta('lastSync', mark);
+    }
     // Only announce a change when something actually changed. Coming back to the
     // app fires a sync; if it brings nothing new, the screen must not be rebuilt
     // underneath you — that is what kept throwing the page back to the top.
@@ -432,13 +453,20 @@ export async function sync({ full = false } = {}) {
   } finally { state.syncing = false; emit('sync'); }
 }
 
-async function mergeRemote(table, rows) {
+async function mergeRemote(table, rows, held = new Set()) {
   const byId = new Map(DB[table].map(r => [r.id, r]));
   const keep = [];
   for (const r of rows) {
     const local = byId.get(r.id);
-    // last-write-wins; a local row that is still queued always wins
-    if (local && local.updated_at > r.updated_at) continue;
+    // A local row wins only while it is still waiting in the queue — an edit
+    // made here that the server has not been told about yet.
+    //
+    // This used to compare `local.updated_at > r.updated_at`, which is two
+    // different clocks: ours stamps the local row, a server trigger stamps the
+    // remote one. A device running a few minutes fast therefore rejected every
+    // incoming version of any row it had ever touched, and the two devices
+    // showed different amounts for the same transaction from then on.
+    if (local && held.has(r.id)) continue;
     keep.push(r);
     if (r.deleted) byId.delete(r.id); else byId.set(r.id, r);
   }
