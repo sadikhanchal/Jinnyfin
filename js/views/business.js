@@ -87,13 +87,32 @@ function draw() {
     kpi('Net profit', money(pl.netEquiv, 'INR', false), pl.netEquiv >= 0 ? '' : 'expense'),
     kpi('Entries', pl.rows.length.toLocaleString('en-IN'))));
 
+  // A single year picked on its own opens into its months. One green bar and
+  // one red bar for the whole of 2022 says nothing the totals above have not
+  // already said; the shape of the year is in its months. Only months that
+  // actually carry an entry get a bar.
+  const oneYear = f.year !== 'All' && f.month === 'All';
+  let bars;
+  if (oneYear) {
+    const m = new Map();
+    for (const r of pl.rows) {
+      const k = +String(r.date).slice(5, 7);
+      const b = m.get(k) || { label: MONTHS[k - 1], income: 0, expense: 0 };
+      if (r.type === 'Income') b.income += C.inrOf(r); else b.expense += C.inrOut(r);
+      m.set(k, b);
+    }
+    bars = [...m.entries()].sort((a, b) => a[0] - b[0]).map(([, b]) => b);
+  } else {
+    bars = pl.byYear.map(y => ({ label: String(y.year), income: y.income, expense: y.expense }));
+  }
   const chartCard = el('div', { class: 'card', style: 'margin-top:12px' },
-    el('div', { class: 'card-head' }, el('h3', {}, 'Year by year (≈ INR)')));
+    el('div', { class: 'card-head' },
+      el('h3', {}, oneYear ? `${f.year} — month by month (≈ INR)` : 'Year by year (≈ INR)')));
   const ch = el('div', {}); chartCard.append(ch); host.append(chartCard);
   requestAnimationFrame(() => groupedBars(ch, {
-    labels: pl.byYear.map(y => String(y.year)),
-    series: [{ name: '▲ Income', color: S.income, values: pl.byYear.map(y => y.income) },
-             { name: '▼ Expense', color: S.expense, values: pl.byYear.map(y => y.expense) }],
+    labels: bars.map(b => b.label),
+    series: [{ name: '▲ Income', color: S.income, values: bars.map(b => b.income) },
+             { name: '▼ Expense', color: S.expense, values: bars.map(b => b.expense) }],
   }));
 
   const yt = el('table');

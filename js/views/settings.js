@@ -41,7 +41,12 @@ function general() {
   const s = getSettings();
   const sar = el('input', { type: 'number', step: '0.0001', value: C.rates().sar });
   const usd = el('input', { type: 'number', step: '0.0001', value: C.rates().usd });
-  const invCats = el('input', { value: C.investmentCategories().join(', '), style: 'width:100%' });
+  // Read-only on purpose. This list is built from the Investment categories, so
+  // a name deleted here simply came back on the next redraw — an edit box that
+  // quietly ignores half of what you do with it is worse than no edit box.
+  // Removing a holding is what the skip list below is for.
+  const invCats = el('input', { value: C.investmentCategories().join(', '),
+    readonly: true, tabindex: '-1', class: 'locked', style: 'width:100%' });
   const invSkip = el('input', { value: (s.investment_skip || ['Share Trading']).join(', '), style: 'width:100%' });
 
   host.append(el('div', { class: 'card' },
@@ -63,7 +68,8 @@ function general() {
       + 'less withdrawals. This list is built from your Investment categories, so anything the '
       + 'Holding dropdown offers is counted in net worth — the two used to be separate lists, and '
       + 'a deposit into a holding that was missing from this one left its bank and landed nowhere. '
-      + 'Add a name here only for a holding that has no category of its own.'),
+      + 'It is shown for reference and is not edited here — add or rename a holding in '
+      + 'Settings → Categories, under type Investment.'),
     invCats,
     el('p', { class: 'small muted', style: 'margin:10px 0 6px' },
       'Left out of net worth. Share Trading belongs here because the equity portfolio already '
@@ -71,8 +77,7 @@ function general() {
     invSkip,
     el('button', { class: 'btn', style: 'margin-top:8px', onclick: async () => {
       const split = v => v.split(',').map(x => x.trim()).filter(Boolean);
-      await setSettings({ investment_categories: split(invCats.value),
-        investment_skip: split(invSkip.value) });
+      await setSettings({ investment_skip: split(invSkip.value) });
       toast('Saved');
     } }, 'Save')));
 
@@ -1027,6 +1032,19 @@ const noCategory = () => DB.transactions
   .filter(t => !t.deleted && !t.parent && t.type !== 'Transfer' && t.type !== 'Opening Balance')
   .map(t => ({ t, why: 'no category, so it is missing from every breakdown' }));
 
+/**
+ * A row whose account is not one of your accounts at all. Transfers saved
+ * before 1.27.7 could write the literal words "— not known —" into the account
+ * field when the other side had not been named, and that row then belongs to
+ * nothing: it is in no account statement and no balance.
+ */
+const ghostAccount = () => {
+  const real = new Set(DB.accounts.filter(a => !a.deleted).map(a => a.name));
+  return DB.transactions
+    .filter(t => !t.deleted && t.account && !real.has(t.account))
+    .map(t => ({ t, why: `“${t.account}” is not one of your accounts — open it and pick the right one` }));
+};
+
 const SHOW = 60;                       // enough to work through, not a wall of rows
 
 function checkGroup(host2, title, blurb, rows, extra) {
@@ -1185,11 +1203,16 @@ function check() {
     lb.length ? el('button', { class: 'btn sm primary', onclick: tidyLendBorrow }, '✓ Fix all ' + lb.length) : null);
 
   checkGroup(host, 'No category', 'These land nowhere in any breakdown.', nc);
+
+  checkGroup(host, 'Account does not exist',
+    'The account named on these rows is not in your account list, so the money on them '
+    + 'sits in no balance and shows on no statement. Open each one and pick the account it belongs to.',
+    ghostAccount());
 }
 
 /** How many entries the Data check tab would show — used for the tab badge. */
 function checkCount() {
-  try { return currencyOdd().length + lbOdd().length + noCategory().length; } catch { return 0; }
+  try { return currencyOdd().length + lbOdd().length + noCategory().length + ghostAccount().length; } catch { return 0; }
 }
 
 function exportAllCSV() {
