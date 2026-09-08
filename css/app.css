@@ -9,7 +9,7 @@
      you whether this device is holding an old stylesheet, so it is bumped with
      every release — not only when the stylesheet itself changes, or the check
      cries wolf. */
-  --jf-css: "1.27.9";
+  --jf-css: "1.31";
   color-scheme: light;
   --page:        #f9f9f7;
   --surface:     #fcfcfb;
@@ -302,6 +302,8 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 tbody tr:hover { background: var(--surface-2); }
 tbody tr:last-child td { border-bottom: 0; }
 tr.total td { font-weight: 700; background: var(--surface-2); border-top: 2px solid var(--axis); }
+/* The row you are looking at, in a table you can pick from. */
+tbody tr.picked td { background: color-mix(in srgb, var(--brand) 9%, var(--surface)); }
 td.wrap { white-space: normal; min-width: 200px; }
 /* Totals: the wide table on a real screen, the two-column one on a phone. */
 .sum-thin { display: none; }
