@@ -48,8 +48,10 @@ export function createClient() {
         // same objects meant the app's own store held the very rows the test
         // then edited, so "has this row changed since we last saw it?" was
         // always no and the test proved nothing.
-        range: async start => ({
-          data: start === 0 ? structuredClone(S.rows[table] || []) : [], error: null }),
+        range: async start => {
+          if (S.pullDelay) await new Promise(resolve => setTimeout(resolve, S.pullDelay));
+          return { data: start === 0 ? structuredClone(S.rows[table] || []) : [], error: null };
+        },
         async upsert(rows) { S.pushed.push(...[].concat(rows).map(r => ({ table, row: r }))); return { data: [], error: null }; },
         async insert(rows) { S.pushed.push(...[].concat(rows).map(r => ({ table, row: r }))); return { data: [], error: null }; },
         async delete() { return { data: [], error: null }; },
