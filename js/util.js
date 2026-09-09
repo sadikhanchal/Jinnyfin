@@ -314,9 +314,27 @@ export function restoreFilterFocus(host) {
 
 export function confirmBox(msg, okLabel = 'Yes, do it') {
   return new Promise(res => {
+    const previous = document.activeElement;
+    const selection = previous && typeof previous.selectionStart === 'number'
+      ? { start: previous.selectionStart, end: previous.selectionEnd, direction: previous.selectionDirection }
+      : null;
+    const restore = () => {
+      if (!previous?.isConnected || typeof previous.focus !== 'function') return;
+      try { previous.focus({ preventScroll: true }); } catch { previous.focus(); }
+      if (selection && typeof previous.setSelectionRange === 'function') {
+        try { previous.setSelectionRange(selection.start, selection.end, selection.direction); } catch { /* not selectable */ }
+      }
+    };
     const wrap = el('div', { class: 'modal-wrap' });
     let disarm = () => {};
-    const done = v => { disarm(); wrap.remove(); res(v); };
+    let settled = false;
+    const done = v => {
+      if (settled) return;
+      settled = true;
+      disarm(); wrap.remove();
+      if (!v) restore();
+      res(v);
+    };
     const cancel = el('button', { class: 'btn ghost', onclick: () => done(false) }, 'Cancel');
     const box = el('div', { class: 'modal small' },
       el('p', { class: 'confirm-msg' }, msg),
@@ -327,7 +345,7 @@ export function confirmBox(msg, okLabel = 'Yes, do it') {
     dismissOnBackdrop(wrap, () => done(false));
     document.body.append(wrap);
     cancel.focus();
-    disarm = armBack(() => { wrap.remove(); res(false); });
+    disarm = armBack(() => done(false));
   });
 }
 
