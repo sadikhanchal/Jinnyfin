@@ -294,6 +294,59 @@ test('signing out warns before discarding queued writes', async browser => {
   return 'unsynced work retained without consent, cleared only after explicit consent';
 });
 
+test('signing out blocks a sync already in flight', async browser => {
+  const { ctx, page } = await open(browser, 'transactions');
+  const result = await page.evaluate(async () => {
+    const { S, DB } = window.JINNYFIN;
+    const { TABLES, state, DB_NAME, DB_VERSION } = S;
+    window.__sb.pullDelay = 350;
+    const inFlight = S.sync({ full: true });
+    for (let i = 0; i < 100 && !state.syncing; i++) await new Promise(r => setTimeout(r, 10));
+    if (!state.syncing) throw new Error('sync did not enter the in-flight state');
+
+    const signOut = S.signOut();
+    await signOut;
+    const immediatelyAfter = {
+      rows: DB.transactions.length,
+      pending: state.pending,
+      lastSync: state.lastSync,
+      user: state.user,
+    };
+    await inFlight;
+
+    const storedTransactions = await new Promise((resolve, reject) => {
+      const rq = indexedDB.open(DB_NAME, DB_VERSION);
+      rq.onerror = () => reject(rq.error);
+      rq.onsuccess = () => {
+        const db = rq.result;
+        const tx = db.transaction(['transactions'], 'readonly');
+        const cr = tx.objectStore('transactions').count();
+        cr.onsuccess = () => { db.close(); resolve(cr.result); };
+        cr.onerror = () => reject(cr.error);
+      };
+    });
+    return {
+      immediatelyAfter,
+      afterPull: {
+        rows: DB.transactions.length,
+        storedTransactions,
+        lastSync: state.lastSync,
+        user: state.user,
+      },
+      tableRows: Object.fromEntries(TABLES.map(t => [t, DB[t].length])),
+    };
+  });
+  await ctx.close();
+  if (result.immediatelyAfter.rows !== 0 || result.immediatelyAfter.lastSync !== null)
+    throw new Error(`purge did not clear immediately: ${JSON.stringify(result.immediatelyAfter)}`);
+  if (result.afterPull.rows !== 0 || result.afterPull.storedTransactions !== 0
+      || result.afterPull.lastSync !== null || result.afterPull.user)
+    throw new Error(`late sync repopulated signed-out data: ${JSON.stringify(result)}`);
+  const left = Object.entries(result.tableRows).filter(([, n]) => n);
+  if (left.length) throw new Error(`tables repopulated after sign-out: ${JSON.stringify(left)}`);
+  return 'late pull could not restore local data';
+});
+
 test('coming back to the tab does not rebuild the screen', async browser => {
   // supabase-js re-reads its session on every hidden -> visible transition and
   // raises SIGNED_IN for the SAME account. That used to run start(), which
