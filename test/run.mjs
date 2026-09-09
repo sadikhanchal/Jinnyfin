@@ -159,6 +159,42 @@ test('a chart with nothing to plot draws nothing, quietly', async browser => {
   return 'no data, no noise';
 });
 
+test('an account name in a chart tooltip stays text', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  const result = await page.evaluate(async () => {
+    const { groupedBars } = await import('./js/charts.js');
+    const account = { ...window.JINNYFIN.DB.accounts[0],
+      name: '<img src=x onerror="window.__jfTooltipXss=1">Rent <b>account</b>' };
+    const screen = document.createElement('section');
+    screen.id = 'tooltip-screen';
+    const host = document.createElement('div');
+    host.style.cssText = 'width:640px;height:220px';
+    screen.append(host);
+    document.querySelector('#main').append(screen);
+    groupedBars(host, {
+      labels: ['2026'],
+      series: [{ name: account.name, color: '#5478ff', values: [123] }],
+    });
+    const bar = host.querySelector('rect[width]');
+    bar.dispatchEvent(new PointerEvent('pointerenter', {
+      bubbles: true, clientX: 100, clientY: 100,
+    }));
+    const tip = document.querySelector('.tip');
+    return {
+      text: tip?.textContent || '',
+      dangerousElements: tip?.querySelectorAll('img,script,iframe,object').length || 0,
+      executed: window.__jfTooltipXss || 0,
+    };
+  });
+  await ctx.close();
+  if (errors.length) throw new Error(errors[0].slice(0, 140));
+  if (!result.text.includes('<img src=x onerror="window.__jfTooltipXss=1">Rent <b>account</b>'))
+    throw new Error('the account name was not kept as literal tooltip text');
+  if (result.dangerousElements) throw new Error('markup became a tooltip element');
+  if (result.executed) throw new Error('tooltip markup executed');
+  return 'account markup remained text';
+});
+
 test('coming back to the tab does not rebuild the screen', async browser => {
   // supabase-js re-reads its session on every hidden -> visible transition and
   // raises SIGNED_IN for the SAME account. That used to run start(), which

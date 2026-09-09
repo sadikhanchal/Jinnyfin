@@ -41,6 +41,7 @@ bug that shipped and had to be found by hand:
 
 - a screen that would not open after a bad import
 - a chart with no data drawing a stray triangle and logging an error
+- account names in chart tooltips being interpreted as markup
 - alt-tabbing back and finding the page thrown to the top
 - a background sync rebuilding the page mid-typing, cursor gone
 - arrow keys dying after one press on a filter
