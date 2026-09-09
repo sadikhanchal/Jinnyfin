@@ -1,7 +1,8 @@
 // ============================================================================
 //  dashboard.js — the sheet's Dashboard tab, re-cut for a phone screen.
 // ============================================================================
-import { el, money, compact, num, MONTHS, MON3, todayISO, fmtDate } from '../util.js';
+import { el, money, compact, num, MONTHS, MON3, todayISO, fmtDate,
+  onFilter, restoreFilterFocus } from '../util.js';
 import { DB } from '../store.js';
 import * as C from '../calc.js';
 import { groupedBars, lineChart, barList, SERIES } from '../charts.js';
@@ -50,8 +51,8 @@ function draw() {
     ...C.yearsPresent().map(y => el('option', { value: y, selected: String(year) === String(y) }, y)));
   const mSel = el('select', {}, el('option', { value: 'All' }, 'All months'),
     ...MONTHS.map((m, i) => el('option', { value: i + 1, selected: String(month) === String(i + 1) }, m)));
-  ySel.onchange = () => { year = ySel.value; draw(); };
-  mSel.onchange = () => { month = mSel.value; draw(); };
+  onFilter(ySel, 'year', () => { year = ySel.value; draw(); });
+  onFilter(mSel, 'month', () => { month = mSel.value; draw(); });
   host.append(el('div', { class: 'filters' },
     el('div', { class: 'field' }, el('label', {}, 'Year'), ySel),
     el('div', { class: 'field' }, el('label', {}, 'Month'), mSel),
@@ -120,6 +121,7 @@ function draw() {
   bottom.append(balancesCard());
   bottom.append(recentCard());
   host.append(bottom);
+  restoreFilterFocus(host);   // the cursor stays in the filter you were arrowing through
 }
 
 function tile(label, value, sub, cls = '') {

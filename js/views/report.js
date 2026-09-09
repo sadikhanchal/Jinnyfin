@@ -2,7 +2,8 @@
 //  report.js — shared engine behind the Expense Report and Income Report.
 //  Same filters, same four blocks as the workbook, one code path.
 // ============================================================================
-import { el, money, num, MONTHS, MON3, fmtDate, downloadCSV, todayISO } from '../util.js';
+import { el, money, num, MONTHS, MON3, fmtDate, downloadCSV, todayISO,
+  onFilter, restoreFilterFocus } from '../util.js';
 import { DB } from '../store.js';
 import * as C from '../calc.js';
 import { groupedBars, barList, SERIES } from '../charts.js';
@@ -68,7 +69,7 @@ export function makeReport(kind) {
     const sel = (label, key, opts, all = 'All') => {
       const s = el('select', {}, el('option', { value: 'All' }, all),
         ...opts.map(o => el('option', { value: o.v ?? o, selected: String(f[key]) === String(o.v ?? o) }, o.t ?? o)));
-      s.onchange = () => { f[key] = s.value; if (key === 'parent') f.sub = 'All'; draw(); };
+      onFilter(s, key, () => { f[key] = s.value; if (key === 'parent') f.sub = 'All'; draw(); });
       return el('div', { class: 'field' }, el('label', {}, label), s);
     };
     host.append(el('div', { class: 'filters' },
@@ -184,6 +185,7 @@ export function makeReport(kind) {
     if (rows.length > 400) detCard.append(el('p', { class: 'small muted', style: 'margin:8px 0 0' },
       'Showing the latest 400 — narrow the filters or download the CSV for everything.'));
     host.append(detCard);
+  restoreFilterFocus(host);   // the cursor stays in the filter you were arrowing through
   }
 
   function exportCSV(rows) {

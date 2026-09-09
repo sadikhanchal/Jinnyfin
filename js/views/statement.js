@@ -2,7 +2,7 @@
 //  statement.js — account statement with a running balance.
 // ============================================================================
 import { el, money, num, fmtDate, MONTHS, downloadCSV, todayISO, endOfMonth,
-  dateGuard, restoreDateFocus } from '../util.js';
+  dateGuard, restoreDateFocus, onFilter, restoreFilterFocus } from '../util.js';
 import { printStatement, printDate } from './printable.js';
 import { DB } from '../store.js';
 import * as C from '../calc.js';
@@ -54,7 +54,8 @@ document.addEventListener('keydown', e => {
 
 function draw() {
   f.tag ? drawHolding() : f.account ? drawOne() : drawList();
-  restoreDateFocus(host);          // the redraw threw away the box you were typing in
+  restoreDateFocus(host);
+  restoreFilterFocus(host);          // and in the filter you were arrowing through
 }
 
 // --------------------------------------------------------- all accounts ----
@@ -160,7 +161,7 @@ function periodFilters() {
   const sel = (label, key, opts, all) => {
     const s = el('select', {}, all ? el('option', { value: 'All' }, all) : null,
       ...opts.map(o => el('option', { value: o.v ?? o, selected: String(f[key]) === String(o.v ?? o) }, o.t ?? o)));
-    s.onchange = () => { f[key] = s.value; draw(); };
+    onFilter(s, key, () => { f[key] = s.value; draw(); });
     return el('div', { class: 'field' }, el('label', {}, label), s);
   };
   const dateIn = (label, key) => {

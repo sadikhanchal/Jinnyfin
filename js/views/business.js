@@ -2,7 +2,8 @@
 //  business.js — P&L per side business (the workbook's Business P&L sheet,
 //  including the "add a row to track another business" setup table).
 // ============================================================================
-import { el, money, num, fmtDate, MONTHS, modal, toast, confirmBox, downloadCSV, todayISO } from '../util.js';
+import { el, money, num, fmtDate, MONTHS, modal, toast, confirmBox, downloadCSV, todayISO,
+  onFilter, restoreFilterFocus } from '../util.js';
 import { DB, put, remove } from '../store.js';
 import * as C from '../calc.js';
 import { groupedBars, SERIES } from '../charts.js';
@@ -12,11 +13,6 @@ import { kpi } from './report.js';
 
 let pick = 0, f = { year: 'All', month: 'All' };
 let host = null;
-// Which filter the cursor was in when the redraw was triggered. Changing a
-// select fires `change` on every arrow press, and the redraw that follows
-// replaces the select — so the second press went nowhere and the keyboard was
-// dead after one step. The cursor is put back on the same field afterwards.
-let focusFilter = null;
 
 export async function render(root) { host = root; draw(); }
 export function refresh() { if (host) draw(); }
@@ -41,9 +37,9 @@ function draw() {
   host.append(chips);
 
   const sel = (label, key, opts, all) => {
-    const s = el('select', { dataset: { fk: key } }, el('option', { value: 'All' }, all),
+    const s = el('select', {}, el('option', { value: 'All' }, all),
       ...opts.map(o => el('option', { value: o.v ?? o, selected: String(f[key]) === String(o.v ?? o) }, o.t ?? o)));
-    s.onchange = () => { focusFilter = key; f[key] = s.value; draw(); };
+    onFilter(s, key, () => { f[key] = s.value; draw(); });
     return el('div', { class: 'field' }, el('label', {}, label), s);
   };
   host.append(el('div', { class: 'filters' },
@@ -145,10 +141,7 @@ function draw() {
   }
   dt.append(dtb);
 
-  if (focusFilter) {
-    const k = focusFilter; focusFilter = null;
-    requestAnimationFrame(() => host.querySelector(`select[data-fk="${k}"]`)?.focus());
-  }
+  restoreFilterFocus(host);   // the cursor stays in the filter you were arrowing through
 
   // Year by year is four short columns; Transactions is six with a description.
   // An even split made the wide one scroll sideways while the narrow one sat in

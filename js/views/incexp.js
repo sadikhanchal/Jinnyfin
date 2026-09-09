@@ -2,7 +2,7 @@
 //  incexp.js — Income vs Expense for any period, grouped and sorted.
 // ============================================================================
 import { el, money, num, MONTHS, endOfMonth, downloadCSV, todayISO, fmtDate,
-  dateGuard, restoreDateFocus } from '../util.js';
+  dateGuard, restoreDateFocus, onFilter, restoreFilterFocus } from '../util.js';
 import { DB } from '../store.js';
 import * as C from '../calc.js';
 import { groupedBars, SERIES } from '../charts.js';
@@ -37,7 +37,7 @@ function draw() {
   const sel = (label, key, opts, all) => {
     const s = el('select', {}, all ? el('option', { value: 'All' }, all) : null,
       ...opts.map(o => el('option', { value: o.v ?? o, selected: String(f[key]) === String(o.v ?? o) }, o.t ?? o)));
-    s.onchange = () => { f[key] = s.value; f.from = f.to = ''; draw(); };
+    onFilter(s, key, () => { f[key] = s.value; f.from = f.to = ''; draw(); });
     return el('div', { class: 'field' }, el('label', {}, label), s);
   };
   const dateIn = (label, key) => {
@@ -104,7 +104,8 @@ function draw() {
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Breakdown')),
     el('div', { class: 'table-wrap', style: 'max-height:65vh;overflow:auto' }, t)));
-  restoreDateFocus(host);        // put the cursor back in the date box the redraw ate
+  restoreDateFocus(host);
+  restoreFilterFocus(host);        // and in the filter you were arrowing through
 }
 
 function exportCSV(res) {

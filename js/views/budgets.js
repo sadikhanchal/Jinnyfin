@@ -2,7 +2,8 @@
 //  budgets.js — a monthly ceiling per category, with how much is left.
 //  (Not in the workbook — the "additional enthelum" part.)
 // ============================================================================
-import { el, money, num, MONTHS, modal, toast, confirmBox } from '../util.js';
+import { el, money, num, MONTHS, modal, toast, confirmBox,
+  onFilter, restoreFilterFocus } from '../util.js';
 import { DB, put, remove } from '../store.js';
 import * as C from '../calc.js';
 import { SERIES } from '../charts.js';
@@ -22,8 +23,8 @@ function draw() {
 
   const ySel = el('select', {}, ...C.yearsPresent().map(y => el('option', { value: y, selected: year == y }, y)));
   const mSel = el('select', {}, ...MONTHS.map((m, i) => el('option', { value: i + 1, selected: month == i + 1 }, m)));
-  ySel.onchange = () => { year = ySel.value; draw(); };
-  mSel.onchange = () => { month = mSel.value; draw(); };
+  onFilter(ySel, 'year', () => { year = ySel.value; draw(); });
+  onFilter(mSel, 'month', () => { month = mSel.value; draw(); });
   host.append(el('div', { class: 'filters' },
     el('div', { class: 'field' }, el('label', {}, 'Year'), ySel),
     el('div', { class: 'field' }, el('label', {}, 'Month'), mSel)));
@@ -65,6 +66,7 @@ function draw() {
         sar ? ` · ≈ ${money(r.spent, 'INR', false)} / ${money(r.limit, 'INR', false)}` : '')));
   }
   host.append(list);
+  restoreFilterFocus(host);   // the cursor stays in the filter you were arrowing through
 }
 
 function edit(b = null) {

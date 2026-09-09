@@ -1,7 +1,8 @@
 // ============================================================================
 //  transactions.js — the full ledger: search, filter, duplicate, edit, export.
 // ============================================================================
-import { el, money, fmtDate, MONTHS, debounce, downloadCSV, todayISO, toast, confirmBox, uuid } from '../util.js';
+import { el, money, fmtDate, MONTHS, debounce, downloadCSV, todayISO, toast, confirmBox, uuid,
+  onFilter, restoreFilterFocus } from '../util.js';
 import { DB, putMany, remove } from '../store.js';
 import * as C from '../calc.js';
 import { topbar } from '../app.js';
@@ -98,7 +99,7 @@ function draw() {
   const sel = (label, key, options) => {
     const s = el('select', {}, el('option', { value: 'All' }, 'All'),
       ...options.map(o => el('option', { value: o.v ?? o, selected: String(f[key]) === String(o.v ?? o) }, o.t ?? o)));
-    s.onchange = () => { f[key] = s.value; shown = PAGE; draw(); };
+    onFilter(s, key, () => { f[key] = s.value; shown = PAGE; draw(); });
     return el('div', { class: 'field' }, el('label', {}, label), s);
   };
   /**
@@ -199,6 +200,7 @@ function draw() {
     const key = focusBack; focusBack = null;
     requestAnimationFrame(() => host.querySelector(`input[data-dk="${key}"]`)?.focus());
   }
+  restoreFilterFocus(host);   // the cursor stays in the filter you were arrowing through
 }
 
 function mini(label, value, cls = '') {
