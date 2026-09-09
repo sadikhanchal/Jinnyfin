@@ -159,24 +159,21 @@ mathrame work cheyyu.
 
 ---
 
-## Optional — daily email reminder
+## Daily email reminder — removed on purpose
 
-App thurakkathe thanne mail venamenkil, repo-yil already undu:
-`.github/workflows/expiry-email.yml`. GitHub repo → **Settings → Secrets and
-variables → Actions → New repository secret**, ee 6 ennam add cheyyu:
+Munpu ivide oru GitHub Actions workflow undayirunnu, divasavum mail
+ayakkan. Athu **ozhivakki**. Karanam: athu odaan ninte Jinnyfin
+**password** oru GitHub secret aayi vekkanam. Repo-yil write access
+ullavarkk oru workflow ezhuthi athu purathedukkam — aa risk ee feature-inu
+value-yekkal valuthanu.
 
-| Secret | Value |
-|---|---|
-| `SUPABASE_URL` | Step 1-le Project URL |
-| `SUPABASE_ANON_KEY` | Step 1-le anon key |
-| `JINNYFIN_EMAIL` | app login email |
-| `JINNYFIN_PASSWORD` | app login password |
-| `RESEND_API_KEY` | https://resend.com free key |
-| `MAIL_TO` | mail varendath evide |
+App-inulile **push notification** ithe pani cheyyunnundu, athinu password
+onnum venda.
 
-Divasavum raavile 7 manikku (Riyadh time) check cheyyum. Onnum due
-illenkil mail ayakkilla. **Actions** tab-il poyi "Run workflow" click cheythu
-test cheyyam.
+Mail koodi venamenkil sheriyaya vazhi GitHub alla: `supabase/push-cron.sql`
+already divasavum odunnundu push-inu vendi. Aa cron-il ninnu thanne mail
+ayakkam — password evideyum venda, push-um mail-um ore timezone-il ninnu
+vayikkum. Athu cheyyanamenkil parayu.
 
 ---
 
