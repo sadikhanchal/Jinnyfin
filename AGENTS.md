@@ -16,7 +16,7 @@ within minutes.
 1. **Never work directly on `main`.** GitHub Pages serves the live app from it.
    Branch, then merge once the checks pass.
 
-2. **`cd test && npm test` must be green before any merge.** Nine checks, each
+2. **`cd test && npm test` must be green before any merge.** Ten checks, each
    written for a bug that actually shipped. If a change breaks one, the change
    is wrong until proven otherwise — do not edit the check to make it pass.
    Adding a feature means adding a check for it.
