@@ -13,7 +13,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.35', date: '2026-09-09' };
+export const BUILD = { version: '1.36', date: '2026-09-09' };
 
 const ROUTES = {
   dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
@@ -460,17 +460,74 @@ function prefetchViews() {
   });
 }
 
+let deferredRedraw = false;
+
+/** Redraw the current screen in place. The page has one scrollbar but the
+ *  tables have their own, and a rebuild resets every one of them. */
+function redrawView() {
+  if (!currentView?.refresh) return;
+  const marks = captureScroll();
+  try { currentView.refresh(); } catch (e) { console.warn(e); }
+  restoreScroll(marks);
+}
+
+/** Is the cursor sitting in something the user is filling in right now? */
+const isTyping = n => !!n && /^(INPUT|SELECT|TEXTAREA)$/.test(n.tagName)
+  && !n.readOnly && !n.disabled && document.body.contains(n);
+
+/**
+ * Hold a redraw until the cursor has left the form.
+ *
+ * Tabbing from one box to the next is a single keystroke that blurs the old box
+ * and focuses the new one, so a redraw fired on blur still lands in the middle
+ * of typing. This looks one tick later: if the cursor has only moved along the
+ * column, it waits on the new box instead of rebuilding the page out from under
+ * it, and the rebuild happens once — when the form is finally left.
+ */
+function holdRedrawWhileTyping(node) {
+  let done = false, timer = 0;
+  const finish = () => {
+    if (done) return;
+    done = true; clearTimeout(timer); deferredRedraw = false;
+    redrawView();
+  };
+  const arm = n => {
+    n.addEventListener('blur', onBlur, { once: true });
+    clearTimeout(timer);
+    // A field can also be taken off the page without ever blurring — a modal
+    // closing over it — and then nothing would redraw again.
+    timer = setTimeout(finish, 15000);
+  };
+  function onBlur() {
+    setTimeout(() => {
+      if (done) return;
+      const next = document.activeElement;
+      if (isTyping(next)) arm(next); else finish();
+    }, 0);
+  }
+  arm(node);
+}
+
 S.onChange(what => {
   updateChip();
   paintBell();
   if (what === 'auth') {
     if (!state.user) loginScreen(); else { start(); Push.refresh(); Push.syncZone(); }
   } else if (what === 'data' && currentView?.refresh) {
-    // Redrawing in place must not move anything. The page has one scrollbar but
-    // the tables have their own, and a rebuild resets every one of them.
-    const marks = captureScroll();
-    try { currentView.refresh(); } catch (e) { console.warn(e); }
-    restoreScroll(marks);
+    // A background sync must never rebuild the page while you are typing in it.
+    //
+    // Reconcile is where this bit hardest: every "Bank says" box you fill
+    // queues a sync, and the redraw when that sync landed a second later threw
+    // the cursor out of the box you had already tabbed into — two digits in,
+    // focus gone, the next Tab landing on Sign out. The rebuild now waits
+    // until you leave the field, which is also the moment it can be done
+    // without anyone noticing.
+    const a = document.activeElement;
+    if (isTyping(a)) {
+      if (!deferredRedraw) { deferredRedraw = true; holdRedrawWhileTyping(a); }
+      return;
+    }
+    redrawView();
   }
 });
 
