@@ -13,7 +13,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.40', date: '2026-09-09' };
+export const BUILD = { version: '1.41', date: '2026-09-09' };
 
 const ROUTES = {
   dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
@@ -354,7 +354,26 @@ export async function askSignOut() {
   const warn = storageBlocked() || state.storageError
     ? ' This device is not keeping your sign-in, so you will have to type your password again.'
     : ' You will need your password to get back in.';
-  if (await confirmBox('Sign out of Jinnyfin?' + warn, 'Sign out')) S.signOut();
+
+  // Never discard writes that have not reached Supabase without saying so. If a
+  // background sync is already running, give it a short chance to settle before
+  // starting another one; after the cap, the pending count still decides.
+  if (state.pending > 0) {
+    if (state.online) {
+      const deadline = Date.now() + 1000;
+      while (state.syncing && Date.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 25));
+      if (!state.syncing && state.pending > 0) await S.sync();
+    }
+    if (state.pending > 0) {
+      const n = state.pending;
+      const warning = `${n} changes have not reached the server yet. Signing out now deletes them from this device for good.` + warn;
+      if (await confirmBox(warning, 'Delete changes and sign out')) await S.signOut();
+      return;
+    }
+  }
+
+  if (await confirmBox('Sign out of Jinnyfin?' + warn, 'Sign out')) await S.signOut();
 }
 
 export function toggleTheme() {
