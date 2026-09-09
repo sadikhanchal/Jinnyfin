@@ -16,16 +16,21 @@ const cssVar = name => getComputedStyle(document.documentElement).getPropertyVal
 
 // --------------------------------------------------------------- tooltip ---
 let tipEl = null;
-function showTip(html, ev) {
-  if (!tipEl) { tipEl = el('div', { class: 'tip' }); document.body.append(tipEl); }
-  tipEl.innerHTML = html;
-  tipEl.style.display = 'block';
+function placeTip(ev) {
   const r = tipEl.getBoundingClientRect();
   let x = ev.clientX + 14, y = ev.clientY - r.height - 10;
   if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 14;
   if (y < 8) y = ev.clientY + 16;
   tipEl.style.left = x + 'px'; tipEl.style.top = y + 'px';
 }
+function showTip(build, ev) {
+  if (!tipEl) { tipEl = el('div', { class: 'tip' }); document.body.append(tipEl); }
+  tipEl.replaceChildren();
+  build(tipEl);
+  tipEl.style.display = 'block';
+  placeTip(ev);
+}
+function moveTip(ev) { if (tipEl) placeTip(ev); }
 function hideTip() { if (tipEl) tipEl.style.display = 'none'; }
 document.addEventListener('scroll', hideTip, true);
 
@@ -74,9 +79,19 @@ export function groupedBars(host, { labels, series, format = compact, tipFormat 
       const y = padT + ih - h;
       const r = svgEl('rect', { x, y, width: bw, height: h, rx: Math.min(4, bw / 2), fill: s.color });
       r.style.cursor = 'pointer';
-      r.addEventListener('pointerenter', e => showTip(
-        `<b>${lab}</b>${series.map(ss => `<div><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${ss.color};margin-right:5px"></i>${ss.name}: ${tipFormat(ss.values[i] || 0)}</div>`).join('')}`, e));
-      r.addEventListener('pointermove', e => showTip(tipEl.innerHTML, e));
+      r.addEventListener('pointerenter', e => showTip(tip => {
+        const heading = document.createElement('b');
+        heading.textContent = lab;
+        tip.append(heading);
+        for (const ss of series) {
+          const row = document.createElement('div');
+          const swatch = document.createElement('i');
+          swatch.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:2px;background:${ss.color};margin-right:5px`;
+          row.append(swatch, document.createTextNode(`${ss.name}: ${tipFormat(ss.values[i] || 0)}`));
+          tip.append(row);
+        }
+      }, e));
+      r.addEventListener('pointermove', moveTip);
       r.addEventListener('pointerleave', hideTip);
       svg.append(r);
     });
@@ -143,7 +158,11 @@ export function lineChart(host, { labels, values, color, format = compact, tipFo
     i = Math.max(0, Math.min(values.length - 1, i));
     cross.setAttribute('x1', X(i)); cross.setAttribute('x2', X(i)); cross.setAttribute('opacity', .6);
     dot.setAttribute('cx', X(i)); dot.setAttribute('cy', Y(values[i])); dot.setAttribute('opacity', 1);
-    showTip(`<b>${labels[i]}</b>${tipFormat(values[i])}`, e);
+    showTip(tip => {
+      const heading = document.createElement('b');
+      heading.textContent = labels[i];
+      tip.append(heading, document.createTextNode(String(tipFormat(values[i]))));
+    }, e);
   });
   hit.addEventListener('pointerleave', () => { cross.setAttribute('opacity', 0); dot.setAttribute('opacity', 0); hideTip(); });
   svg.append(hit);
