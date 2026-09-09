@@ -620,6 +620,37 @@ test('backdrop and browser-back dismissals preserve the editor modal', async bro
   return 'backdrop and browser-back preserved the editor modal and focus';
 });
 
+test('Investments & savings totals show deposits, returns, and value', async browser => {
+  const { ctx, page } = await open(browser, 'networth');
+  const fixture = await page.evaluate(async () => {
+    const { S, DB } = window.JINNYFIN;
+    const parent = '__Net Worth Totals__';
+    const account = DB.accounts.find(a => !a.deleted);
+    if (!account) throw new Error('fixture has no account');
+    await S.put('categories', { id: 'networth-category-total', type: 'Investment', parent, sub: null,
+      active: true, deleted: false });
+    const base = { date: '2026-09-09', time: '09:00', type: 'Investment', account: account.name,
+      currency: account.currency || 'INR', fx: 1, parent, transfer_group: null, to_account: null,
+      income: 0, expense: 0, note: '__networth_totals__' };
+    await S.put('transactions', { ...base, id: 'networth-deposit-total', sub: 'Deposit', expense: 1000 });
+    await S.put('transactions', { ...base, id: 'networth-return-total', sub: 'Interest/Return', income: 200 });
+    return { parent };
+  });
+  await page.evaluate(() => window.JINNYFIN.go('networth'));
+  await page.waitForTimeout(400);
+  const cells = await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.card')]
+      .find(c => c.querySelector('h3')?.textContent.includes('Investments & savings'));
+    return [...(card?.querySelector('tr.total')?.children || [])].map(c => c.textContent.trim());
+  });
+  await ctx.close();
+  if (cells[0] !== 'TOTAL') throw new Error('Investments & savings total row is missing');
+  if (cells[2] !== '1,000') throw new Error(`deposit total missing or wrong: ${cells[2] || 'blank'}`);
+  if (cells[3] !== '200') throw new Error(`return total missing or wrong: ${cells[3] || 'blank'}`);
+  if (cells[4] !== '1,200') throw new Error(`investment value total wrong: ${cells[4] || 'blank'}`);
+  return 'deposits 1,000 · returns 200 · value 1,200';
+});
+
 test('a transfer changed to an expense takes its other half', async browser => {
   // Editing one side of a transfer into an Expense used to leave the other side
   // standing — the same money counted twice — and the converted row kept its
