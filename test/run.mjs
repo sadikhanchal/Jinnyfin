@@ -195,6 +195,76 @@ test('an account name in a chart tooltip stays text', async browser => {
   return 'account markup remained text';
 });
 
+test('signing out clears local data and queued writes', async browser => {
+  const { ctx, page } = await open(browser, 'transactions');
+  const result = await page.evaluate(async () => {
+    const { S, DB } = window.JINNYFIN;
+    const { TABLES, state } = S;
+    await S.put('transactions', {
+      id: 'signout-local-row', user_id: 'test-user', date: '2026-01-01',
+      type: 'Expense', account: DB.accounts[0].name, currency: 'INR', expense: 99,
+      income: 0, parent: 'Test', note: 'must disappear on sign-out',
+    });
+    state.lastSync = '2026-01-01T00:00:00.000Z';
+    localStorage.setItem('jinnyfin-lastSync', state.lastSync);
+    sessionStorage.setItem('jinnyfin-unlocked', '1');
+    localStorage.setItem('jinnyfin-auth', 'stale-session');
+    await new Promise((resolve, reject) => {
+      const rq = indexedDB.open('jinnyfin', 2);
+      rq.onerror = () => reject(rq.error);
+      rq.onsuccess = () => {
+        const db = rq.result;
+        const tx = db.transaction(['_meta'], 'readwrite');
+        tx.objectStore('_meta').put({ k: 'lastSync', v: state.lastSync });
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+    if (!state.pending) throw new Error('fixture did not create a queued write');
+
+    await S.signOut();
+
+    const stores = [...TABLES, '_meta', '_queue'];
+    const counts = await new Promise((resolve, reject) => {
+      const rq = indexedDB.open('jinnyfin', 2);
+      rq.onerror = () => reject(rq.error);
+      rq.onsuccess = () => {
+        const db = rq.result;
+        const tx = db.transaction(stores, 'readonly');
+        const out = {};
+        for (const name of stores) {
+          const cr = tx.objectStore(name).count();
+          cr.onsuccess = () => { out[name] = cr.result; };
+          cr.onerror = () => reject(cr.error);
+        }
+        tx.oncomplete = () => { db.close(); resolve(out); };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+    return {
+      user: state.user,
+      pending: state.pending,
+      lastSync: state.lastSync,
+      memoryRows: Object.fromEntries(TABLES.map(t => [t, DB[t].length])),
+      counts,
+      authStorage: localStorage.getItem('jinnyfin-auth'),
+      metaStorage: localStorage.getItem('jinnyfin-lastSync'),
+      unlocked: sessionStorage.getItem('jinnyfin-unlocked'),
+    };
+  });
+  await ctx.close();
+  const memoryLeft = Object.entries(result.memoryRows).filter(([, n]) => n);
+  const diskLeft = Object.entries(result.counts).filter(([, n]) => n);
+  if (result.user) throw new Error('the signed-out user is still present');
+  if (result.pending !== 0) throw new Error(`pending queue count is ${result.pending}`);
+  if (result.lastSync !== null) throw new Error('the local sync watermark survived sign-out');
+  if (memoryLeft.length) throw new Error(`in-memory rows survived: ${memoryLeft.map(([t, n]) => `${t}=${n}`).join(', ')}`);
+  if (diskLeft.length) throw new Error(`IndexedDB rows survived: ${diskLeft.map(([t, n]) => `${t}=${n}`).join(', ')}`);
+  if (result.authStorage || result.metaStorage || result.unlocked)
+    throw new Error('session or sign-out storage survived');
+  return 'memory, IndexedDB, queue, watermark, and session storage cleared';
+});
+
 test('coming back to the tab does not rebuild the screen', async browser => {
   // supabase-js re-reads its session on every hidden -> visible transition and
   // raises SIGNED_IN for the SAME account. That used to run start(), which
