@@ -252,6 +252,37 @@ export function restoreDateFocus(host) {
   requestAnimationFrame(() => host.querySelector(`input[data-dk="${key}"]`)?.focus());
 }
 
+// ------------------------------------------------------- filter dropdowns --
+let pendingFilterFocus = null;
+
+/**
+ * A filter <select> that redraws its page when it changes.
+ *
+ * A select fires `change` on EVERY arrow press. If the handler rebuilds the
+ * page, the select the key was travelling through is thrown away with it and
+ * the cursor goes with it — so the second press lands nowhere and the keyboard
+ * is dead after one step. Every filter in the app worked that way.
+ *
+ * The key is remembered here and the cursor handed back after the redraw, so
+ * ↑ and ↓ walk through years, months, categories and accounts without ever
+ * reaching for the mouse, and Tab still moves to the next field.
+ *
+ * Wire the change through this rather than assigning `onchange` separately —
+ * the order matters: the field has to be remembered BEFORE the redraw runs.
+ */
+export function onFilter(sel, key, fn) {
+  sel.dataset.fk = key;
+  sel.onchange = () => { pendingFilterFocus = key; fn(); };
+  return sel;
+}
+
+/** Call at the end of a draw() that filters may have triggered. */
+export function restoreFilterFocus(host) {
+  if (!pendingFilterFocus || !host) return;
+  const key = pendingFilterFocus; pendingFilterFocus = null;
+  requestAnimationFrame(() => host.querySelector(`select[data-fk="${key}"]`)?.focus());
+}
+
 export function confirmBox(msg, okLabel = 'Yes, do it') {
   return new Promise(res => {
     const wrap = el('div', { class: 'modal-wrap' });
