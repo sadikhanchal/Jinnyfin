@@ -30,7 +30,10 @@ export function createClient() {
         return { data: { subscription: { unsubscribe() { S.cb = null; } } } };
       },
       signInWithPassword: async () => ({ data: { user: S.user }, error: null }),
-      signOut: async () => ({ error: null }),
+      signOut: async () => {
+        S.signOutAuthStorage = localStorage.getItem('jinnyfin-auth');
+        return { error: null };
+      },
       updateUser: async () => ({ data: { user: S.user }, error: null }),
       resetPasswordForEmail: async () => ({ error: null }),
     },
