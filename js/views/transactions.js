@@ -50,18 +50,52 @@ addEventListener('popstate', () => { if (picking) { pickPushed = false; stopPick
 
 // ---------------------------------------------------------------- copying --
 /** A copy of a row stamped with now: same money, same category, new identity. */
-function copyOf(t, seq) {
+function copyOf(t, seq, transferGroup = null) {
   const date = todayISO();
   return {
     ...t, id: uuid(), date, time: new Date().toTimeString().slice(0, 5),
-    fx: C.fxFor(date), no: seq, transfer_group: null, updated_at: undefined,
+    fx: C.fxFor(date), no: seq, transfer_group: transferGroup, updated_at: undefined,
   };
 }
 
 async function duplicate(rows) {
   if (!rows.length) return;
   let seq = Math.max(0, ...DB.transactions.map(x => x.no || 0));
-  const copies = rows.map(t => copyOf(t, ++seq));
+  const transferLegs = new Map();
+
+  // A transfer is one logical entry represented by two physical rows. Validate
+  // every selected transfer before writing anything, so a mixed selection cannot
+  // copy ordinary rows and then stop halfway on a broken transfer.
+  for (const t of rows) {
+    if (t.type !== 'Transfer') continue;
+    if (!t.transfer_group) {
+      toast('This transfer is not linked to its other half — fix that before copying it', 'warn', 5000);
+      return;
+    }
+    if (!transferLegs.has(t.transfer_group)) {
+      const legs = DB.transactions.filter(x => x.transfer_group === t.transfer_group && !x.deleted);
+      if (legs.length < 2) {
+        toast('This transfer is missing its other half — fix that before copying it', 'warn', 5000);
+        return;
+      }
+      transferLegs.set(t.transfer_group, legs);
+    }
+  }
+
+  const copiedGroups = new Set();
+  const copies = [];
+  for (const t of rows) {
+    if (t.type === 'Transfer') {
+      if (copiedGroups.has(t.transfer_group)) continue;
+      copiedGroups.add(t.transfer_group);
+      const group = uuid();
+      for (const leg of transferLegs.get(t.transfer_group))
+        copies.push(copyOf(leg, ++seq, group));
+    } else {
+      copies.push(copyOf(t, ++seq));
+    }
+  }
+
   await putMany('transactions', copies);
   const ids = copies.map(c => c.id);
   toast(`${copies.length} copied to today`, 'ok', 6000, {
