@@ -1,0 +1,12 @@
+# The owner's real transaction history — 25,074 rows, nine years, account
+# balances, payee names, insurance policy numbers. This repository is public.
+# It has never been committed. Keep it that way.
+data/seed-data.json
+
+# Test dependencies
+test/node_modules/
+test/package-lock.json
+
+# Scratch
+_private/
+*.zip
