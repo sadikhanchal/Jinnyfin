@@ -218,8 +218,9 @@ export async function signUp(email, password) {
 }
 async function clearLocal({ clearSession = false, notify = false } = {}) {
   // Stop a write/sync timer from touching the old account while sign-out is
-  // clearing its local copy. The in-memory view is emptied first so a redraw
-  // can never briefly expose rows that are still waiting for IndexedDB.
+  // clearing its local copy. The epoch also invalidates any sync already past
+  // its timer and waiting on the network.
+  dataEpoch++;
   clearTimeout(syncTimer); syncTimer = null;
   for (const k of TABLES) DB[k] = [];
   mem.meta = {}; mem.queue = []; mem.qid = 1;
@@ -407,6 +408,7 @@ export async function remove(table, id) {
 
 // ---------------------------------------------------------------- sync -----
 let syncTimer = null;
+let dataEpoch = 0;
 export function syncSoon(ms = 1500) {
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => sync().catch(e => console.warn('sync', e)), ms);
@@ -427,14 +429,19 @@ function unknownColumn(error) {
 export async function sync({ full = false } = {}) {
   if (state.syncing) return;
   if (!navigator.onLine) return;
+  const epoch = dataEpoch;
   const sb = await initSupabase();
+  if (epoch !== dataEpoch) return;
   if (!sb || !state.user) return;
+  if (epoch !== dataEpoch) return;
   state.syncing = true; emit('sync');
   let pushed = 0;
   const skippedCols = new Set();
   try {
+    if (epoch !== dataEpoch) return;
     // 1 ── push everything queued
     const q = await queueAll();
+    if (epoch !== dataEpoch) return;
     if (q.length) {
       const byTable = {};
       for (const item of q) { if (!byTable[item.table]) byTable[item.table] = []; byTable[item.table].push(item); }
@@ -449,6 +456,7 @@ export async function sync({ full = false } = {}) {
         for (let i = 0; i < rows.length; i += 500) {
           let chunk = rows.slice(i, i + 500);
           let { error } = await sb.from(table).upsert(chunk, { onConflict: 'id' });
+          if (epoch !== dataEpoch) return;
           // A column this app writes may not exist on the server yet — the SQL
           // migration has not been run. Rather than let one unknown column
           // freeze every sync forever, drop it and push the rest, then say so.
@@ -459,11 +467,14 @@ export async function sync({ full = false } = {}) {
             chunk = chunk.map(r => { const { [miss]: _drop, ...rest } = r; return rest; });
             rows = rows.map(r => { const { [miss]: _d, ...rest } = r; return rest; });
             ({ error } = await sb.from(table).upsert(chunk, { onConflict: 'id' }));
+            if (epoch !== dataEpoch) return;
           }
           if (error) throw error;
         }
       }
+      if (epoch !== dataEpoch) return;
       await queueClear(q.map(i => i.qid));
+      if (epoch !== dataEpoch) return;
       pushed = q.length;
     }
     // 2 ── pull everything changed since the last sync
@@ -482,6 +493,7 @@ export async function sync({ full = false } = {}) {
     const since = full ? '1970-01-01T00:00:00Z' : (state.lastSync || '1970-01-01T00:00:00Z');
     // Rows still waiting to go up are the only ones allowed to beat the server.
     const held = new Set((await queueAll()).map(q => q.row?.id).filter(Boolean));
+    if (epoch !== dataEpoch) return;
     let fresh = 0, newest = '';
     for (const table of TABLES) {
       let from = 0, page = 1000, got;
@@ -489,19 +501,25 @@ export async function sync({ full = false } = {}) {
         const { data, error } = await sb.from(table).select('*')
           .gt('updated_at', since).order('updated_at', { ascending: true })
           .range(from, from + page - 1);
+        if (epoch !== dataEpoch) return;
         if (error) throw error;
         got = data || [];
         if (got.length) {
-          fresh += await mergeRemote(table, got, held);
+          if (epoch !== dataEpoch) return;
+          fresh += await mergeRemote(table, got, held, epoch);
+          if (epoch !== dataEpoch) return;
           for (const r of got) if (r.updated_at && r.updated_at > newest) newest = r.updated_at;
         }
         from += page;
       } while (got.length === page);
     }
     if (newest) {
+      if (epoch !== dataEpoch) return;
       const back = new Date(Date.parse(newest) - 1000).toISOString();
       const mark = back > since ? back : since;
-      state.lastSync = mark; await meta('lastSync', mark);
+      state.lastSync = mark;
+      await meta('lastSync', mark);
+      if (epoch !== dataEpoch) return;
     }
     // Only announce a change when something actually changed. Coming back to the
     // app fires a sync; if it brings nothing new, the screen must not be rebuilt
@@ -509,7 +527,9 @@ export async function sync({ full = false } = {}) {
     // Most of what a pull hands back is the deliberate one-second re-read and
     // identical to what we already hold; `fresh` counts only the rows that
     // genuinely differed.
+    if (epoch !== dataEpoch) return;
     if (fresh || pushed) { sortAll(); emit('data'); }
+    if (epoch !== dataEpoch) return;
     if (skippedCols.size) {
       state.schemaGap = [...skippedCols];
       toast(`Synced, but your database is missing ${skippedCols.size} column(s): `
@@ -517,12 +537,16 @@ export async function sync({ full = false } = {}) {
     } else state.schemaGap = null;
   } catch (e) {
     console.warn('[sync]', e.message || e);
+    if (epoch !== dataEpoch) return;
     if (!/Failed to fetch|NetworkError/i.test(e.message || '')) toast('Sync problem: ' + (e.message || e), 'warn', 4000);
-  } finally { state.syncing = false; emit('sync'); }
+  } finally {
+    if (epoch === dataEpoch) { state.syncing = false; emit('sync'); }
+  }
 }
 
 /** @returns {number} how many rows really differed from the local copy. */
-async function mergeRemote(table, rows, held = new Set()) {
+async function mergeRemote(table, rows, held = new Set(), epoch = dataEpoch) {
+  if (epoch !== dataEpoch) return 0;
   const byId = new Map(DB[table].map(r => [r.id, r]));
   const keep = [];
   let changed = 0;
@@ -546,7 +570,12 @@ async function mergeRemote(table, rows, held = new Set()) {
     keep.push(r);
     if (r.deleted) byId.delete(r.id); else byId.set(r.id, r);
   }
-  if (keep.length) await idbPut(table, keep);
+  if (keep.length) {
+    if (epoch !== dataEpoch) return 0;
+    await idbPut(table, keep);
+    if (epoch !== dataEpoch) return 0;
+  }
+  if (epoch !== dataEpoch) return 0;
   DB[table] = [...byId.values()];
   return changed;
 }
