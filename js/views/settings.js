@@ -15,8 +15,7 @@ import { openTxEditor } from './editor.js';
 
 let tab = 'general', host = null;
 let showInactive = false;      // closed accounts stay out of the way by default
-let pendingRecFocus = null;    // whose "Bank says" box gets the cursor after a redraw
-let showArchivedCats = false;  // and so do archived categories
+let showArchivedCats = false;  // and archived categories do too
 let asOf = null;               // reconcile up to this date (null = today)
 const TABS = [['general', 'General'], ['accounts', 'Accounts'], ['categories', 'Categories'],
   ['fx', 'Exchange rates'], ['reconcile', 'Reconcile'], ['check', 'Data check'],
@@ -542,10 +541,6 @@ function fx() {
 function reconcile() {
   const s = getSettings();
   const rows = C.reconciliation(asOf);
-  const set = rows.filter(r => r.stated != null);
-  const diffs = set.filter(r => Math.abs(r.diff) > 0.01);
-  const totalDiff = diffs.reduce((n, r) => n + (r.currency === 'SAR' ? r.diff * C.rates().sar : r.diff), 0);
-
   const dateIn = el('input', { type: 'date', value: asOf || todayISO(), style: 'max-width:180px' });
   dateGuard(dateIn, v => {
     if ((v || null) === asOf) return;
@@ -560,11 +555,21 @@ function reconcile() {
         ? `Last reconciled ${fmtDate(s.reconciled_at)}. Balances above are computed up to the “as of” date.`
         : 'Type the balance your bank app shows into “Bank says”. Anything that does not match is a missing or wrong entry.')));
 
-  host.append(el('div', { class: 'grid g4 keep2', style: 'margin-top:12px' },
-    kpi('Accounts checked', `${set.length} / ${rows.length}`),
-    kpi('Matching', String(set.length - diffs.length), 'income'),
-    kpi('Off', String(diffs.length), diffs.length ? 'expense' : ''),
-    kpi('Total difference ≈ INR', num(totalDiff), Math.abs(totalDiff) < 0.01 ? 'income' : 'expense')));
+  // The four counters are recomputed in place after every box, so that typing a
+  // column of balances never has to rebuild the page.
+  const kpis = el('div', { class: 'grid g4 keep2', style: 'margin-top:12px' });
+  const paintKpis = () => {
+    const set = rows.filter(r => r.stated != null);
+    const diffs = set.filter(r => Math.abs(r.diff) > 0.01);
+    const totalDiff = diffs.reduce((n, r) => n + (r.currency === 'SAR' ? r.diff * C.rates().sar : r.diff), 0);
+    kpis.innerHTML = '';
+    kpis.append(kpi('Accounts checked', `${set.length} / ${rows.length}`),
+      kpi('Matching', String(set.length - diffs.length), 'income'),
+      kpi('Off', String(diffs.length), diffs.length ? 'expense' : ''),
+      kpi('Total difference ≈ INR', num(totalDiff), Math.abs(totalDiff) < 0.01 ? 'income' : 'expense'));
+  };
+  paintKpis();
+  host.append(kpis);
 
   const t = el('table');
   t.append(el('thead', {}, el('tr', {}, el('th', { style: 'width:34px' }, ''),
@@ -577,31 +582,37 @@ function reconcile() {
       type: 'number', step: 'any', class: 'inline-num', value: r.stated ?? '',
       placeholder: '—', inputmode: 'decimal', dataset: { rk: r.id },
     });
+    const gap = el('td', { class: 'n' });
+    const seen = el('td', { class: 'small muted' });
+    const paintRow = () => {
+      const live = r.stated == null ? null : Math.round((r.computed - r.stated) * 100) / 100;
+      gap.className = 'n ' + (live == null ? '' : Math.abs(live) <= 0.01 ? 'pos' : 'neg');
+      gap.textContent = live == null ? '–' : (Math.abs(live) <= 0.01 ? '✓ match' : num(live));
+      seen.textContent = r.checked ? fmtDate(r.checked) : '';
+    };
+    paintRow();
     // Saving on change (not on every keystroke) keeps the sync queue quiet.
-    inp.onchange = async () => {
+    //
+    // And it does NOT redraw. Rebuilding the tab here destroyed the box the Tab
+    // key had already moved into — two digits in, cursor gone, and the next Tab
+    // landing on Sign out. Only this row's difference and the four counters
+    // above can have changed, so only those are repainted.
+    inp.onchange = () => {
       const acct = DB.accounts.find(a => a.id === r.id);
       if (!acct) return;
       const v = inp.value.trim() === '' ? null : +inp.value;
-      // Saving redraws the whole tab, which destroys the box being typed in —
-      // and the Tab that triggered it then landed on the first thing in the
-      // card, the "As of" date. Name the account whose box should have it
-      // instead: the next one down, so a column of balances can be typed
-      // straight through. On the last account there is no next one, and focus
-      // is left to fall where it will.
-      const i = rows.findIndex(x => x.id === r.id);
-      pendingRecFocus = rows[i + 1]?.id || null;
-      await put('accounts', { ...acct, stated_balance: v, reconciled_at: v == null ? null : (asOf || todayISO()) });
-      draw();
+      r.stated = v;
+      r.checked = v == null ? null : (asOf || todayISO());
+      r.diff = v == null ? null : round2(r.computed - v);
+      paintRow(); paintKpis();
+      Promise.resolve(put('accounts', { ...acct, stated_balance: v, reconciled_at: r.checked }))
+        .catch(e => toast(e?.message || 'Could not save that balance', 'bad'));
     };
-    const live = r.stated == null ? null : Math.round((r.computed - r.stated) * 100) / 100;
     tb.append(el('tr', { dataset: { id: r.id } },
       el('td', { class: 'drag-cell' }, el('span', { class: 'drag-grip', draggable: 'true', title: 'Drag to reorder' }, '\u283f')),
       el('td', {}, r.name),
       el('td', { class: 'n' }, money(r.computed, r.currency)),
-      el('td', { class: 'n' }, inp),
-      el('td', { class: 'n ' + (live == null ? '' : Math.abs(live) <= 0.01 ? 'pos' : 'neg') },
-        live == null ? '–' : (Math.abs(live) <= 0.01 ? '✓ match' : num(live))),
-      el('td', { class: 'small muted' }, r.checked ? fmtDate(r.checked) : '')));
+      el('td', { class: 'n' }, inp), gap, seen));
   }
   t.append(tb);
 
@@ -619,15 +630,6 @@ function reconcile() {
     el('p', { class: 'hint', style: 'margin-top:10px' },
       'A positive difference means the app counts more than the bank does — usually an entry that never happened, '
       + 'or one entered twice. A negative difference means an entry is missing. Fix it in Transactions and this goes to zero.')));
-
-  if (pendingRecFocus) {
-    const key = pendingRecFocus; pendingRecFocus = null;
-    // After the paint, or the box is not on screen yet to take it.
-    requestAnimationFrame(() => {
-      const box = host.querySelector(`input[data-rk="${key}"]`);
-      if (box) { box.focus(); box.select(); }
-    });
-  }
 }
 
 function exportRecon(rows) {
