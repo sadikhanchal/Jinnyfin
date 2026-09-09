@@ -620,6 +620,30 @@ test('backdrop and browser-back dismissals preserve the editor modal', async bro
   return 'backdrop and browser-back preserved the editor modal and focus';
 });
 
+test('Income Report description search filters totals, chart data, and details', async browser => {
+  const { ctx, page } = await open(browser, 'income');
+  const initial = await page.evaluate(() => ({
+    entries: document.querySelector('.stat:nth-child(4) .value')?.textContent.trim(),
+    details: document.querySelector('.jf-bd + .card h3')?.textContent.trim(),
+  }));
+  const search = page.locator('input[data-fk="description"]');
+  await search.fill('House Warming Contribution');
+  await page.waitForTimeout(250);
+  const filtered = await page.evaluate(() => ({
+    entries: document.querySelector('.stat:nth-child(4) .value')?.textContent.trim(),
+    details: document.querySelector('.jf-bd + .card h3')?.textContent.trim(),
+    detailRows: document.querySelectorAll('.jf-bd + .card tbody tr').length,
+    body: document.querySelector('#main')?.textContent || '',
+  }));
+  await ctx.close();
+  if (!initial.entries || initial.entries === '0') throw new Error('income fixture did not load');
+  if (filtered.entries !== '1') throw new Error(`description search did not filter entries: ${filtered.entries || 'missing'}`);
+  if (filtered.details !== 'Transaction details (1)') throw new Error(`detail count did not filter: ${filtered.details || 'missing'}`);
+  if (filtered.detailRows !== 1) throw new Error(`filtered detail rows were not limited to one: ${filtered.detailRows}`);
+  if (!filtered.body.includes('House Warming Contribution')) throw new Error('matching description is missing from filtered details');
+  return 'one matching income row across report outputs';
+});
+
 test('Investments & savings totals show deposits, returns, and value', async browser => {
   const { ctx, page } = await open(browser, 'networth');
   const fixture = await page.evaluate(async () => {
