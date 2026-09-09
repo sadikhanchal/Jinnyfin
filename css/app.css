@@ -9,7 +9,7 @@
      you whether this device is holding an old stylesheet, so it is bumped with
      every release — not only when the stylesheet itself changes, or the check
      cries wolf. */
-  --jf-css: "1.34";
+  --jf-css: "1.35";
   color-scheme: light;
   --page:        #f9f9f7;
   --surface:     #fcfcfb;
