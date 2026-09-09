@@ -123,7 +123,11 @@ function draw() {
       el('td', { class: 'n' }, d.interest != null ? num(d.interest, 0) : '–'),
       el('td', { class: 'n' }, num(d.value, 0))));
   }
-  itb.append(el('tr', { class: 'total' }, el('td', {}, 'TOTAL'), el('td', {}), el('td', {}), el('td', {}),
+  const depositTotal = inv.detail.reduce((sum, d) => sum + (Number(d.deposits) || 0), 0);
+  const returnTotal = inv.detail.reduce((sum, d) => sum + (Number(d.interest) || 0), 0);
+  itb.append(el('tr', { class: 'total' }, el('td', {}, 'TOTAL'), el('td', {}),
+    el('td', { class: 'n' }, num(depositTotal, 0)),
+    el('td', { class: 'n' }, num(returnTotal, 0)),
     el('td', { class: 'n' }, num(inv.total, 0))));
   it.append(itb);
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
