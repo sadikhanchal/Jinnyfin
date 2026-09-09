@@ -317,14 +317,16 @@ export function confirmBox(msg, okLabel = 'Yes, do it') {
     const wrap = el('div', { class: 'modal-wrap' });
     let disarm = () => {};
     const done = v => { disarm(); wrap.remove(); res(v); };
+    const cancel = el('button', { class: 'btn ghost', onclick: () => done(false) }, 'Cancel');
     const box = el('div', { class: 'modal small' },
       el('p', { class: 'confirm-msg' }, msg),
       el('div', { class: 'row end gap' },
-        el('button', { class: 'btn ghost', onclick: () => done(false) }, 'Cancel'),
+        cancel,
         el('button', { class: 'btn danger', onclick: () => done(true) }, okLabel)));
     wrap.append(box);
     dismissOnBackdrop(wrap, () => done(false));
     document.body.append(wrap);
+    cancel.focus();
     disarm = armBack(() => { wrap.remove(); res(false); });
   });
 }
