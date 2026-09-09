@@ -273,6 +273,7 @@ function matches(hay, q) {
 
 export function filterTx(f = {}) {
   const q = (f.text || '').toLowerCase().trim();
+  const description = (f.description || '').toLowerCase().trim();
   return DB.transactions.filter(t => {
     if (f.from && t.date < f.from) return false;
     if (f.to && t.date > f.to) return false;
@@ -285,6 +286,7 @@ export function filterTx(f = {}) {
     if (f.payee && f.payee !== 'All' && t.payee !== f.payee) return false;
     if (f.currency && f.currency !== 'All' && t.currency !== f.currency) return false;
     if (f.event && f.event !== 'All' && t.event !== f.event) return false;
+    if (description && !matches(String(t.note || '').toLowerCase(), description)) return false;
     if (q) {
       // The space before `expense` matters: without it a row of income 0 and
       // expense 1200 read as "01200", so a search for 12000 found ₹1,200.
