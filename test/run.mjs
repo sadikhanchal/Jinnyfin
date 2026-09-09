@@ -462,6 +462,55 @@ test('arrow keys walk a filter without losing the cursor', async browser => {
   return `${first} -> ${after.val}`;
 });
 
+test('duplicating one leg of a cross-currency transfer copies both legs', async browser => {
+  const { ctx, page } = await open(browser, 'transactions');
+  const result = await page.evaluate(async () => {
+    const { S, DB } = window.JINNYFIN;
+    const outAcct = DB.accounts.find(a => a.currency === 'SAR');
+    const inAcct = DB.accounts.find(a => a.currency === 'INR');
+    if (!outAcct || !inAcct) throw new Error('fixture needs both SAR and INR accounts');
+    const note = '__duplicate_cross_currency_fixture__';
+    const group = 'grp-duplicate-cross-currency';
+    await S.put('transactions', {
+      id: 'dup-xfer-out', date: '2026-09-01', time: '10:00', type: 'Transfer',
+      account: outAcct.name, currency: 'SAR', income: 0, expense: 55, fx: 23.6363,
+      parent: 'Transfer', sub: '', payee: 'Big Ticket', note, transfer_group: group,
+      to_account: inAcct.name, no: 990001,
+    });
+    await S.put('transactions', {
+      id: 'dup-xfer-in', date: '2026-09-01', time: '10:00', type: 'Transfer',
+      account: inAcct.name, currency: 'INR', income: 1300, expense: 0, fx: 23.6363,
+      parent: 'Transfer', sub: '', payee: 'Big Ticket', note, transfer_group: group,
+      to_account: null, no: 990002,
+    });
+    await S.put('transactions', { id: 'dup-xfer-marker', date: '2026-09-01', time: '10:00', type: 'Expense',
+      account: outAcct.name, currency: 'SAR', income: 0, expense: 1, fx: 23.6363,
+      parent: 'Test', sub: '', payee: '', note: '__duplicate_cross_currency_marker__',
+      transfer_group: null, to_account: null, no: 990003 });
+    return { note, out: outAcct.name, in: inAcct.name };
+  });
+  await page.evaluate(() => window.JINNYFIN.go('dashboard'));
+  await page.waitForTimeout(250);
+  await page.evaluate(() => window.JINNYFIN.go('transactions'));
+  await page.waitForTimeout(400);
+  const row = page.locator('.tx').filter({ hasText: result.note }).first();
+  await row.locator('button[title="Duplicate to today"]').click();
+  await page.waitForTimeout(500);
+  const copies = await page.evaluate(note => window.JINNYFIN.DB.transactions
+    .filter(t => t.note === note && t.id !== 'dup-xfer-out' && t.id !== 'dup-xfer-in'), result.note);
+  await ctx.close();
+  if (copies.length !== 2) throw new Error(`expected 2 copied legs, found ${copies.length}`);
+  if (new Set(copies.map(t => t.transfer_group)).size !== 1 || !copies[0].transfer_group)
+    throw new Error('copied legs do not share a new transfer group');
+  if (!copies.some(t => t.account === result.out && t.currency === 'SAR' && +t.expense === 55))
+    throw new Error('copied SAR outgoing leg is missing');
+  if (!copies.some(t => t.account === result.in && t.currency === 'INR' && +t.income === 1300))
+    throw new Error('copied INR incoming leg is missing');
+  if (copies.some(t => t.account === '— not known —' || t.to_account === '— not known —'))
+    throw new Error('a copied leg used a not-known account');
+  return `${copies.length} linked legs copied`;
+});
+
 test('a transfer changed to an expense takes its other half', async browser => {
   // Editing one side of a transfer into an Expense used to leave the other side
   // standing — the same money counted twice — and the converted row kept its
