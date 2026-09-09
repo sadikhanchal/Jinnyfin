@@ -12,7 +12,7 @@ import { openTxEditor } from './editor.js';
 
 export function makeReport(kind) {
   const isIncome = kind === 'Income';
-  let f = { year: String(new Date().getFullYear()), month: 'All', parent: 'All', sub: 'All', account: 'All' };
+  let f = { year: String(new Date().getFullYear()), month: 'All', parent: 'All', sub: 'All', account: 'All', description: '' };
   let host = null;
   let escapeOut = null;                     // set while a drill-down is open
   document.addEventListener('keydown', e => {
@@ -72,14 +72,30 @@ export function makeReport(kind) {
       onFilter(s, key, () => { f[key] = s.value; if (key === 'parent') f.sub = 'All'; draw(); });
       return el('div', { class: 'field' }, el('label', {}, label), s);
     };
-    host.append(el('div', { class: 'filters' },
-      sel('Year', 'year', C.yearsPresent(), 'All years'),
-      sel('Month', 'month', MONTHS.map((m, i) => ({ v: i + 1, t: m })), 'All months'),
+    const description = el('input', { type: 'search', placeholder: 'Search description…', value: f.description, 'data-fk': 'description',
+      oninput: () => {
+        const caret = description.selectionStart ?? description.value.length;
+        f.description = description.value;
+        clearTimeout(description._timer);
+        description._timer = setTimeout(() => {
+          redraw(host.querySelector('.jf-bd'));
+          requestAnimationFrame(() => {
+            const next = host.querySelector('input[data-fk="description"]');
+            if (!next) return;
+            next.focus({ preventScroll: true });
+            next.setSelectionRange(caret, caret);
+          });
+        }, 120);
+      } });
+    host.append(el('div', { class: 'filters report-filters' },
+      el('div', { class: 'field compact-filter' }, el('label', {}, 'Year'), sel('Year', 'year', C.yearsPresent(), 'All years').firstChild),
+      el('div', { class: 'field compact-filter' }, el('label', {}, 'Month'), sel('Month', 'month', MONTHS.map((m, i) => ({ v: i + 1, t: m })), 'All months').firstChild),
       sel('Category', 'parent', C.parentsFor(kind), 'All categories'),
       sel('Sub-category', 'sub', f.parent === 'All' ? [] : C.subsFor(kind, f.parent), 'All sub-categories'),
       sel('Account', 'account', C.accountNames(), 'All accounts'),
       el('div', { class: 'field' }, el('label', {}, ' '),
-        el('button', { class: 'btn sm', onclick: () => { f = { year: 'All', month: 'All', parent: 'All', sub: 'All', account: 'All' }; draw(); } }, 'Clear'))));
+        el('button', { class: 'btn sm', onclick: () => { f = { year: 'All', month: 'All', parent: 'All', sub: 'All', account: 'All', description: '' }; draw(); } }, 'Clear')),
+      el('div', { class: 'field report-description' }, el('label', {}, 'Description'), description)));
 
     // --------------------------------------------------------------- KPIs -
     host.append(el('div', { class: 'grid g4 keep2' },
@@ -89,8 +105,9 @@ export function makeReport(kind) {
       kpi('Entries', rows.length.toLocaleString('en-IN'))));
 
     // ------------------------------------------- monthly + yearly totals --
-    const monthly = C.monthlyTotals(kind, f.year, { parent: f.parent, sub: f.sub, account: f.account });
-    const yearly = C.yearlyTotals(kind, { parent: f.parent, sub: f.sub, account: f.account });
+    const reportFilter = { parent: f.parent, sub: f.sub, account: f.account, description: f.description };
+    const monthly = C.monthlyTotals(kind, f.year, reportFilter);
+    const yearly = C.yearlyTotals(kind, reportFilter);
 
     const chartCard = el('div', { class: 'card', style: 'margin-top:12px' },
       el('div', { class: 'card-head' }, el('h3', {},
