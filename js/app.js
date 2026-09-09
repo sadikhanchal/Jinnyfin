@@ -13,7 +13,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.40', date: '2026-09-09' };
+export const BUILD = { version: '1.41', date: '2026-09-09' };
 
 const ROUTES = {
   dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
@@ -351,10 +351,26 @@ function applyTheme() {
  *  it means typing the password again. Worth a question first. */
 export async function askSignOut() {
   await closeDrawerSettled();          // the question, not the menu, is the point
+
+  // Never discard writes that have not reached Supabase without saying so. Try
+  // the normal path first; if it cannot drain, the second prompt is explicit
+  // consent to delete those local-only changes.
+  if (state.pending > 0) {
+    if (state.online) {
+      await S.sync();
+    }
+    if (state.pending > 0) {
+      const n = state.pending;
+      const warning = `${n} changes have not reached the server yet. Signing out now deletes them from this device for good.`;
+      if (await confirmBox(warning, 'Delete changes and sign out')) await S.signOut();
+      return;
+    }
+  }
+
   const warn = storageBlocked() || state.storageError
     ? ' This device is not keeping your sign-in, so you will have to type your password again.'
     : ' You will need your password to get back in.';
-  if (await confirmBox('Sign out of Jinnyfin?' + warn, 'Sign out')) S.signOut();
+  if (await confirmBox('Sign out of Jinnyfin?' + warn, 'Sign out')) await S.signOut();
 }
 
 export function toggleTheme() {
