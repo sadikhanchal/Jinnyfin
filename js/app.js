@@ -351,25 +351,28 @@ function applyTheme() {
  *  it means typing the password again. Worth a question first. */
 export async function askSignOut() {
   await closeDrawerSettled();          // the question, not the menu, is the point
+  const warn = storageBlocked() || state.storageError
+    ? ' This device is not keeping your sign-in, so you will have to type your password again.'
+    : ' You will need your password to get back in.';
 
-  // Never discard writes that have not reached Supabase without saying so. Try
-  // the normal path first; if it cannot drain, the second prompt is explicit
-  // consent to delete those local-only changes.
+  // Never discard writes that have not reached Supabase without saying so. If a
+  // background sync is already running, give it a short chance to settle before
+  // starting another one; after the cap, the pending count still decides.
   if (state.pending > 0) {
     if (state.online) {
-      await S.sync();
+      const deadline = Date.now() + 1000;
+      while (state.syncing && Date.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 25));
+      if (!state.syncing && state.pending > 0) await S.sync();
     }
     if (state.pending > 0) {
       const n = state.pending;
-      const warning = `${n} changes have not reached the server yet. Signing out now deletes them from this device for good.`;
+      const warning = `${n} changes have not reached the server yet. Signing out now deletes them from this device for good.` + warn;
       if (await confirmBox(warning, 'Delete changes and sign out')) await S.signOut();
       return;
     }
   }
 
-  const warn = storageBlocked() || state.storageError
-    ? ' This device is not keeping your sign-in, so you will have to type your password again.'
-    : ' You will need your password to get back in.';
   if (await confirmBox('Sign out of Jinnyfin?' + warn, 'Sign out')) await S.signOut();
 }
 
