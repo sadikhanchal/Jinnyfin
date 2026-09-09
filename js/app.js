@@ -13,7 +13,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.40', date: '2026-09-09' };
+export const BUILD = { version: '1.41', date: '2026-09-09' };
 
 const ROUTES = {
   dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
@@ -354,7 +354,7 @@ export async function askSignOut() {
   const warn = storageBlocked() || state.storageError
     ? ' This device is not keeping your sign-in, so you will have to type your password again.'
     : ' You will need your password to get back in.';
-  if (await confirmBox('Sign out of Jinnyfin?' + warn, 'Sign out')) S.signOut();
+  if (await confirmBox('Sign out of Jinnyfin?' + warn, 'Sign out')) await S.signOut();
 }
 
 export function toggleTheme() {
