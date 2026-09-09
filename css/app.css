@@ -220,6 +220,8 @@ main { flex: 1; min-width: 0; padding: 18px 20px 28px; }
 .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; max-width: 100%; }
 .field { display: flex; flex-direction: column; gap: 3px; min-width: 0; max-width: 100%; }
 .filters > .field { flex: 1 1 150px; }
+.report-filters > .compact-filter { flex: 0 1 118px; }
+.report-filters > .report-description { flex: 1 1 100%; }
 /* The search box is not a filter chip — it gets its own full-width row. */
 .searchbar { position: relative; margin-bottom: 10px; }
 .searchbar input {
