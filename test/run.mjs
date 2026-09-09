@@ -544,6 +544,82 @@ test('confirmation dialogs default to Cancel for Enter and restore focus', async
   return 'Cancel focused, Enter cancelled, and underlying focus was restored';
 });
 
+test('Escape dismisses only the confirmation and preserves the editor modal', async browser => {
+  const { ctx, page } = await open(browser, 'transactions');
+  await page.evaluate(async () => {
+    const { el, modal, confirmBox } = await import('./js/util.js');
+    const editor = modal('Edit Transaction', el('input', { id: 'editor-focus-anchor', value: 'keep me' }));
+    document.querySelector('#editor-focus-anchor').focus();
+    window.__editorModal = editor;
+    window.__confirmPromise = confirmBox('This is one side of a transfer.', 'Change it');
+  });
+  await page.waitForSelector('.modal-wrap .btn.danger');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(50);
+  const state = await page.evaluate(() => ({
+    dialogs: document.querySelectorAll('.modal-wrap').length,
+    confirmation: !!document.querySelector('.modal-wrap .btn.danger'),
+    editor: !!document.querySelector('#editor-focus-anchor'),
+    focused: document.activeElement?.id || '',
+  }));
+  if (state.confirmation) await page.locator('.modal-wrap .btn.ghost').click();
+  const result = await page.evaluate(async () => await window.__confirmPromise);
+  await ctx.close();
+  if (result !== false) throw new Error('Escape did not cancel the confirmation');
+  if (state.confirmation) throw new Error('Escape left the confirmation dialog open');
+  if (!state.editor) throw new Error('Escape closed the underlying editor modal');
+  if (state.focused !== 'editor-focus-anchor')
+    throw new Error(`Escape did not restore editor focus (focused: ${state.focused || 'nothing'})`);
+  return 'Escape cancelled only the confirmation and restored editor focus';
+});
+
+test('backdrop and browser-back dismissals preserve the editor modal', async browser => {
+  const { ctx, page } = await open(browser, 'transactions');
+  await page.evaluate(async () => {
+    const { el, modal, confirmBox } = await import('./js/util.js');
+    const editor = modal('Edit Transaction', el('input', { id: 'dismissal-focus-anchor', value: 'keep me' }));
+    document.querySelector('#dismissal-focus-anchor').focus();
+    window.__editorModal = editor;
+    window.__openConfirmation = () => {
+      window.__confirmPromise = confirmBox('This is one side of a transfer.', 'Change it');
+    };
+    window.__openConfirmation();
+  });
+  await page.waitForSelector('.modal-wrap .btn.danger');
+  const topWrap = page.locator('.modal-wrap').last();
+  const bounds = await topWrap.boundingBox();
+  await page.mouse.click(bounds.x + 4, bounds.y + 4);
+  const backdropResult = await page.evaluate(async () => await window.__confirmPromise);
+  const afterBackdrop = await page.evaluate(() => ({
+    dialogs: document.querySelectorAll('.modal-wrap').length,
+    editor: !!document.querySelector('#dismissal-focus-anchor'),
+    focused: document.activeElement?.id || '',
+  }));
+  if (backdropResult !== false) throw new Error('backdrop did not cancel the confirmation');
+  if (afterBackdrop.dialogs !== 1 || !afterBackdrop.editor)
+    throw new Error('backdrop dismissal removed the underlying editor modal');
+  if (afterBackdrop.focused !== 'dismissal-focus-anchor')
+    throw new Error(`backdrop dismissal did not restore editor focus (focused: ${afterBackdrop.focused || 'nothing'})`);
+
+  await page.evaluate(() => window.__openConfirmation());
+  await page.waitForSelector('.modal-wrap .btn.danger');
+  await page.goBack();
+  await page.waitForTimeout(100);
+  const backResult = await page.evaluate(async () => await window.__confirmPromise);
+  const afterBack = await page.evaluate(() => ({
+    dialogs: document.querySelectorAll('.modal-wrap').length,
+    editor: !!document.querySelector('#dismissal-focus-anchor'),
+    focused: document.activeElement?.id || '',
+  }));
+  await ctx.close();
+  if (backResult !== false) throw new Error('browser-back did not cancel the confirmation');
+  if (afterBack.dialogs !== 1 || !afterBack.editor)
+    throw new Error('browser-back dismissal removed the underlying editor modal');
+  if (afterBack.focused !== 'dismissal-focus-anchor')
+    throw new Error(`browser-back dismissal did not restore editor focus (focused: ${afterBack.focused || 'nothing'})`);
+  return 'backdrop and browser-back preserved the editor modal and focus';
+});
+
 test('a transfer changed to an expense takes its other half', async browser => {
   // Editing one side of a transfer into an Expense used to leave the other side
   // standing — the same money counted twice — and the converted row kept its

@@ -328,9 +328,16 @@ export function confirmBox(msg, okLabel = 'Yes, do it') {
     const wrap = el('div', { class: 'modal-wrap' });
     let disarm = () => {};
     let settled = false;
+    const onKey = e => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      done(false);
+    };
     const done = v => {
       if (settled) return;
       settled = true;
+      document.removeEventListener('keydown', onKey, true);
       disarm(); wrap.remove();
       if (!v) restore();
       res(v);
@@ -344,6 +351,7 @@ export function confirmBox(msg, okLabel = 'Yes, do it') {
     wrap.append(box);
     dismissOnBackdrop(wrap, () => done(false));
     document.body.append(wrap);
+    document.addEventListener('keydown', onKey, true);
     cancel.focus();
     disarm = armBack(() => done(false));
   });
