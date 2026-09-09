@@ -165,10 +165,31 @@ export function toast(msg, kind = 'ok', ms = 2600, action = null) {
  */
 const backStack = [];
 let backSwallow = 0;
+let pendingUnwind = 0;         // closes whose history.back() has not been sent yet
+let unwindTimer = 0;
+
+/**
+ * Give back ONE entry we pushed, then wait for its popstate before the next.
+ *
+ * history.back() lands on a later tick. Firing several at once, or pushing a
+ * new entry while one is still in flight, leaves the browser's stack somewhere
+ * other than where this code thinks it is — and the last close then walks off
+ * the page instead of shutting an overlay. So: one at a time, sequenced by the
+ * popstate each one produces, and never a step onto an entry that is not ours.
+ */
+function unwindOne() {
+  unwindTimer = 0;
+  if (pendingUnwind <= 0) return;
+  if (!history.state?.jfOverlay) { pendingUnwind = 0; return; }  // nothing of ours left to give back
+  pendingUnwind--; backSwallow++; history.back();
+}
+const scheduleUnwind = () => {
+  if (!unwindTimer && pendingUnwind > 0) unwindTimer = setTimeout(unwindOne, 0);
+};
 
 if (typeof addEventListener === 'function') {
   addEventListener('popstate', () => {
-    if (backSwallow > 0) { backSwallow--; return; }   // our own unwinding, not a press
+    if (backSwallow > 0) { backSwallow--; scheduleUnwind(); return; }   // our own unwinding, not a press
     const top = backStack.pop();
     if (top) top.onBack();
   });
@@ -176,14 +197,20 @@ if (typeof addEventListener === 'function') {
 
 function armBack(onBack) {
   let pushed = false;
-  try { history.pushState({ jfOverlay: 1 }, ''); pushed = true; } catch { pushed = false; }
+  // One overlay closing and the next opening in the same breath — "Add this
+  // category?" answered, and the next question straight after — must not push
+  // on top of a back that has not landed yet. The depth is unchanged either
+  // way, so the new overlay simply takes over the entry the old one was about
+  // to give back.
+  if (pendingUnwind > 0) { pendingUnwind--; pushed = true; }
+  else { try { history.pushState({ jfOverlay: 1 }, ''); pushed = true; } catch { pushed = false; } }
   const entry = { onBack, pushed };
   backStack.push(entry);
   return () => {
     const i = backStack.indexOf(entry);
     if (i < 0) return;                    // the back press already dealt with it
     backStack.splice(i, 1);
-    if (entry.pushed) { backSwallow++; history.back(); }
+    if (entry.pushed) { pendingUnwind++; scheduleUnwind(); }
   };
 }
 

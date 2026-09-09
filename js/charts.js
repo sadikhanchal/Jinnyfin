@@ -109,15 +109,22 @@ export function lineChart(host, { labels, values, color, format = compact, tipFo
     const tx = svgEl('text', { x: padL - 7, y: y + 4, 'text-anchor': 'end', fill: cssVar('--ink-3'), 'font-size': 10.5 });
     tx.textContent = format(t); svg.append(tx);
   }
-  const d = values.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
-  if (fill) {
+  // Nothing to plot is a normal state — a year with no entries, a filter that
+  // matches none. The shaded area under the line was still being built, and with
+  // no points it began "L" instead of "M": the browser rejects the whole path,
+  // logs an error, and what should be an empty chart draws as a stray triangle.
+  // The grid and its labels stay; the line and its shading simply do not appear.
+  const d = values.length
+    ? values.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')
+    : '';
+  if (fill && d) {
     const grad = svgEl('linearGradient', { id: 'g' + Math.random().toString(36).slice(2), x1: 0, y1: 0, x2: 0, y2: 1 });
     grad.append(svgEl('stop', { offset: '0%', 'stop-color': col, 'stop-opacity': .22 }));
     grad.append(svgEl('stop', { offset: '100%', 'stop-color': col, 'stop-opacity': 0 }));
     svg.append(grad);
     svg.append(svgEl('path', { d: `${d} L${X(values.length - 1)},${Y(lo)} L${X(0)},${Y(lo)} Z`, fill: `url(#${grad.id})` }));
   }
-  svg.append(svgEl('path', { d, fill: 'none', stroke: col, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  if (d) svg.append(svgEl('path', { d, fill: 'none', stroke: col, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
 
   // last point gets a direct label
   if (values.length) {
