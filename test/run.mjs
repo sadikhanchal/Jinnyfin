@@ -220,6 +220,80 @@ test('an account name in a chart tooltip stays text', async browser => {
   return 'grouped and line chart labels remained text';
 });
 
+test('signing out warns before discarding queued writes', async browser => {
+  const { ctx, page } = await open(browser, 'transactions');
+  await ctx.setOffline(true);
+  await page.waitForFunction(() => navigator.onLine === false && window.JINNYFIN.S.state.online === false);
+  const result = await page.evaluate(async () => {
+    const { S, DB } = window.JINNYFIN;
+    const { TABLES, state, DB_NAME, DB_VERSION } = S;
+    const rowId = 'signout-local-row';
+    await S.put('transactions', {
+      id: rowId, user_id: 'test-user', date: '2026-01-01',
+      type: 'Expense', account: DB.accounts[0].name, currency: 'INR', expense: 99,
+      income: 0, parent: 'Test', note: 'must survive an unconfirmed sign-out',
+    });
+    localStorage.setItem('jinnyfin-auth', 'live-session-token');
+
+    const countQueue = () => new Promise((resolve, reject) => {
+      const rq = indexedDB.open(DB_NAME, DB_VERSION);
+      rq.onerror = () => reject(rq.error);
+      rq.onsuccess = () => {
+        const db = rq.result;
+        const tx = db.transaction(['_queue'], 'readonly');
+        const cr = tx.objectStore('_queue').count();
+        cr.onsuccess = () => { db.close(); resolve(cr.result); };
+        cr.onerror = () => reject(cr.error);
+      };
+    });
+    const waitForPrompt = async () => {
+      for (let i = 0; i < 100; i++) {
+        const msg = document.querySelector('.confirm-msg')?.textContent;
+        if (msg) return msg;
+        await new Promise(r => setTimeout(r, 20));
+      }
+      throw new Error('sign-out confirmation did not appear');
+    };
+
+    const firstAttempt = import('./js/app.js').then(m => m.askSignOut());
+    const warning = await waitForPrompt();
+    document.querySelector('.modal-wrap .btn.ghost')?.click();
+    await firstAttempt;
+    const retained = {
+      user: !!state.user,
+      pending: state.pending,
+      memoryRow: !!DB.transactions.find(r => r.id === rowId),
+      queue: await countQueue(),
+    };
+
+    const secondAttempt = import('./js/app.js').then(m => m.askSignOut());
+    await waitForPrompt();
+    document.querySelector('.modal-wrap .btn.danger')?.click();
+    await secondAttempt;
+    const discardedAfterConsent = {
+      user: !!state.user,
+      pending: state.pending,
+      memoryRow: !!DB.transactions.find(r => r.id === rowId),
+      queue: await countQueue(),
+      authStorage: localStorage.getItem('jinnyfin-auth'),
+      serverSawAuth: window.__sb.signOutAuthStorage,
+    };
+    return { warning, retained, discardedAfterConsent };
+  });
+  await ctx.close();
+  if (!/1 changes have not reached the server yet\. Signing out now deletes them from this device for good\./.test(result.warning))
+    throw new Error(`the destructive warning was incomplete: "${result.warning}"`);
+  if (!result.retained.user || result.retained.pending !== 1 || !result.retained.memoryRow || result.retained.queue !== 1)
+    throw new Error(`unconfirmed sign-out lost queued work: ${JSON.stringify(result.retained)}`);
+  if (result.discardedAfterConsent.user || result.discardedAfterConsent.pending !== 0
+      || result.discardedAfterConsent.memoryRow || result.discardedAfterConsent.queue !== 0)
+    throw new Error(`explicit sign-out did not clear local work: ${JSON.stringify(result.discardedAfterConsent)}`);
+  if (result.discardedAfterConsent.serverSawAuth !== 'live-session-token'
+      || result.discardedAfterConsent.authStorage)
+    throw new Error(`server revocation/storage order was wrong: ${JSON.stringify(result.discardedAfterConsent)}`);
+  return 'unsynced work retained without consent, cleared only after explicit consent';
+});
+
 test('coming back to the tab does not rebuild the screen', async browser => {
   // supabase-js re-reads its session on every hidden -> visible transition and
   // raises SIGNED_IN for the SAME account. That used to run start(), which
