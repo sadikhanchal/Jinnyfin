@@ -162,37 +162,62 @@ test('a chart with nothing to plot draws nothing, quietly', async browser => {
 test('an account name in a chart tooltip stays text', async browser => {
   const { ctx, page, errors } = await open(browser, 'dashboard');
   const result = await page.evaluate(async () => {
-    const { groupedBars } = await import('./js/charts.js');
-    const account = { ...window.JINNYFIN.DB.accounts[0],
-      name: '<img src=x onerror="window.__jfTooltipXss=1">Rent <b>account</b>' };
+    const { groupedBars, lineChart } = await import('./js/charts.js');
+    const hostile = '<img src=x onerror="window.__jfTooltipXss=1">Rent <b>account</b>';
+    const account = { ...window.JINNYFIN.DB.accounts[0], name: hostile };
     const screen = document.createElement('section');
     screen.id = 'tooltip-screen';
-    const host = document.createElement('div');
-    host.style.cssText = 'width:640px;height:220px';
-    screen.append(host);
+    const groupedHost = document.createElement('div');
+    groupedHost.style.cssText = 'width:640px;height:220px';
+    const lineHost = document.createElement('div');
+    lineHost.style.cssText = 'width:640px;height:220px';
+    screen.append(groupedHost, lineHost);
     document.querySelector('#main').append(screen);
-    groupedBars(host, {
-      labels: ['2026'],
-      series: [{ name: account.name, color: '#5478ff', values: [123] }],
+
+    // The real screens use hardcoded series names. User-controlled account or
+    // category names reach groupedBars through labels instead.
+    groupedBars(groupedHost, {
+      labels: [account.name],
+      series: [{ name: 'Expense', color: '#5478ff', values: [123] }],
     });
-    const bar = host.querySelector('rect[width]');
+    const bar = groupedHost.querySelector('rect[width]');
     bar.dispatchEvent(new PointerEvent('pointerenter', {
       bubbles: true, clientX: 100, clientY: 100,
     }));
-    const tip = document.querySelector('.tip');
-    return {
-      text: tip?.textContent || '',
-      dangerousElements: tip?.querySelectorAll('img,script,iframe,object').length || 0,
+    const groupedTip = document.querySelector('.tip');
+    const grouped = {
+      text: groupedTip?.textContent || '',
+      dangerousElements: groupedTip?.querySelectorAll('img,script,iframe,object').length || 0,
       executed: window.__jfTooltipXss || 0,
+    };
+
+    lineChart(lineHost, { labels: [account.name], values: [123], color: '#5478ff' });
+    const hit = lineHost.querySelector('rect[fill="transparent"]');
+    hit.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true, clientX: 100, clientY: 100,
+    }));
+    const lineTip = document.querySelector('.tip');
+    return {
+      hostile,
+      grouped,
+      line: {
+        text: lineTip?.textContent || '',
+        dangerousElements: lineTip?.querySelectorAll('img,script,iframe,object').length || 0,
+        executed: window.__jfTooltipXss || 0,
+      },
     };
   });
   await ctx.close();
   if (errors.length) throw new Error(errors[0].slice(0, 140));
-  if (!result.text.includes('<img src=x onerror="window.__jfTooltipXss=1">Rent <b>account</b>'))
-    throw new Error('the account name was not kept as literal tooltip text');
-  if (result.dangerousElements) throw new Error('markup became a tooltip element');
-  if (result.executed) throw new Error('tooltip markup executed');
-  return 'account markup remained text';
+  if (!result.grouped.text.includes(result.hostile))
+    throw new Error('the grouped-bar label was not kept as literal tooltip text');
+  if (result.grouped.dangerousElements) throw new Error('grouped-bar label became a tooltip element');
+  if (result.grouped.executed) throw new Error('grouped-bar label markup executed');
+  if (!result.line.text.includes(result.hostile))
+    throw new Error('the line-chart label was not kept as literal tooltip text');
+  if (result.line.dangerousElements) throw new Error('line-chart label became a tooltip element');
+  if (result.line.executed) throw new Error('line-chart label markup executed');
+  return 'grouped and line chart labels remained text';
 });
 
 test('coming back to the tab does not rebuild the screen', async browser => {
