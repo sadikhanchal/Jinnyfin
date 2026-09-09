@@ -732,12 +732,33 @@ export function openTxEditor(existing = null, presets = {}) {
       // account moved by twice the amount, the wrong way.
       const isIn = type === 'Income'
         || ((type === 'Lend/Borrow' || type === 'Investment') && INFLOW.has(base.sub));
+
+      // Turning a transfer into something else. This row keeps its id and
+      // becomes the new entry — but its other leg is still sitting on the other
+      // account, so the same money is counted twice: once as a transfer in, and
+      // again as this. That is how an account quietly went ₹1.8 lakh wrong.
+      //
+      // The partner goes with it, and the transfer links are written away as
+      // null rather than simply left out: an upsert only overwrites the columns
+      // it is handed, so an omitted transfer_group survives on the server and
+      // comes back on the next sync — after which deleting this row takes an
+      // unrelated entry down with it.
+      const partners = (existing && existing.type === 'Transfer' && t.transfer_group)
+        ? DB.transactions.filter(x => x.transfer_group === t.transfer_group && x.id !== t.id && !x.deleted)
+        : [];
+      if (partners.length && !(await confirmBox(
+        `This is one side of a transfer. Changing it to ${type} also removes the matching entry on `
+        + `${[...new Set(partners.map(p => p.account))].join(' and ')} — otherwise the same money is `
+        + 'counted twice. Go ahead?', 'Change it'))) return;
+
       await put('transactions', {
         ...base, id: t.id, type,
         income: isIn ? amt : 0, expense: isIn ? 0 : amt,
         no: t.no ?? nextNo(),
+        transfer_group: null, to_account: null,
       });
-      toast(isNew ? 'Saved' : 'Updated');
+      for (const p of partners) await remove('transactions', p.id);
+      toast(isNew ? 'Saved' : partners.length ? 'Changed — the other half was removed' : 'Updated');
     }
     if (base.payee && !DB.payees.some(p => p.name === base.payee)) await put('payees', { name: base.payee });
     // `c.type === type` matters: without it, using a name that already exists

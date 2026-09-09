@@ -198,7 +198,7 @@ function draw() {
   // The redraw threw away the box you were typing in. Put the cursor back.
   if (focusBack) {
     const key = focusBack; focusBack = null;
-    requestAnimationFrame(() => host.querySelector(`input[data-dk="${key}"]`)?.focus());
+    requestAnimationFrame(() => host.querySelector(`input[data-dk="${key}"]`)?.focus({ preventScroll: true }));
   }
   restoreFilterFocus(host);   // the cursor stays in the filter you were arrowing through
 }

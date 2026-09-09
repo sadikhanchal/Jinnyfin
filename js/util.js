@@ -249,7 +249,9 @@ let pendingDateFocus = null;
 export function restoreDateFocus(host) {
   if (!pendingDateFocus || !host) return;
   const key = pendingDateFocus; pendingDateFocus = null;
-  requestAnimationFrame(() => host.querySelector(`input[data-dk="${key}"]`)?.focus());
+  // preventScroll — focusing a box the browser thinks is out of view drags the
+  // whole page to it, which is not what "put the cursor back" should mean.
+  requestAnimationFrame(() => host.querySelector(`input[data-dk="${key}"]`)?.focus({ preventScroll: true }));
 }
 
 // ------------------------------------------------------- filter dropdowns --
@@ -280,7 +282,7 @@ export function onFilter(sel, key, fn) {
 export function restoreFilterFocus(host) {
   if (!pendingFilterFocus || !host) return;
   const key = pendingFilterFocus; pendingFilterFocus = null;
-  requestAnimationFrame(() => host.querySelector(`select[data-fk="${key}"]`)?.focus());
+  requestAnimationFrame(() => host.querySelector(`select[data-fk="${key}"]`)?.focus({ preventScroll: true }));
 }
 
 export function confirmBox(msg, okLabel = 'Yes, do it') {

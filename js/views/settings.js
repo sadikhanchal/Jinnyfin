@@ -1025,6 +1025,25 @@ const ghostAccount = () => {
     .map(t => ({ t, why: `“${t.account}” is not one of your accounts — open it and pick the right one` }));
 };
 
+/**
+ * A row that is no longer a Transfer but still carries a transfer's links.
+ *
+ * Editing one side of a transfer into an Expense used to leave the other side
+ * standing, so the same money was counted twice — and the converted row kept
+ * its transfer_group, which meant deleting it silently took that leftover row
+ * down with it. Fixed in 1.37; this finds anything the bug already made.
+ */
+const strayTransferLink = () => DB.transactions
+  .filter(t => !t.deleted && t.type !== 'Transfer' && (t.transfer_group || t.to_account))
+  .map(t => {
+    const legs = DB.transactions.filter(x => !x.deleted && x.id !== t.id
+      && t.transfer_group && x.transfer_group === t.transfer_group);
+    return { t, why: legs.length
+      ? `Still tied to ${legs.length} transfer entry on ${[...new Set(legs.map(x => x.account))].join(', ')}`
+        + ' — check whether that entry is the same money counted twice'
+      : 'Carries a leftover transfer link — open and save it once to clear it' };
+  });
+
 const SHOW = 60;                       // enough to work through, not a wall of rows
 
 function checkGroup(host2, title, blurb, rows, extra) {
@@ -1188,11 +1207,20 @@ function check() {
     'The account named on these rows is not in your account list, so the money on them '
     + 'sits in no balance and shows on no statement. Open each one and pick the account it belongs to.',
     ghostAccount());
+
+  checkGroup(host, 'Was a transfer, still linked like one',
+    'These are no longer transfers but still carry a transfer’s links. Where the other half is '
+    + 'still standing, the same money is counted twice — which is how an account balance goes wrong '
+    + 'by a large round number. Open each one, check the entry it names, and delete whichever is the duplicate.',
+    strayTransferLink());
 }
 
 /** How many entries the Data check tab would show — used for the tab badge. */
 function checkCount() {
-  try { return currencyOdd().length + lbOdd().length + noCategory().length + ghostAccount().length; } catch { return 0; }
+  try {
+    return currencyOdd().length + lbOdd().length + noCategory().length
+      + ghostAccount().length + strayTransferLink().length;
+  } catch { return 0; }
 }
 
 function exportAllCSV() {

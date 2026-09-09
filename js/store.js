@@ -416,7 +416,7 @@ export async function sync({ full = false } = {}) {
     const since = full ? '1970-01-01T00:00:00Z' : (state.lastSync || '1970-01-01T00:00:00Z');
     // Rows still waiting to go up are the only ones allowed to beat the server.
     const held = new Set((await queueAll()).map(q => q.row?.id).filter(Boolean));
-    let pulled = 0, newest = '';
+    let fresh = 0, newest = '';
     for (const table of TABLES) {
       let from = 0, page = 1000, got;
       do {
@@ -426,8 +426,7 @@ export async function sync({ full = false } = {}) {
         if (error) throw error;
         got = data || [];
         if (got.length) {
-          await mergeRemote(table, got, held);
-          pulled += got.length;
+          fresh += await mergeRemote(table, got, held);
           for (const r of got) if (r.updated_at && r.updated_at > newest) newest = r.updated_at;
         }
         from += page;
@@ -441,7 +440,10 @@ export async function sync({ full = false } = {}) {
     // Only announce a change when something actually changed. Coming back to the
     // app fires a sync; if it brings nothing new, the screen must not be rebuilt
     // underneath you — that is what kept throwing the page back to the top.
-    if (pulled || pushed) { sortAll(); emit('data'); }
+    // Most of what a pull hands back is the deliberate one-second re-read and
+    // identical to what we already hold; `fresh` counts only the rows that
+    // genuinely differed.
+    if (fresh || pushed) { sortAll(); emit('data'); }
     if (skippedCols.size) {
       state.schemaGap = [...skippedCols];
       toast(`Synced, but your database is missing ${skippedCols.size} column(s): `
@@ -453,9 +455,11 @@ export async function sync({ full = false } = {}) {
   } finally { state.syncing = false; emit('sync'); }
 }
 
+/** @returns {number} how many rows really differed from the local copy. */
 async function mergeRemote(table, rows, held = new Set()) {
   const byId = new Map(DB[table].map(r => [r.id, r]));
   const keep = [];
+  let changed = 0;
   for (const r of rows) {
     const local = byId.get(r.id);
     // A local row wins only while it is still waiting in the queue — an edit
@@ -467,11 +471,18 @@ async function mergeRemote(table, rows, held = new Set()) {
     // incoming version of any row it had ever touched, and the two devices
     // showed different amounts for the same transaction from then on.
     if (local && held.has(r.id)) continue;
+    // Every pull deliberately re-reads the last second before the watermark, so
+    // most of what comes back is a row we already have, unchanged. `updated_at`
+    // is stamped by the server on every write, so an identical stamp means an
+    // identical row — and a sync that brings only those must not be announced
+    // as a change.
+    if (!local || local.updated_at !== r.updated_at) changed++;
     keep.push(r);
     if (r.deleted) byId.delete(r.id); else byId.set(r.id, r);
   }
   if (keep.length) await idbPut(table, keep);
   DB[table] = [...byId.values()];
+  return changed;
 }
 
 /** Wipe the local copy and pull everything again. */

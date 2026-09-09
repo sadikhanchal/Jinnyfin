@@ -13,7 +13,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.36', date: '2026-09-09' };
+export const BUILD = { version: '1.37', date: '2026-09-09' };
 
 const ROUTES = {
   dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
@@ -549,14 +549,31 @@ function captureScroll() {
 function restoreScroll(marks) {
   const put = () => {
     const main = $('#main');
+    let settled = true;
     for (const m of marks) {
-      if (m.path === null) { if (window.scrollY !== m.top) window.scrollTo(0, m.top); continue; }
+      if (m.path === null) {
+        if (window.scrollY !== m.top) window.scrollTo(0, m.top);
+        // The browser clamps a scroll to how tall the page is RIGHT NOW. A
+        // rebuilt screen grows over several frames — charts draw on the next
+        // frame, tables lay out after that — so an early restore lands short
+        // and the page appears to jump to the top. Keep asking until the page
+        // is tall enough to hold the position, or until it plainly never will
+        // be (content really did get shorter).
+        if (window.scrollY !== m.top
+          && document.documentElement.scrollHeight - window.innerHeight >= m.top) settled = false;
+        continue;
+      }
       const n = main && nodeAt(m.path, main);
-      if (n) { n.scrollTop = m.top; n.scrollLeft = m.left; }
+      if (n) {
+        n.scrollTop = m.top; n.scrollLeft = m.left;
+        if (n.scrollTop !== m.top && n.scrollHeight - n.clientHeight >= m.top) settled = false;
+      } else settled = false;
     }
+    return settled;
   };
-  put();
-  requestAnimationFrame(put);          // again once the new rows have laid out
+  let tries = 12;                      // ~12 frames, a fifth of a second
+  const again = () => { if (put() || --tries <= 0) return; requestAnimationFrame(again); };
+  again();
 }
 
 const pathOf = (n, root) => {
