@@ -173,7 +173,21 @@ export async function initSupabase({ quiet = true, ms = 9000 } = {}) {
     });
     const { data } = await state.sb.auth.getSession();
     state.user = data?.session?.user || null;
-    state.sb.auth.onAuthStateChange((_e, s) => { state.user = s?.user || null; emit('auth'); });
+    // Supabase re-reads its stored session every time the tab becomes visible
+    // again, and fires SIGNED_IN / TOKEN_REFRESHED for the SAME account. Passing
+    // that on as an auth change made the app rebuild its shell and re-render the
+    // screen from scratch — the "Loading…" line, and the page back at the top —
+    // every single time you alt-tabbed away and came back.
+    //
+    // Only a change of account is an auth change. A refreshed token for the same
+    // person is announced as 'session', which repaints the sync chip and the bell
+    // and touches nothing else.
+    state.sb.auth.onAuthStateChange((_e, s) => {
+      const next = s?.user || null;
+      const same = (state.user?.id || null) === (next?.id || null);
+      state.user = next;
+      emit(same ? 'session' : 'auth');
+    });
     state.sbError = null;
     return state.sb;
     })();

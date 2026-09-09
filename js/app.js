@@ -13,7 +13,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.37', date: '2026-09-09' };
+export const BUILD = { version: '1.38', date: '2026-09-09' };
 
 const ROUTES = {
   dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
@@ -437,7 +437,12 @@ async function lockScreen() {
 }
 
 // ------------------------------------------------------------------ boot ---
+// Which account the shell on screen was built for — `undefined` until the first
+// render. An auth event that names the same account is not a reason to rebuild.
+let renderedFor;
+
 async function start() {
+  renderedFor = state.user?.id || null;
   applyTheme();
   if (!(await lockScreen())) return;
   await renderShell();
@@ -512,6 +517,13 @@ S.onChange(what => {
   updateChip();
   paintBell();
   if (what === 'auth') {
+    // Belt and braces for the same thing store.js guards at the source: only a
+    // change of ACCOUNT may tear the screen down and build it again. Anything
+    // else — a token refreshed in the background, a session re-read when the
+    // tab comes back to the front — leaves the page exactly where you left it.
+    const uid = state.user?.id || null;
+    if (uid === renderedFor) return;
+    renderedFor = uid;
     if (!state.user) loginScreen(); else { start(); Push.refresh(); Push.syncZone(); }
   } else if (what === 'data' && currentView?.refresh) {
     // A background sync must never rebuild the page while you are typing in it.
