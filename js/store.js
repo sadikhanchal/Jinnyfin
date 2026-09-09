@@ -8,6 +8,8 @@
 import { CONFIG } from '../config.js';
 import { uuid, todayISO, toast, store as safeStore, storageBlocked } from './util.js';
 
+export const DB_NAME = 'jinnyfin';
+export const DB_VERSION = 2;
 export const TABLES = ['accounts', 'categories', 'payees', 'transactions', 'fx_rates',
   'assets', 'insurance', 'cards', 'equity_positions', 'equity_trades', 'businesses',
   'budgets', 'templates', 'tasks', 'settings'];
@@ -83,7 +85,7 @@ export const emit = (what = 'data') => listeners.forEach(f => { try { f(what); }
 let idb = null;
 function openIDB() {
   return new Promise((res, rej) => {
-    const rq = indexedDB.open('jinnyfin', 2);   // 2: added 'tasks'
+    const rq = indexedDB.open(DB_NAME, DB_VERSION);   // 2: added 'tasks'
     rq.onupgradeneeded = () => {
       const d = rq.result;
       for (const t of TABLES) if (!d.objectStoreNames.contains(t)) d.createObjectStore(t, { keyPath: 'id' });
@@ -214,9 +216,59 @@ export async function signUp(email, password) {
   if (error) throw error;
   return data;
 }
+async function clearLocal({ clearSession = false, notify = false } = {}) {
+  // Stop a write/sync timer from touching the old account while sign-out is
+  // clearing its local copy. The in-memory view is emptied first so a redraw
+  // can never briefly expose rows that are still waiting for IndexedDB.
+  clearTimeout(syncTimer); syncTimer = null;
+  for (const k of TABLES) DB[k] = [];
+  mem.meta = {}; mem.queue = []; mem.qid = 1;
+  state.lastSync = null;
+  state.pending = 0;
+  state.syncing = false;
+  state.schemaGap = null;
+
+  // These are only fallback/session copies. IndexedDB is authoritative when it
+  // exists, but leaving these behind would resurrect a watermark or unlocked
+  // session if storage becomes unavailable on the next boot.
+  safeStore('jinnyfin-lastSync', null);
+  if (clearSession) {
+    safeStore('jinnyfin-auth', null);
+    safeStore('jinnyfin-rung', null);
+    safeStore('jinnyfin-unlocked', null, 'session');
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key?.startsWith('jinnyfin-notified-')) localStorage.removeItem(key);
+      }
+    } catch { /* storageBlocked() already covers this device */ }
+  }
+
+  if (idb) {
+    const stores = [...TABLES, '_meta', '_queue'];
+    const t = txn(stores, 'readwrite');
+    for (const s of stores) t.objectStore(s).clear();
+    await done(t);
+  }
+  if (notify) emit('data');
+}
+
 export async function signOut() {
-  if (state.sb) await state.sb.auth.signOut();
-  state.user = null; emit('auth');
+  // Revoke the remote session while Supabase can still read its refresh token.
+  // A network failure must not prevent the local privacy purge or the auth UI
+  // transition, so the remote error is logged and the local clear runs anyway.
+  try {
+    if (state.sb) {
+      const { error } = await state.sb.auth.signOut();
+      if (error) console.warn('[sign-out] server session could not be revoked:', error);
+    }
+  } catch (e) { console.warn('[sign-out] server session could not be revoked:', e); }
+  try {
+    await clearLocal({ clearSession: true });
+  } finally {
+    state.user = null;
+    emit('auth');
+  }
 }
 
 /**
@@ -501,16 +553,7 @@ async function mergeRemote(table, rows, held = new Set()) {
 
 /** Wipe the local copy and pull everything again. */
 export async function resetLocal() {
-  if (!idb) {
-    mem.meta = {}; mem.queue = []; for (const k of TABLES) DB[k] = [];
-    state.lastSync = null; state.pending = 0; emit('data'); return;
-  }
-  const t = txn([...TABLES, '_meta', '_queue'], 'readwrite');
-  for (const s of [...TABLES, '_meta', '_queue']) t.objectStore(s).clear();
-  await done(t);
-  for (const k of TABLES) DB[k] = [];
-  state.lastSync = null; state.pending = 0;
-  emit('data');
+  await clearLocal({ notify: true });
 }
 
 // -------------------------------------------------------------- settings ---
