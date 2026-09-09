@@ -214,9 +214,51 @@ export async function signUp(email, password) {
   if (error) throw error;
   return data;
 }
+async function clearLocal({ clearSession = false, notify = false } = {}) {
+  // Stop a write/sync timer from touching the old account while sign-out is
+  // clearing its local copy. The in-memory view is emptied first so a redraw
+  // can never briefly expose rows that are still waiting for IndexedDB.
+  clearTimeout(syncTimer); syncTimer = null;
+  for (const k of TABLES) DB[k] = [];
+  mem.meta = {}; mem.queue = []; mem.qid = 1;
+  state.lastSync = null;
+  state.pending = 0;
+  state.syncing = false;
+  state.schemaGap = null;
+
+  // These are only fallback/session copies. IndexedDB is authoritative when it
+  // exists, but leaving these behind would resurrect a watermark or unlocked
+  // session if storage becomes unavailable on the next boot.
+  safeStore('jinnyfin-lastSync', null);
+  if (clearSession) {
+    safeStore('jinnyfin-auth', null);
+    safeStore('jinnyfin-rung', null);
+    safeStore('jinnyfin-unlocked', null, 'session');
+  }
+
+  if (idb) {
+    const stores = [...TABLES, '_meta', '_queue'];
+    const t = txn(stores, 'readwrite');
+    for (const s of stores) t.objectStore(s).clear();
+    await done(t);
+  }
+  if (notify) emit('data');
+}
+
 export async function signOut() {
-  if (state.sb) await state.sb.auth.signOut();
-  state.user = null; emit('auth');
+  // Local financial data must not depend on the network sign-out succeeding.
+  // Clear it first, then invalidate the remote session, and always publish the
+  // auth change so the UI returns to the login screen.
+  let localError;
+  try { await clearLocal({ clearSession: true }); }
+  catch (e) { localError = e; console.warn('[sign-out] local clear failed:', e); }
+  try {
+    if (state.sb) await state.sb.auth.signOut();
+  } finally {
+    state.user = null;
+    emit('auth');
+  }
+  if (localError) throw localError;
 }
 
 /**
@@ -501,16 +543,7 @@ async function mergeRemote(table, rows, held = new Set()) {
 
 /** Wipe the local copy and pull everything again. */
 export async function resetLocal() {
-  if (!idb) {
-    mem.meta = {}; mem.queue = []; for (const k of TABLES) DB[k] = [];
-    state.lastSync = null; state.pending = 0; emit('data'); return;
-  }
-  const t = txn([...TABLES, '_meta', '_queue'], 'readwrite');
-  for (const s of [...TABLES, '_meta', '_queue']) t.objectStore(s).clear();
-  await done(t);
-  for (const k of TABLES) DB[k] = [];
-  state.lastSync = null; state.pending = 0;
-  emit('data');
+  await clearLocal({ notify: true });
 }
 
 // -------------------------------------------------------------- settings ---
