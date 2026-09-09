@@ -511,9 +511,12 @@ test('duplicating one leg of a cross-currency transfer copies both legs', async 
   return `${copies.length} linked legs copied`;
 });
 
-test('confirmation dialogs default to Cancel for Enter', async browser => {
+test('confirmation dialogs default to Cancel for Enter and restore focus', async browser => {
   const { ctx, page } = await open(browser, 'transactions');
   await page.evaluate(async () => {
+    const anchor = document.createElement('button');
+    anchor.id = 'confirm-focus-anchor'; anchor.textContent = 'Update';
+    document.body.append(anchor); anchor.focus();
     const { confirmBox } = await import('./js/util.js');
     window.__confirmPromise = confirmBox('This is one side of a transfer.', 'Change it');
   });
@@ -528,12 +531,17 @@ test('confirmation dialogs default to Cancel for Enter', async browser => {
     throw new Error(`Cancel was not focused by default (focused: ${beforeEnter.focused || 'nothing'})`);
   }
   await page.keyboard.press('Enter');
-  const result = await page.evaluate(async () => await window.__confirmPromise);
+  const result = await page.evaluate(async () => ({
+    value: await window.__confirmPromise,
+    focused: document.activeElement?.id || '',
+  }));
   const dialogsAfter = await page.locator('.modal-wrap').count();
   await ctx.close();
-  if (result !== false) throw new Error('Enter activated the destructive action instead of Cancel');
+  if (result.value !== false) throw new Error('Enter activated the destructive action instead of Cancel');
   if (dialogsAfter !== 0) throw new Error(`confirmation dialog remained open (${dialogsAfter})`);
-  return 'Cancel focused and Enter cancelled';
+  if (result.focused !== 'confirm-focus-anchor')
+    throw new Error(`focus did not return to the underlying editor (focused: ${result.focused || 'nothing'})`);
+  return 'Cancel focused, Enter cancelled, and underlying focus was restored';
 });
 
 test('a transfer changed to an expense takes its other half', async browser => {
