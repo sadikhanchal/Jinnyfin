@@ -7,17 +7,20 @@ import { putMany, setSettings, sync, state } from '../store.js';
 export function runImport() {
   const bar = el('div', {}); const fill = el('div', { style: 'width:0%' });
   bar.append(el('div', { class: 'progress' }, fill));
-  const log = el('p', { class: 'small muted' }, 'Fetching data/seed-data.json…');
-  const m = modal('Importing your ledger', el('div', { class: 'grid', style: 'gap:10px' },
-    el('p', { class: 'small' }, 'Loading everything from MISA Entry 06.xlsm. Keep this tab open — it takes a minute or two the first time, mostly uploading to Supabase.'),
+  const seedPath = CONFIG.DEMO ? 'data/demo-seed.json' : 'data/seed-data.json';
+  const log = el('p', { class: 'small muted' }, `Fetching ${seedPath}…`);
+  const m = modal(CONFIG.DEMO ? 'Loading sample data' : 'Importing your ledger', el('div', { class: 'grid', style: 'gap:10px' },
+    el('p', { class: 'small' }, CONFIG.DEMO
+      ? 'Loading fictional sample data. Keep this tab open while the starter ledger is added.'
+      : 'Loading everything from MISA Entry 06.xlsm. Keep this tab open — it takes a minute or two the first time, mostly uploading to Supabase.'),
     bar, log));
 
   const step = (pct, msg) => { fill.style.width = pct + '%'; log.textContent = msg; };
 
   (async () => {
     try {
-      const res = await fetch('data/seed-data.json');
-      if (!res.ok) throw new Error('seed-data.json not found in the data/ folder');
+      const res = await fetch(seedPath);
+      if (!res.ok) throw new Error(`${seedPath} not found in the data/ folder`);
       const D = await res.json();
       step(8, `Read ${D.transactions.length.toLocaleString('en-IN')} transactions.`);
 
