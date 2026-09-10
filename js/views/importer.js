@@ -51,7 +51,16 @@ export function runImport() {
         id: uuid(), name: b.name, income_parent: b.income_parent, income_sub: b.income_sub,
         expense_parent: b.expense_parent, expense_sub: b.expense_sub,
       })));
-      step(32, 'Assets, policies and businesses in.');
+      await putMany('budgets', (D.budgets || []).map(b => ({
+        id: uuid(), parent: b.parent, sub: b.sub || null, amount: b.amount,
+        currency: b.currency, period: b.period,
+      })));
+      await putMany('tasks', (D.tasks || []).map(t => ({
+        id: uuid(), title: t.title, note: t.note || null, due_date: t.due_date,
+        due_time: t.due_time || null, repeat: t.repeat || null,
+        priority: t.priority || 'normal', done: !!t.done, done_at: t.done ? (t.done_at || todayISO()) : null,
+      })));
+      step(32, 'Assets, policies, businesses, budgets and reminders in.');
 
       const eq = D.equity;
       const pos = [
@@ -77,6 +86,7 @@ export function runImport() {
         id: uuid(), no: t.no, date: t.date, time: t.time, type: t.type, account: t.account,
         currency: t.currency, income: t.income || 0, expense: t.expense || 0,
         parent: t.parent, sub: t.sub, payee: t.payee, event: t.event, note: t.note, fx: t.fx || 1,
+        transfer_group: t.transfer_group || null, to_account: t.to_account || null,
       }));
       const CH = 2000;
       for (let i = 0; i < rows.length; i += CH) {
@@ -88,7 +98,7 @@ export function runImport() {
 
       await setSettings({
         sar_to_inr: D.constants.sar_to_inr, usd_to_sar: D.constants.usd_to_sar,
-        investment_categories: ['KSFE', 'Millionaire Federal Savings', 'PO Savings - Afiya', 'PO Savings - Lamiya'],
+        investment_categories: D.constants.investment_categories || [],
         seeded: todayISO(),
       });
 
