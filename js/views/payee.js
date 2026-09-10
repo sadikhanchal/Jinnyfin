@@ -94,7 +94,7 @@ function draw() {
     el('div', {}, `${nameless.toLocaleString('en-IN')} older entries carry no name, so they are not in the figures above. `
       + (CONFIG.DEMO
         ? 'They are sample history marked settled — the money itself is in your account balances either way.'
-        : 'They came across from the workbook already settled — the money itself is in your account balances either way.')));
+        : 'They came across from the workbook already settled — the money itself is in your account balances either way.'))));
 
   const toggle = el('label', { class: 'chip', style: 'cursor:pointer' },
     el('input', { type: 'checkbox', checked: showSettled, onchange: e => { showSettled = e.target.checked; draw(); } }),
