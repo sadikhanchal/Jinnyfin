@@ -5,6 +5,7 @@
 import { el, money, num, fmtDate, fmtDateShort, downloadCSV, todayISO, esc, toast,
   dateGuard, restoreDateFocus } from '../util.js';
 import { DB, state, getSettings } from '../store.js';
+import { CONFIG } from '../../config.js';
 import * as C from '../calc.js';
 import { topbar } from '../app.js';
 import { openTxEditor } from './editor.js';
@@ -91,7 +92,9 @@ function draw() {
   const nameless = DB.transactions.filter(x => x.type === 'Lend/Borrow' && !x.payee && !x.deleted).length;
   if (nameless) host.append(el('div', { class: 'alert slim' }, el('span', { class: 'ico' }, 'ℹ️'),
     el('div', {}, `${nameless.toLocaleString('en-IN')} older entries carry no name, so they are not in the figures above. `
-      + 'They came across from the workbook already settled — the money itself is in your account balances either way.')));
+      + (CONFIG.DEMO
+        ? 'They are sample history marked settled — the money itself is in your account balances either way.'
+        : 'They came across from the workbook already settled — the money itself is in your account balances either way.')));
 
   const toggle = el('label', { class: 'chip', style: 'cursor:pointer' },
     el('input', { type: 'checkbox', checked: showSettled, onchange: e => { showSettled = e.target.checked; draw(); } }),
