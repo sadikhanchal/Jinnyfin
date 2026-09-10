@@ -690,7 +690,7 @@ test('Investments & savings totals show deposits, returns, and value', async bro
   if (cells[0] !== 'TOTAL') throw new Error('Investments & savings total row is missing');
   if (cells[2] !== '1,000') throw new Error(`deposit total missing or wrong: ${cells[2] || 'blank'}`);
   if (cells[3] !== '200') throw new Error(`return total missing or wrong: ${cells[3] || 'blank'}`);
-  if (cells[4] !== '1,200') throw new Error(`investment value total wrong: ${cells[4] || 'blank'}`);
+  if (cells[5] !== '1,200') throw new Error(`investment value total wrong: ${cells[5] || 'blank'}`);
   return 'deposits 1,000 · returns 200 · value 1,200';
 });
 
