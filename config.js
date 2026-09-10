@@ -20,6 +20,9 @@ export const CONFIG = {
   VAPID_PUBLIC_KEY: 'BL94JGN2xGkX7_6nHUietV0IUMcXAU_Zfvl0vSRjmVlwjeY3nFiQ_fM3mFQCvqH662AOiCjUtqxeN_REBify-Jg',
 
   APP_NAME: 'Jinnyfin',
+  // Keep the owner build on the full ledger by default. Demo packaging turns
+  // this on in its own config without changing the production configuration.
+  DEMO: false,
   BASE_CURRENCY: 'SAR',        // the currency you earn in
   REPORT_CURRENCY: 'INR',      // the currency reports are totalled in
   DEFAULT_ACCOUNT: 'Cash In Hand',

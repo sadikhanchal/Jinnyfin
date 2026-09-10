@@ -4,6 +4,7 @@
 import { el, modal, toast, todayISO, uuid, evalAmount, confirmBox, money, round2, closeThen,
   badYear } from '../util.js';
 import { DB, put, remove } from '../store.js';
+import { CONFIG } from '../../config.js';
 import { fxFor, currencyOf, convertAmount, parentsFor, subsFor, parentsOfSub, payeeNames, eventNames,
   activeAccounts as liveAccounts } from '../calc.js';
 
@@ -547,7 +548,9 @@ export function openTxEditor(existing = null, presets = {}) {
     add('Description', noteIn, 'full');
     if (type === 'Transfer' && !linked && !isNew) {
       form.append(el('div', { class: 'full alert soon' }, el('span', { class: 'ico' }, '🔗'),
-        el('div', {}, 'This transfer was brought in from the workbook and is not tied to its other half. '
+        el('div', {}, (CONFIG.DEMO
+          ? 'This sample transfer is not tied to its other half. '
+          : 'This transfer was brought in from the workbook and is not tied to its other half. ')
           + `Pick the ${rowIsIn ? 'account it came from' : 'account it went to'} and Jinnyfin will find that entry and link the two. `
           + 'Leave it as “not known” and only this row is saved.')));
     }

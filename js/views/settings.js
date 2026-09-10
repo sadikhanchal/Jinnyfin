@@ -10,6 +10,7 @@ import * as C from '../calc.js';
 import { round2 } from '../util.js';
 import { hashPin } from '../crypto.js';
 import { topbar, toggleTheme, BUILD, askSignOut } from '../app.js';
+import { CONFIG } from '../../config.js';
 import { kpi } from './report.js';
 import { openTxEditor } from './editor.js';
 
@@ -515,8 +516,10 @@ function fx() {
   const byMonth = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, 'SAR → INR by month')),
     el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-      'Each transaction is converted at the rate of its own month, exactly like the workbook. '
-      + 'Add a rate whenever you transfer money and know the real rate you got.'),
+      CONFIG.DEMO
+        ? 'Each transaction is converted at the rate of its own month, using the sample data.'
+        : 'Each transaction is converted at the rate of its own month, exactly like the workbook. '
+          + 'Add a rate whenever you transfer money and know the real rate you got.'),
     add);
   host.append(el('div', { class: 'grid g2' }, today, byMonth));
   const t = el('table');
@@ -708,11 +711,12 @@ function data() {
       el('input', { type: 'file', id: 'restore-file', accept: '.json', style: 'display:none', onchange: restore }))));
 
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
-    el('div', { class: 'card-head' }, el('h3', {}, 'Import from the Excel workbook')),
-    el('p', { class: 'small muted' },
-      'One-time load of everything from MISA Entry 06.xlsm — 25,074 transactions, accounts, categories, FX history, assets, policies and the equity portfolio.'),
+    el('div', { class: 'card-head' }, el('h3', {}, CONFIG.DEMO ? 'Sample data' : 'Import from the Excel workbook')),
+    el('p', { class: 'small muted' }, CONFIG.DEMO
+      ? 'Load a fictional starter ledger for the demo. It contains sample accounts, categories, transactions, assets, policies and investments.'
+      : 'One-time load of everything from MISA Entry 06.xlsm — 25,074 transactions, accounts, categories, FX history, assets, policies and the equity portfolio.'),
     el('div', { class: 'row' },
-      el('button', { class: 'btn primary', onclick: importSeed }, '⬇ Load workbook data'),
+      el('button', { class: 'btn primary', onclick: importSeed }, CONFIG.DEMO ? '⬇ Load sample data' : '⬇ Load workbook data'),
       s.seeded ? el('span', { class: 'chip' }, '✓ already imported on ' + fmtDate(s.seeded)) : null),
     el('p', { class: 'hint' }, 'Safe to run once. Running it twice would duplicate everything, so it asks first.')));
 
@@ -732,10 +736,14 @@ function data() {
     el('div', { class: 'card-head' }, el('h3', {}, 'Tidy up')),
 
     el('p', { class: 'small muted', style: 'margin:6px 0 4px' },
-      'A transfer is two rows — one for the money leaving, one for it arriving. Everything the workbook '
-      + 'brought in came as single rows with nothing tying the halves together, which is why opening one '
-      + 'shows the other side as “— not known —”. Linking changes no amount, date or account: it only '
-      + 'records that the two rows already in the ledger are one transfer.'),
+      CONFIG.DEMO
+        ? 'A transfer is two rows — one for the money leaving, one for it arriving. The sample data '
+          + 'may contain unlinked rows, which is why opening one can show the other side as “— not known —”. '
+          + 'Linking changes no amount, date or account: it only records that the two rows are one transfer.'
+        : 'A transfer is two rows — one for the money leaving, one for it arriving. Everything the workbook '
+          + 'brought in came as single rows with nothing tying the halves together, which is why opening one '
+          + 'shows the other side as “— not known —”. Linking changes no amount, date or account: it only '
+          + 'records that the two rows already in the ledger are one transfer.'),
     el('p', { class: 'small', style: 'margin:0 0 10px' },
       half.pairs.length
         ? `${half.pairs.length} pairs can be tied back together (${half.loose} unlinked in all).`
@@ -746,16 +754,20 @@ function data() {
         disabled: !half.pairs.length, onclick: linkHalfTransfers }, '⇄ Link half transfers')),
 
     el('p', { class: 'small muted', style: 'margin:14px 0 4px' },
-      'Older transfers carried the category on the side the money left and nothing on the side it '
-      + 'arrived, so the same transfer reads “Transfer” on one statement and leaves the Category column '
-      + 'empty on the other. New ones no longer do this; these are the ones already saved.'),
+      CONFIG.DEMO
+        ? 'Some sample transfers carry the category on the side the money left and nothing on the side it '
+          + 'arrived, so the same transfer reads “Transfer” on one statement and leaves the Category column '
+          + 'empty on the other. New ones no longer do this; these are the ones already saved.'
+        : 'Older transfers carried the category on the side the money left and nothing on the side it '
+          + 'arrived, so the same transfer reads “Transfer” on one statement and leaves the Category column '
+          + 'empty on the other. New ones no longer do this; these are the ones already saved.'),
     el('p', { class: 'small', style: 'margin:0 0 10px' },
       blank ? `${blank} entries have an empty Category column.` : 'Every transfer carries its category.'),
     el('div', { class: 'row' },
       el('button', { class: 'btn', disabled: !blank, onclick: fixTransferCategories },
         'Fill in blank transfer categories'))));
 
-  host.append(el('div', { class: 'card', style: 'margin-top:12px' },
+  if (!CONFIG.DEMO) host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Numbers check')),
     verifyBlock()));
 }
@@ -1195,9 +1207,13 @@ function check() {
     cur);
 
   checkGroup(host, 'Lend / Borrow under old labels',
-    'These came from the workbook filed under labels like a bare “Repayment”. '
-    + 'Lend / Borrow should only ever be Lend (Lend · Collecting debts) or Borrow (Borrow · Repayment). '
-    + 'No amount changes either way — only the label.',
+    CONFIG.DEMO
+      ? 'These sample rows use older labels such as a bare “Repayment”. '
+        + 'Lend / Borrow should only ever be Lend (Lend · Collecting debts) or Borrow (Borrow · Repayment). '
+        + 'No amount changes either way — only the label.'
+      : 'These came from the workbook filed under labels like a bare “Repayment”. '
+        + 'Lend / Borrow should only ever be Lend (Lend · Collecting debts) or Borrow (Borrow · Repayment). '
+        + 'No amount changes either way — only the label.',
     lb,
     lb.length ? el('button', { class: 'btn sm primary', onclick: tidyLendBorrow }, '✓ Fix all ' + lb.length) : null);
 
@@ -1234,7 +1250,7 @@ function exportAllCSV() {
 
 async function importSeed() {
   if (DB.transactions.length && !(await confirmBox(
-    `There are already ${DB.transactions.length.toLocaleString('en-IN')} transactions here. Import the workbook data on top? Duplicates are likely.`))) return;
+    `There are already ${DB.transactions.length.toLocaleString('en-IN')} transactions here. ${CONFIG.DEMO ? 'Import the sample data on top?' : 'Import the workbook data on top?'} Duplicates are likely.`))) return;
   const { runImport } = await import('./importer.js');
   runImport();
 }

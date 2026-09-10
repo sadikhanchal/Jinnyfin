@@ -404,7 +404,7 @@ function summarise(acc, asOf = null) {
       deposits: x.dep, interest: x.interest, withdrawn: x.wd });
     invTotal += v;
   }
-  if (eq.marketValue) { detail.push({ name: 'Equity Shares (Geojit)', value: eq.marketValue, kind: 'equity' }); invTotal += eq.marketValue; }
+  if (eq.marketValue) { detail.push({ name: 'Equity Shares', value: eq.marketValue, kind: 'equity' }); invTotal += eq.marketValue; }
 
   const assetRows = DB.assets.map(a => {
     const cost = (acc.asset.get(a.category_tag || a.name) || 0) + Number(a.opening_cost || 0);

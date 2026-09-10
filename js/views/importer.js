@@ -2,22 +2,26 @@
 //  importer.js — one-time load of the workbook export into the app.
 // ============================================================================
 import { el, modal, toast, uuid, todayISO } from '../util.js';
+import { CONFIG } from '../../config.js';
 import { putMany, setSettings, sync, state } from '../store.js';
 
 export function runImport() {
   const bar = el('div', {}); const fill = el('div', { style: 'width:0%' });
   bar.append(el('div', { class: 'progress' }, fill));
-  const log = el('p', { class: 'small muted' }, 'Fetching data/seed-data.json…');
-  const m = modal('Importing your ledger', el('div', { class: 'grid', style: 'gap:10px' },
-    el('p', { class: 'small' }, 'Loading everything from MISA Entry 06.xlsm. Keep this tab open — it takes a minute or two the first time, mostly uploading to Supabase.'),
+  const seedPath = CONFIG.DEMO ? 'data/demo-seed.json' : 'data/seed-data.json';
+  const log = el('p', { class: 'small muted' }, `Fetching ${seedPath}…`);
+  const m = modal(CONFIG.DEMO ? 'Loading sample data' : 'Importing your ledger', el('div', { class: 'grid', style: 'gap:10px' },
+    el('p', { class: 'small' }, CONFIG.DEMO
+      ? 'Loading fictional sample data. Keep this tab open while the starter ledger is added.'
+      : 'Loading everything from MISA Entry 06.xlsm. Keep this tab open — it takes a minute or two the first time, mostly uploading to Supabase.'),
     bar, log));
 
   const step = (pct, msg) => { fill.style.width = pct + '%'; log.textContent = msg; };
 
   (async () => {
     try {
-      const res = await fetch('data/seed-data.json');
-      if (!res.ok) throw new Error('seed-data.json not found in the data/ folder');
+      const res = await fetch(seedPath);
+      if (!res.ok) throw new Error(`${seedPath} not found in the data/ folder`);
       const D = await res.json();
       step(8, `Read ${D.transactions.length.toLocaleString('en-IN')} transactions.`);
 
@@ -105,7 +109,7 @@ export function runImport() {
       step(82, state.user ? 'Uploading to Supabase — this is the slow part…' : 'Saved locally.');
       await sync();
       step(100, 'Done.');
-      toast('Workbook imported');
+      toast(CONFIG.DEMO ? 'Sample data loaded' : 'Workbook imported');
       setTimeout(() => { m.close(); location.reload(); }, 900);
     } catch (e) {
       console.error(e);

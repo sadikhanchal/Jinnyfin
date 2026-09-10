@@ -27,7 +27,7 @@ const ROUTES = {
   equity:       { title: 'Equity Portfolio', icon: '📈', load: () => import('./views/equity.js') },
   networth:     { title: 'Net Worth & Assets',icon: '🏦', load: () => import('./views/networth.js') },
   insurance:    { title: 'Insurance & Documents', icon: '🛡️', load: () => import('./views/insurance.js') },
-  cards:        { title: 'Card Vault',       icon: '💳', load: () => import('./views/cards.js') },
+  ...(!CONFIG.DEMO ? { cards: { title: 'Card Vault', icon: '💳', load: () => import('./views/cards.js') } } : {}),
   budgets:      { title: 'Budgets',          icon: '🎯', load: () => import('./views/budgets.js') },
   tasks:        { title: 'Reminders',        icon: '⏰', load: () => import('./views/tasks.js') },
   settings:     { title: 'Settings',         icon: '⚙️', load: () => import('./views/settings.js') },
@@ -36,7 +36,7 @@ const ROUTES = {
 const NAV = [
   { sep: 'Overview' }, 'dashboard', 'transactions', 'networth', 'budgets', 'tasks',
   { sep: 'Reports' }, 'expense', 'income', 'incexp', 'statement', 'payee', 'business', 'equity',
-  { sep: 'Vault' }, 'insurance', 'cards',
+  { sep: 'Vault' }, 'insurance', ...(CONFIG.DEMO ? [] : ['cards']),
   { sep: '' }, 'settings',
 ];
 
