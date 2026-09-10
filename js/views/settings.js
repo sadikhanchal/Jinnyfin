@@ -714,7 +714,7 @@ function data() {
       ? 'Load a fictional starter ledger for the demo. It contains sample accounts, categories, transactions, assets, policies and investments.'
       : 'One-time load of everything from MISA Entry 06.xlsm — 25,074 transactions, accounts, categories, FX history, assets, policies and the equity portfolio.'),
     el('div', { class: 'row' },
-      el('button', { class: 'btn primary', onclick: importSeed }, '⬇ Load workbook data'),
+      el('button', { class: 'btn primary', onclick: importSeed }, CONFIG.DEMO ? '⬇ Load sample data' : '⬇ Load workbook data'),
       s.seeded ? el('span', { class: 'chip' }, '✓ already imported on ' + fmtDate(s.seeded)) : null),
     el('p', { class: 'hint' }, 'Safe to run once. Running it twice would duplicate everything, so it asks first.')));
 
