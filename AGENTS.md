@@ -131,3 +131,12 @@ State plainly: which files changed, what the version went to, whether
 `npm test` is green, and anything you could not verify. If a change touches
 money — balances, conversions, report totals — say which figures you checked
 and against what. "It should be fine" is not a check.
+
+## Syntax validation
+
+This repository loads JavaScript as native ES modules. Do not use `node --check file.js` as the only syntax check: Node treats a .js file as CommonJS in this context and that can miss module parsing errors. For every changed JavaScript file, copy it to a .mjs path and check that module:
+
+    cp file.js /tmp/jinnyfin-check.mjs
+    node --check /tmp/jinnyfin-check.mjs
+
+On Windows PowerShell, use `Copy-Item file.js "$env:TEMP\jinnyfin-check.mjs"` followed by `node --check "$env:TEMP\jinnyfin-check.mjs"`. This is a parse check only; run `cd test && npm test` for behavior.
