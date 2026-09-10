@@ -98,7 +98,7 @@ export function runImport() {
       step(82, state.user ? 'Uploading to Supabase — this is the slow part…' : 'Saved locally.');
       await sync();
       step(100, 'Done.');
-      toast('Workbook imported');
+      toast(CONFIG.DEMO ? 'Sample data loaded' : 'Workbook imported');
       setTimeout(() => { m.close(); location.reload(); }, 900);
     } catch (e) {
       console.error(e);
