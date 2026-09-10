@@ -10,6 +10,7 @@ import * as C from '../calc.js';
 import { round2 } from '../util.js';
 import { hashPin } from '../crypto.js';
 import { topbar, toggleTheme, BUILD, askSignOut } from '../app.js';
+import { CONFIG } from '../../config.js';
 import { kpi } from './report.js';
 import { openTxEditor } from './editor.js';
 
@@ -755,7 +756,7 @@ function data() {
       el('button', { class: 'btn', disabled: !blank, onclick: fixTransferCategories },
         'Fill in blank transfer categories'))));
 
-  host.append(el('div', { class: 'card', style: 'margin-top:12px' },
+  if (!CONFIG.DEMO) host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Numbers check')),
     verifyBlock()));
 }
