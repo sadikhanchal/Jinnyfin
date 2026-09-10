@@ -516,8 +516,10 @@ function fx() {
   const byMonth = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, 'SAR → INR by month')),
     el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-      'Each transaction is converted at the rate of its own month, exactly like the workbook. '
-      + 'Add a rate whenever you transfer money and know the real rate you got.'),
+      CONFIG.DEMO
+        ? 'Each transaction is converted at the rate of its own month, using the sample data.'
+        : 'Each transaction is converted at the rate of its own month, exactly like the workbook. '
+          + 'Add a rate whenever you transfer money and know the real rate you got.'),
     add);
   host.append(el('div', { class: 'grid g2' }, today, byMonth));
   const t = el('table');
@@ -734,10 +736,14 @@ function data() {
     el('div', { class: 'card-head' }, el('h3', {}, 'Tidy up')),
 
     el('p', { class: 'small muted', style: 'margin:6px 0 4px' },
-      'A transfer is two rows — one for the money leaving, one for it arriving. Everything the workbook '
-      + 'brought in came as single rows with nothing tying the halves together, which is why opening one '
-      + 'shows the other side as “— not known —”. Linking changes no amount, date or account: it only '
-      + 'records that the two rows already in the ledger are one transfer.'),
+      CONFIG.DEMO
+        ? 'A transfer is two rows — one for the money leaving, one for it arriving. The sample data '
+          + 'may contain unlinked rows, which is why opening one can show the other side as “— not known —”. '
+          + 'Linking changes no amount, date or account: it only records that the two rows are one transfer.'
+        : 'A transfer is two rows — one for the money leaving, one for it arriving. Everything the workbook '
+          + 'brought in came as single rows with nothing tying the halves together, which is why opening one '
+          + 'shows the other side as “— not known —”. Linking changes no amount, date or account: it only '
+          + 'records that the two rows already in the ledger are one transfer.'),
     el('p', { class: 'small', style: 'margin:0 0 10px' },
       half.pairs.length
         ? `${half.pairs.length} pairs can be tied back together (${half.loose} unlinked in all).`
@@ -1201,9 +1207,13 @@ function check() {
     cur);
 
   checkGroup(host, 'Lend / Borrow under old labels',
-    'These came from the workbook filed under labels like a bare “Repayment”. '
-    + 'Lend / Borrow should only ever be Lend (Lend · Collecting debts) or Borrow (Borrow · Repayment). '
-    + 'No amount changes either way — only the label.',
+    CONFIG.DEMO
+      ? 'These sample rows use older labels such as a bare “Repayment”. '
+        + 'Lend / Borrow should only ever be Lend (Lend · Collecting debts) or Borrow (Borrow · Repayment). '
+        + 'No amount changes either way — only the label.'
+      : 'These came from the workbook filed under labels like a bare “Repayment”. '
+        + 'Lend / Borrow should only ever be Lend (Lend · Collecting debts) or Borrow (Borrow · Repayment). '
+        + 'No amount changes either way — only the label.',
     lb,
     lb.length ? el('button', { class: 'btn sm primary', onclick: tidyLendBorrow }, '✓ Fix all ' + lb.length) : null);
 
@@ -1240,7 +1250,7 @@ function exportAllCSV() {
 
 async function importSeed() {
   if (DB.transactions.length && !(await confirmBox(
-    `There are already ${DB.transactions.length.toLocaleString('en-IN')} transactions here. Import the workbook data on top? Duplicates are likely.`))) return;
+    `There are already ${DB.transactions.length.toLocaleString('en-IN')} transactions here. ${CONFIG.DEMO ? 'Import the sample data on top?' : 'Import the workbook data on top?'} Duplicates are likely.`))) return;
   const { runImport } = await import('./importer.js');
   runImport();
 }
