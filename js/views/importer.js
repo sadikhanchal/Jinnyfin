@@ -2,6 +2,7 @@
 //  importer.js — one-time load of the workbook export into the app.
 // ============================================================================
 import { el, modal, toast, uuid, todayISO } from '../util.js';
+import { CONFIG } from '../../config.js';
 import { putMany, setSettings, sync, state } from '../store.js';
 
 export function runImport() {
