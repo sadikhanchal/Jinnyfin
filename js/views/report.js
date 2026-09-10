@@ -88,8 +88,8 @@ export function makeReport(kind) {
         }, 120);
       } });
     host.append(el('div', { class: 'filters report-filters' },
-      el('div', { class: 'field compact-filter' }, el('label', {}, 'Year'), sel('Year', 'year', C.yearsPresent(), 'All years').firstChild),
-      el('div', { class: 'field compact-filter' }, el('label', {}, 'Month'), sel('Month', 'month', MONTHS.map((m, i) => ({ v: i + 1, t: m })), 'All months').firstChild),
+      el('div', { class: 'field compact-filter' }, el('label', {}, 'Year'), sel('Year', 'year', C.yearsPresent(), 'All years').lastChild),
+      el('div', { class: 'field compact-filter' }, el('label', {}, 'Month'), sel('Month', 'month', MONTHS.map((m, i) => ({ v: i + 1, t: m })), 'All months').lastChild),
       sel('Category', 'parent', C.parentsFor(kind), 'All categories'),
       sel('Sub-category', 'sub', f.parent === 'All' ? [] : C.subsFor(kind, f.parent), 'All sub-categories'),
       sel('Account', 'account', C.accountNames(), 'All accounts'),
