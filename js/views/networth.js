@@ -109,7 +109,8 @@ function draw() {
   // -------------------------------------------------------- investments ---
   const it = el('table');
   it.append(el('thead', {}, el('tr', {}, el('th', {}, 'Holding'), el('th', {}, 'Tracked as'),
-    el('th', { class: 'n' }, 'Deposits'), el('th', { class: 'n' }, 'Returns'), el('th', { class: 'n' }, 'Value ≈ INR'))));
+    el('th', { class: 'n' }, 'Deposits'), el('th', { class: 'n' }, 'Returns'),
+    el('th', { class: 'n' }, 'Withdrawals'), el('th', { class: 'n' }, 'Value ≈ INR'))));
   const itb = el('tbody');
   for (const d of inv.detail) {
     const where = d.kind === 'category' ? ['tag', d.name]
@@ -121,13 +122,16 @@ function draw() {
       el('td', {}, d.name), el('td', { class: 'muted small' }, d.kind),
       el('td', { class: 'n' }, d.deposits != null ? num(d.deposits, 0) : '–'),
       el('td', { class: 'n' }, d.interest != null ? num(d.interest, 0) : '–'),
+      el('td', { class: 'n' }, d.withdrawn != null ? num(d.withdrawn, 0) : '–'),
       el('td', { class: 'n' }, num(d.value, 0))));
   }
   const depositTotal = inv.detail.reduce((sum, d) => sum + (Number(d.deposits) || 0), 0);
   const returnTotal = inv.detail.reduce((sum, d) => sum + (Number(d.interest) || 0), 0);
+  const withdrawalTotal = inv.detail.reduce((sum, d) => sum + (Number(d.withdrawn) || 0), 0);
   itb.append(el('tr', { class: 'total' }, el('td', {}, 'TOTAL'), el('td', {}),
     el('td', { class: 'n' }, num(depositTotal, 0)),
     el('td', { class: 'n' }, num(returnTotal, 0)),
+    el('td', { class: 'n' }, num(withdrawalTotal, 0)),
     el('td', { class: 'n' }, num(inv.total, 0))));
   it.append(itb);
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
