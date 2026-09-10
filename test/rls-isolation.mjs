@@ -21,7 +21,7 @@ const configValue = name => {
   return m[1];
 };
 
-const BASE = (process.env.JF_SUPABASE_URL || configValue('SUPABASE_URL')).replace(/\\/+$/, '');
+const BASE = (process.env.JF_SUPABASE_URL || configValue('SUPABASE_URL')).replace(/\/+$/, '');
 const ANON = process.env.JF_SUPABASE_ANON_KEY || configValue('SUPABASE_ANON_KEY');
 if (!BASE || !ANON || BASE.startsWith('PASTE') || ANON.startsWith('PASTE'))
   throw new Error('Supabase URL and publishable anon key are not configured');
