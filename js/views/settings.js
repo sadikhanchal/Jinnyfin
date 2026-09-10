@@ -710,8 +710,9 @@ function data() {
 
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Import from the Excel workbook')),
-    el('p', { class: 'small muted' },
-      'One-time load of everything from MISA Entry 06.xlsm — 25,074 transactions, accounts, categories, FX history, assets, policies and the equity portfolio.'),
+    el('p', { class: 'small muted' }, CONFIG.DEMO
+      ? 'Load a fictional starter ledger for the demo. It contains sample accounts, categories, transactions, assets, policies and investments.'
+      : 'One-time load of everything from MISA Entry 06.xlsm — 25,074 transactions, accounts, categories, FX history, assets, policies and the equity portfolio.'),
     el('div', { class: 'row' },
       el('button', { class: 'btn primary', onclick: importSeed }, '⬇ Load workbook data'),
       s.seeded ? el('span', { class: 'chip' }, '✓ already imported on ' + fmtDate(s.seeded)) : null),
@@ -747,9 +748,13 @@ function data() {
         disabled: !half.pairs.length, onclick: linkHalfTransfers }, '⇄ Link half transfers')),
 
     el('p', { class: 'small muted', style: 'margin:14px 0 4px' },
-      'Older transfers carried the category on the side the money left and nothing on the side it '
-      + 'arrived, so the same transfer reads “Transfer” on one statement and leaves the Category column '
-      + 'empty on the other. New ones no longer do this; these are the ones already saved.'),
+      CONFIG.DEMO
+        ? 'Some sample transfers carry the category on the side the money left and nothing on the side it '
+          + 'arrived, so the same transfer reads “Transfer” on one statement and leaves the Category column '
+          + 'empty on the other. New ones no longer do this; these are the ones already saved.'
+        : 'Older transfers carried the category on the side the money left and nothing on the side it '
+          + 'arrived, so the same transfer reads “Transfer” on one statement and leaves the Category column '
+          + 'empty on the other. New ones no longer do this; these are the ones already saved.'),
     el('p', { class: 'small', style: 'margin:0 0 10px' },
       blank ? `${blank} entries have an empty Category column.` : 'Every transfer carries its category.'),
     el('div', { class: 'row' },
