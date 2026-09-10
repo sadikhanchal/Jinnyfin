@@ -644,6 +644,25 @@ test('Income Report description search filters totals, chart data, and details',
   return 'one matching income row across report outputs';
 });
 
+test('Income and Expense reports render all filter controls', async browser => {
+  const reports = [];
+  for (const route of ['income', 'expense']) {
+    const { ctx, page } = await open(browser, route);
+    reports.push(await page.evaluate(() => ({
+      year: !!document.querySelector('select[data-fk="year"]'),
+      month: !!document.querySelector('select[data-fk="month"]'),
+      category: !!document.querySelector('select[data-fk="parent"]'),
+      subcategory: !!document.querySelector('select[data-fk="sub"]'),
+      account: !!document.querySelector('select[data-fk="account"]'),
+      description: !!document.querySelector('input[data-fk="description"]'),
+    })));
+    await ctx.close();
+  }
+  const missing = reports.flatMap((r, i) => Object.entries(r).filter(([, present]) => !present).map(([key]) => `${['income', 'expense'][i]}:${key}`));
+  if (missing.length) throw new Error(`missing report controls: ${missing.join(', ')}`);
+  return 'all Income and Expense filters render';
+});
+
 test('Investments & savings totals show deposits, returns, and value', async browser => {
   const { ctx, page } = await open(browser, 'networth');
   const fixture = await page.evaluate(async () => {
