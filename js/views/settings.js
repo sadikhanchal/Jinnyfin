@@ -709,7 +709,7 @@ function data() {
       el('input', { type: 'file', id: 'restore-file', accept: '.json', style: 'display:none', onchange: restore }))));
 
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
-    el('div', { class: 'card-head' }, el('h3', {}, 'Import from the Excel workbook')),
+    el('div', { class: 'card-head' }, el('h3', {}, CONFIG.DEMO ? 'Sample data' : 'Import from the Excel workbook')),
     el('p', { class: 'small muted' }, CONFIG.DEMO
       ? 'Load a fictional starter ledger for the demo. It contains sample accounts, categories, transactions, assets, policies and investments.'
       : 'One-time load of everything from MISA Entry 06.xlsm — 25,074 transactions, accounts, categories, FX history, assets, policies and the equity portfolio.'),
