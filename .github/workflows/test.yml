@@ -1,0 +1,34 @@
+name: tests
+
+# Runs the browser suite on every pull request and every push to main.
+# The result shows up as a green tick or a red cross on the PR page.
+# Green means all checks passed. Red means do not merge.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:        # lets you run it by hand from the Actions tab
+
+jobs:
+  browser-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install test dependencies
+        working-directory: test
+        run: npm install
+
+      - name: Install Chromium
+        working-directory: test
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the suite
+        working-directory: test
+        run: npm test
