@@ -5,12 +5,15 @@ import { el, modal, toast, todayISO, uuid, evalAmount, confirmBox, money, round2
   badYear, searchSelect } from '../util.js';
 import { DB, put, remove } from '../store.js';
 import { CONFIG } from '../../config.js';
+import { icon } from '../icons.js';
 import { fxFor, currencyOf, convertAmount, parentsFor, subsFor, parentsOfSub, payeeNames, eventNames,
   activeAccounts as liveAccounts } from '../calc.js';
 
 const TYPES = ['Expense', 'Income', 'Transfer', 'Lend/Borrow', 'Investment'];
-const ICON = { Expense: '💸', Income: '💵', Transfer: '🔄', 'Lend/Borrow': '🤝', Investment: '📈', 'Opening Balance': '🏁' };
-export const typeIcon = t => ICON[t] || '•';
+const ICON = { Expense: 'spend', Income: 'earn', Transfer: 'swap', 'Lend/Borrow': 'hands',
+  Investment: 'chartUp', 'Opening Balance': 'flag' };
+/** The mark for an entry type. An element, not text — it must be appended. */
+export const typeIcon = (t, size = 18) => icon(ICON[t] || 'dot', size);
 
 // ── the two types whose categories are a closed set ────────────────────────
 // Free text there only invites typos, and a wrong sub-category silently flips
@@ -574,8 +577,11 @@ export function openTxEditor(existing = null, presets = {}) {
       subIn.value = home ? (t.sub || '') : '';
       layout();
     }, dataset: { ty } },
-      el('span', { class: 'ti' }, ICON[ty]),
-      el('span', { class: 'tl' }, { 'Lend/Borrow': 'Lend', Investment: 'Invest' }[ty] || ty));
+      el('span', { class: 'ti' }, icon(ICON[ty], 19)),
+      // "Lend" alone was a lie on half the rows filed under it — the type is
+      // Lend/Borrow, and the button now says so. It wraps to two lines on a
+      // phone rather than being cut, because a truncated type is a guess.
+      el('span', { class: 'tl' }, { 'Lend/Borrow': 'Lend/\u200BBorrow', Investment: 'Invest' }[ty] || ty));
     typeRow.append(b);
   }
   layout();
