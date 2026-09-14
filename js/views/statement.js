@@ -367,11 +367,18 @@ function listRows(st, openingRow) {
         el('span', { class: net >= 0 ? 'pos' : 'neg' }, money(net, st.currency, false))));
     }
     const isIn = Number(r.income) > 0;
+    // A lend entry read "Lend" over "Lend · Lend" — the category twice, and no
+    // sign of who the money went to, which is the one thing that row is about.
+    // The second line drops anything the first line already says and keeps the
+    // payee, so it carries something rather than repeating.
+    const title = r.note || r.sub || r.parent || r.type;
+    const sub = [...new Set([r.parent, r.sub, r.payee].filter(Boolean))]
+      .filter(x => x !== title).join(' · ') || r.type;
     out.push(el('div', { class: 'tx' + (r.__synthetic ? ' muted' : ''), onclick: r.__synthetic ? null : () => openTxEditor(r) },
       el('div', { class: 'av' }, typeIcon(r.type)),
       el('div', { style: 'min-width:0' },
-        el('div', { class: 't1' }, r.note || r.sub || r.parent || r.type),
-        el('div', { class: 't2' }, [r.parent, r.sub].filter(Boolean).join(' · ') || r.type)),
+        el('div', { class: 't1' }, title),
+        el('div', { class: 't2' }, sub)),
       el('div', { class: 'amt ' + (isIn ? 'in' : 'out') },
         (isIn ? '+' : '−') + money(isIn ? r.income : r.expense, st.currency),
         // the balance after this entry, the way a bank app shows it

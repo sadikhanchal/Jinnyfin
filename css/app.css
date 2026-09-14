@@ -9,7 +9,7 @@
      you whether this device is holding an old stylesheet, so it is bumped with
      every release — not only when the stylesheet itself changes, or the check
      cries wolf. */
-  --jf-css: "1.45";
+  --jf-css: "1.46";
   color-scheme: light;
   --page:        #f9f9f7;
   --surface:     #fcfcfb;
@@ -94,7 +94,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
   padding: 14px 10px; position: sticky; top: 0; height: 100dvh; overflow-y: auto;
   display: flex; flex-direction: column; gap: 2px;
 }
-.brand { display: flex; align-items: center; gap: 9px; padding: 6px 8px 14px; }
+/* The sidebar is the scroll container, so the mark and the name stay put at
+   the top of it — on a phone the drawer's ✕ rides along with them, which is
+   what you reach for after scrolling down a long list. */
+.brand { display: flex; align-items: center; gap: 9px; padding: 6px 8px 14px;
+  position: sticky; top: 0; z-index: 2; background: var(--surface); }
 .brand-mark { width: 30px; height: 30px; border-radius: 9px; display: block; flex: none; }
 .brand-name { font-weight: 700; letter-spacing: -.02em; }
 .brand-sub { font-size: 11px; color: var(--ink-3); }
@@ -134,7 +138,9 @@ main { flex: 1; min-width: 0; padding: 18px 20px 28px; }
   }
   body.drawer-open .drawer-back { opacity: 1; pointer-events: auto; }
   #sidebar .nav-link { padding: 11px 12px; font-size: 15px; }   /* thumb-sized rows */
-  #sidebar .brand { display: flex; align-items: center; gap: 10px; }
+  #sidebar .brand { display: flex; align-items: center; gap: 10px;
+    top: calc(-1 * max(14px, env(safe-area-inset-top)));
+    padding-top: max(14px, env(safe-area-inset-top)); margin-top: calc(-1 * max(14px, env(safe-area-inset-top))); }
 }
 @media (prefers-reduced-motion: reduce) {
   #sidebar, .drawer-back { transition: none; }
