@@ -14,7 +14,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.44', date: '2026-09-14' };
+export const BUILD = { version: '1.45', date: '2026-09-14' };
 
 /**
  * `icon` names a mark in js/icons.js; `tint` is the palette token it wears.
@@ -289,7 +289,7 @@ async function ring() {
   chime();
   const lead = fresh[0];
   const rest = fresh.length - 1;
-  toast(`🔔 ${lead.title}${rest ? ` · and ${rest} more` : ''}`, 'warn', 8000,
+  toast(`${lead.title}${rest ? ` · and ${rest} more` : ''}`, 'warn', 8000,
     { label: 'Open', run: () => openBell() });
   if (getSettings().notify_on !== false && 'Notification' in window && Notification.permission === 'granted') {
     try {
@@ -352,7 +352,7 @@ async function renderRoute() {
     if (want) requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, want)));
   } catch (e) {
     console.error(e);
-    main.innerHTML = `<div class="empty"><div class="big">😕</div><p>Could not open <b>${def.title}</b>.</p><p class="small">${e.message}</p></div>`;
+    main.innerHTML = `<div class="empty"><p>Could not open <b>${def.title}</b>.</p><p class="small">${e.message}</p></div>`;
   }
 }
 

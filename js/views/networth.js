@@ -38,15 +38,15 @@ function draw() {
 
   host.append(el('div', { class: 'card', style: 'margin-bottom:12px' },
     el('div', { class: 'stat' },
-      el('div', { class: 'label' }, '🏦 Net worth as of ' + fmtDate(asOf)),
+      el('div', { class: 'label' }, 'Net worth as of ' + fmtDate(asOf)),
       el('div', { class: 'value tnum', style: 'font-size:clamp(26px,6vw,42px)' }, money(nw.total, 'INR', false)),
       el('div', { class: 'sub' }, 'cash + investments + assets − what you owe'))));
 
   host.append(el('div', { class: 'grid g4 keep2' },
-    kpi('💵 Cash & bank', money(nw.cash, 'INR', false)),
-    kpi('📈 Investments', money(nw.investments, 'INR', false)),
-    kpi('🏡 Fixed assets', money(nw.assets, 'INR', false)),
-    kpi('🤝 Lend / borrow', money(nw.lendBorrow, 'INR', false), nw.lendBorrow < 0 ? 'expense' : 'income')));
+    kpi('Cash & bank', money(nw.cash, 'INR', false)),
+    kpi('Investments', money(nw.investments, 'INR', false)),
+    kpi('Fixed assets', money(nw.assets, 'INR', false)),
+    kpi('Lend / borrow', money(nw.lendBorrow, 'INR', false), nw.lendBorrow < 0 ? 'expense' : 'income')));
 
   // ----------------------------------------------------------- the trend --
   const trendCard = el('div', { class: 'card', style: 'margin-top:12px' },
@@ -64,10 +64,10 @@ function draw() {
 
   // ------------------------------------------------------------ build-up --
   const parts = [
-    { label: '💵 Cash & bank', value: nw.cash, color: S.s1 },
-    { label: '📈 Investments', value: nw.investments, color: S.s3 },
-    { label: '🏡 Fixed assets', value: nw.assets, color: S.s2 },
-    { label: '🤝 Owed (net)', value: Math.abs(nw.lendBorrow), color: S.s8 },
+    { label: 'Cash & bank', value: nw.cash, color: S.s1 },
+    { label: 'Investments', value: nw.investments, color: S.s3 },
+    { label: 'Fixed assets', value: nw.assets, color: S.s2 },
+    { label: 'Owed (net)', value: Math.abs(nw.lendBorrow), color: S.s8 },
   ];
   const bcard = el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'What it is made of')));

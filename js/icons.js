@@ -50,10 +50,21 @@ const P = {
   // Half filled, half not — the two themes, in one mark.
   theme:       'M12 3.4a8.6 8.6 0 1 0 0 17.2 8.6 8.6 0 0 0 0-17.2ZM12 3.4v17.2a8.6 8.6 0 0 0 0-17.2Z',
   signout:     'M9.4 20.4H5.6a1.4 1.4 0 0 1-1.4-1.4V5a1.4 1.4 0 0 1 1.4-1.4h3.8M15.2 16.4l4.6-4.4-4.6-4.4M19.8 12H9.4',
+  checkbox:    'M9 12.4l2.2 2.2 4.4-4.4M5.6 3.8h12.8a1.8 1.8 0 0 1 1.8 1.8v12.8a1.8 1.8 0 0 1-1.8 1.8H5.6a1.8 1.8 0 0 1-1.8-1.8V5.6a1.8 1.8 0 0 1 1.8-1.8Z',
+  snooze:      'M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8ZM9.4 9.4h5.2L9.4 14.6h5.2',
+  archive:     'M3.4 4.6h17.2v4H3.4v-4ZM5 8.6v9.8a1.6 1.6 0 0 0 1.6 1.6h10.8a1.6 1.6 0 0 0 1.6-1.6V8.6M9.8 12.4h4.4',
+  link:        'M10 13.6a3.6 3.6 0 0 0 5.4.4l2.8-2.8a3.6 3.6 0 0 0-5.1-5.1l-1.6 1.6M14 10.4a3.6 3.6 0 0 0-5.4-.4l-2.8 2.8a3.6 3.6 0 0 0 5.1 5.1l1.6-1.6',
+  calendar:    'M4.6 5.6h14.8a1 1 0 0 1 1 1v12.8a1 1 0 0 1-1 1H4.6a1 1 0 0 1-1-1V6.6a1 1 0 0 1 1-1ZM3.6 10.2h16.8M8.4 3.4v4.4M15.6 3.4v4.4',
+  sound:       'M11 4.8 6.6 8.6H3.2v6.8h3.4L11 19.2V4.8ZM15.2 9.2a4 4 0 0 1 0 5.6M18.2 6.4a8 8 0 0 1 0 11.2',
+  phone:       'M7.4 2.8h9.2a1.6 1.6 0 0 1 1.6 1.6v15.2a1.6 1.6 0 0 1-1.6 1.6H7.4a1.6 1.6 0 0 1-1.6-1.6V4.4a1.6 1.6 0 0 1 1.6-1.6ZM10.6 18.4h2.8',
   // Stands in for anything the set has no mark for yet, so a missing name
   // shows as a neutral dot rather than an empty hole.
   dot:         'M12 9.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8Z',
 };
+
+/** The handful of marks that read better solid than hollow. */
+const FILLED = new Set(['dotFill']);
+P.dotFill = 'M12 7.6a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8Z';
 
 /**
  * One icon, as an inline SVG that inherits the colour and size around it.
@@ -64,8 +75,8 @@ export function icon(name, size = 20) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('width', size); svg.setAttribute('height', size);
-  svg.setAttribute('fill', 'none');
-  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('fill', FILLED.has(name) ? 'currentColor' : 'none');
+  svg.setAttribute('stroke', FILLED.has(name) ? 'none' : 'currentColor');
   svg.setAttribute('stroke-width', '1.7');
   svg.setAttribute('stroke-linecap', 'round');
   svg.setAttribute('stroke-linejoin', 'round');

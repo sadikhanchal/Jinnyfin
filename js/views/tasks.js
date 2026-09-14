@@ -11,13 +11,21 @@ import { DB, put, remove } from '../store.js';
 import { topbar } from '../app.js';
 import * as A from '../alerts.js';
 import { kpi } from './report.js';
+import { icon } from '../icons.js';
 
 let host = null, filter = 'open';
 
 const REPEATS = [['none', 'Does not repeat'], ['daily', 'Every day'], ['weekly', 'Every week'],
   ['monthly', 'Every month'], ['yearly', 'Every year']];
 const PRIORITY = [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']];
-const PRI_MARK = { high: '🔴', normal: '🔵', low: '⚪' };
+// Priority is a colour, so it is drawn as one — a filled dot that takes the
+// palette's own red, blue and grey.
+const PRI_TINT = { high: '--expense', normal: '--s1', low: '--ink-3' };
+const priMark = p => {
+  const svg = icon('dotFill', 11);
+  svg.style.color = `var(${PRI_TINT[p] || '--s1'})`;
+  return svg;
+};
 
 export async function render(root) { host = root; draw(); }
 export function refresh() { if (host) draw(); }
@@ -102,7 +110,7 @@ function draw() {
         onclick: () => finish(t),
       }, t.done ? '✓' : ''),
       el('div', { style: 'min-width:0;flex:1;cursor:pointer', onclick: () => edit(t) },
-        el('div', { class: 't1' }, PRI_MARK[t.priority] || '🔵', ' ', t.title),
+        el('div', { class: 't1 row', style: 'gap:6px' }, priMark(t.priority), t.title),
         el('div', { class: 't2' + (overdue ? ' late' : '') },
           dueText(t),
           t.repeat && t.repeat !== 'none' ? ' · ↻ ' + t.repeat : '',
@@ -114,10 +122,10 @@ function draw() {
 
 /** One line in the inbox, with everything you can do to it. */
 export function alertRow(a, after, open) {
-  const ICON = { task: '⏰', policy: '🛡️', doc: '🪪', card: '💳' };
+  const ICON = { task: 'clock', policy: 'shield', doc: 'id', card: 'card' };
   const row = el('div', { class: 'alert-row ' + a.level + (a.read ? '' : ' unread') });
   row.append(
-    el('span', { class: 'ai' }, ICON[a.kind] || '🔔'),
+    el('span', { class: 'ai' }, icon(ICON[a.kind] || 'bell', 17)),
     el('div', { style: 'min-width:0;flex:1;cursor:pointer', onclick: async () => {
       await A.markRead(a.id);
       // Inside the bell panel the sheet has to come down first, or its own
@@ -134,7 +142,7 @@ export function alertRow(a, after, open) {
       el('button', {
         class: 'icon-btn', title: 'Snooze',
         onclick: async e => { e.stopPropagation(); await snoozeMenu(a); after?.(); },
-      }, '💤'),
+      }, icon('snooze', 16)),
       el('button', {
         class: 'icon-btn', title: 'Stop telling me',
         onclick: async () => { await A.dismiss(a.id); toast('Stopped'); after?.(); },

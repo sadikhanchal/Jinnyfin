@@ -7,6 +7,7 @@ import { DB, putMany, remove } from '../store.js';
 import * as C from '../calc.js';
 import { topbar } from '../app.js';
 import { openTxEditor, typeIcon } from './editor.js';
+import { icon } from '../icons.js';
 
 const PAGE = 150;
 const blank = () => ({ text: '', type: 'All', account: 'All', parent: 'All', payee: 'All',
@@ -112,7 +113,7 @@ function draw() {
 
   host.append(topbar('Transactions',
     el('button', { class: 'btn sm' + (picking ? ' primary' : ''),
-      onclick: () => (picking ? stopPicking() : startPicking(null)) }, picking ? 'Done' : '☑ Select'),
+      onclick: () => (picking ? stopPicking() : startPicking(null)) }, picking ? 'Done' : '\u2713 Select'),
     el('button', { class: 'btn sm', onclick: () => exportCSV(rows) }, '⬇ CSV'),
     el('button', { class: 'btn sm primary', onclick: () => openTxEditor() }, '+ Add')));
 
@@ -125,7 +126,7 @@ function draw() {
     if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
   }, 280));
   host.append(el('div', { class: 'searchbar' },
-    el('span', { class: 'mag' }, '🔍'), search,
+    el('span', { class: 'mag' }, icon('search', 16)), search,
     f.text ? el('button', { class: 'icon-btn clear', onclick: () => { f.text = ''; shown = PAGE; draw(); } }, '✕') : null));
 
   // ----------------------------------------------------------- filters ----
@@ -200,7 +201,7 @@ function draw() {
         `Show more (${(rows.length - shown).toLocaleString('en-IN')} left)`)));
   }
   if (!rows.length) host.append(el('div', { class: 'empty' },
-    el('div', { class: 'big' }, '🔍'), el('p', {}, 'Nothing matches those filters.')));
+    el('div', { class: 'big' }, icon('search', 40)), el('p', {}, 'Nothing matches those filters.')));
 
   // --------------------------------------------------- selection actions --
   if (picking) {
@@ -253,7 +254,7 @@ export function txRow(t) {
       el('button', { class: 'icon-btn', title: 'Delete', onclick: async e => {
         e.stopPropagation();
         if (await confirmBox('Delete this transaction?')) { await remove('transactions', t.id); toast('Deleted'); draw(); }
-      } }, '🗑')));
+      } }, icon('trash', 16))));
 
   // Behind the row: duplicate and delete, revealed by swiping left.
   const behind = el('div', { class: 'tx-behind' },
@@ -263,7 +264,7 @@ export function txRow(t) {
         e.stopPropagation();
         if (await confirmBox('Delete this transaction?')) { await remove('transactions', t.id); toast('Deleted'); draw(); }
       },
-    }, '🗑'));
+    }, icon('trash', 16)));
 
   const slot = el('div', { class: 'tx-slot' }, behind, row);
   const toggle = () => { picked.has(t.id) ? picked.delete(t.id) : picked.add(t.id); draw(); };

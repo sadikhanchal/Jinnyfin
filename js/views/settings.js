@@ -13,6 +13,7 @@ import { topbar, toggleTheme, BUILD, askSignOut } from '../app.js';
 import { CONFIG } from '../../config.js';
 import { kpi } from './report.js';
 import { openTxEditor } from './editor.js';
+import { icon } from '../icons.js';
 
 let tab = 'general', host = null;
 let showInactive = false;      // closed accounts stay out of the way by default
@@ -412,7 +413,7 @@ function categories() {
               await putMany('categories', list.map(c => ({ ...c, active: !live })));
               toast(live ? `${parent} archived` : `${parent} is back`);
               draw();
-            } }, live ? '🗄' : '↩'),
+            } }, live ? icon('archive', 15) : '\u21A9'),
           el('button', { class: 'icon-btn', title: 'Add a sub-category',
             onclick: () => editCat({ type, parent, sub: null }) }, '+')),
         subs.length ? el('div', { class: 'pill-list', style: 'margin-top:5px' },

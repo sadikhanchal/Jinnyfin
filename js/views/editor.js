@@ -12,8 +12,16 @@ import { fxFor, currencyOf, convertAmount, parentsFor, subsFor, parentsOfSub, pa
 const TYPES = ['Expense', 'Income', 'Transfer', 'Lend/Borrow', 'Investment'];
 const ICON = { Expense: 'spend', Income: 'earn', Transfer: 'swap', 'Lend/Borrow': 'hands',
   Investment: 'chartUp', 'Opening Balance': 'flag' };
+// The same red and green the amounts use — so the mark on a row and the figure
+// beside it are saying one thing, not two.
+const TINT = { Expense: '--expense', Income: '--income', Transfer: '--s1',
+  'Lend/Borrow': '--s4', Investment: '--s7', 'Opening Balance': '--ink-3' };
 /** The mark for an entry type. An element, not text — it must be appended. */
-export const typeIcon = (t, size = 18) => icon(ICON[t] || 'dot', size);
+export const typeIcon = (t, size = 18) => {
+  const svg = icon(ICON[t] || 'dot', size);
+  if (TINT[t]) svg.style.color = `var(${TINT[t]})`;
+  return svg;
+};
 
 // ── the two types whose categories are a closed set ────────────────────────
 // Free text there only invites typos, and a wrong sub-category silently flips
@@ -548,7 +556,7 @@ export function openTxEditor(existing = null, presets = {}) {
     else { add('Payee / tag', payeeIn, '', payeeChip); add('Event', eventIn, '', eventChip); }
     add('Description', noteIn, 'full');
     if (type === 'Transfer' && !linked && !isNew) {
-      form.append(el('div', { class: 'full alert soon' }, el('span', { class: 'ico' }, '🔗'),
+      form.append(el('div', { class: 'full alert soon' }, el('span', { class: 'ico' }, icon('link', 16)),
         el('div', {}, (CONFIG.DEMO
           ? 'This sample transfer is not tied to its other half. '
           : 'This transfer was brought in from the workbook and is not tied to its other half. ')
@@ -577,7 +585,7 @@ export function openTxEditor(existing = null, presets = {}) {
       subIn.value = home ? (t.sub || '') : '';
       layout();
     }, dataset: { ty } },
-      el('span', { class: 'ti' }, icon(ICON[ty], 19)),
+      el('span', { class: 'ti' }, typeIcon(ty, 19)),
       // "Lend" alone was a lie on half the rows filed under it — the type is
       // Lend/Borrow, and the button now says so. It wraps to two lines on a
       // phone rather than being cut, because a truncated type is a guess.

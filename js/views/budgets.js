@@ -9,6 +9,7 @@ import * as C from '../calc.js';
 import { SERIES } from '../charts.js';
 import { topbar } from '../app.js';
 import { kpi } from './report.js';
+import { icon } from '../icons.js';
 
 const now = new Date();
 let year = String(now.getFullYear()), month = String(now.getMonth() + 1), host = null;
@@ -31,7 +32,7 @@ function draw() {
 
   const rows = C.budgetStatus(year, month);
   if (!rows.length) {
-    host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, '🎯'),
+    host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, icon('target', 40)),
       el('p', {}, 'No budgets yet. Set a monthly ceiling on the categories that run away from you.'),
       el('button', { class: 'btn primary', onclick: () => edit() }, 'Set the first budget')));
     return;

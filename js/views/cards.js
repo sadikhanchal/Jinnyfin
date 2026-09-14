@@ -9,6 +9,7 @@ import { el, modal, toast, confirmBox, fmtDate, todayISO, daysBetween, dismissOn
 import { DB, put, remove } from '../store.js';
 import { encryptJSON, decryptJSON, maskCard, groupCard, last4, luhnValid, cardNetwork } from '../crypto.js';
 import { topbar } from '../app.js';
+import { icon } from '../icons.js';
 
 let host = null;
 let sessionPin = null;                 // held in memory only, cleared on reload
@@ -30,7 +31,7 @@ function draw() {
     'leaving it blank costs you almost nothing in day-to-day use.'));
 
   if (!DB.cards.length) {
-    host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, '💳'),
+    host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, icon('card', 40)),
       el('p', {}, 'No cards saved yet.'),
       el('button', { class: 'btn primary', onclick: () => edit() }, 'Add a card')));
     return;
@@ -46,7 +47,7 @@ function draw() {
         el('span', {}, c.bank || ''),
         el('span', {}, c.expiry_hint ? 'exp ' + c.expiry_hint : '')));
     const actions = el('div', { class: 'row', style: 'margin-top:8px' },
-      el('button', { class: 'btn sm', onclick: () => reveal(c, face) }, '👁 Reveal'),
+      el('button', { class: 'btn sm', onclick: () => reveal(c, face) }, icon('id', 15), ' Reveal'),
       el('button', { class: 'btn sm ghost', onclick: () => edit(c) }, '✎ Edit'));
     if (c.expiry_hint) {
       const [mm, yy] = c.expiry_hint.split('/').map(s => s.trim());
@@ -68,7 +69,7 @@ async function askPin(reason = 'Enter your vault PIN') {
     const pin = el('input', { type: 'password', inputmode: 'numeric', placeholder: '••••••',
       style: 'text-align:center;font-size:22px;letter-spacing:.4em' });
     const remember = el('input', { type: 'checkbox', checked: true });
-    const m = modal('🔐 Vault PIN', el('div', { class: 'grid', style: 'gap:10px' },
+    const m = modal('Vault PIN', el('div', { class: 'grid', style: 'gap:10px' },
       el('p', { class: 'small muted' }, reason + '. This PIN is not stored anywhere — if you forget it the card data cannot be recovered.'),
       pin,
       el('label', { class: 'row small', style: 'gap:8px' }, remember, ' keep it unlocked until I close the app')),

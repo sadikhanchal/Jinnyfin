@@ -9,6 +9,7 @@ import * as C from '../calc.js';
 import { topbar } from '../app.js';
 import { kpi } from './report.js';
 import * as P from '../push.js';
+import { icon } from '../icons.js';
 
 let host = null;
 
@@ -47,17 +48,19 @@ function draw() {
 
   // Three things expire in this house: policies, papers, and plastic. Each gets
   // its own heading and its own Add, so nothing has to be hunted for.
-  section('🛡️', 'Insurance policies', rows.filter(r => r.kind !== 'document'),
+  section('shield', 'Insurance policies', rows.filter(r => r.kind !== 'document'),
     'No policies yet.', () => edit(null, 'insurance'));
-  section('🪪', 'ID & Documents', rows.filter(r => r.kind === 'document'),
+  section('id', 'ID & Documents', rows.filter(r => r.kind === 'document'),
     'No documents yet — Iqama, passport, licence.', () => edit(null, 'document'));
   cardSection(cards);
 }
 
 /** One headed block of expiring things. */
-function section(icon, title, list, empty, add) {
+// `mark` is an icon NAME, not the icon function — naming the parameter `icon`
+// would shadow the import and print the name as text.
+function section(mark, title, list, empty, add) {
   const head = el('div', { class: 'card-head', style: 'margin:18px 0 8px' },
-    el('h3', {}, icon + '  ' + title),
+    el('h3', { class: 'row', style: 'gap:8px' }, icon(mark, 17), title),
     el('div', { class: 'spacer' }),
     el('button', { class: 'btn sm', onclick: add }, '+ Add'));
   host.append(head);
@@ -101,7 +104,7 @@ function cardDue(c) {
 /** The cards, by when they run out. The numbers stay locked in the vault. */
 function cardSection(cards) {
   host.append(el('div', { class: 'card-head', style: 'margin:18px 0 8px' },
-    el('h3', {}, '💳  ATM Cards'),
+    el('h3', { class: 'row', style: 'gap:8px' }, icon('card', 17), 'ATM Cards'),
     el('div', { class: 'spacer' }),
     el('button', { class: 'btn sm', onclick: () => { location.hash = '#/cards'; } }, 'Open vault')));
   if (!cards.length) {
@@ -146,7 +149,7 @@ function pushRow() {
   const row = el('div', { class: 'row switch-row', style: 'margin-top:8px' });
   const body = el('div', { style: 'min-width:0;flex:1' });
   const acts = el('div', { class: 'row', style: 'gap:6px' });
-  row.append(el('span', {}, '📲'), body, el('div', { class: 'spacer' }), acts);
+  row.append(el('span', { class: 'row' }, icon('phone', 17)), body, el('div', { class: 'spacer' }), acts);
 
   const paint = async () => {
     body.replaceChildren(el('b', {}, 'Push to this device'));
@@ -164,7 +167,7 @@ function pushRow() {
       say('On. Reminders reach this device even when Jinnyfin is closed.');
       acts.append(el('button', { class: 'btn sm', onclick: async () => {
         const r = await P.test();
-        toast(r.ok ? '📲 ' + r.why : r.why, r.ok ? 'ok' : 'warn', 7000);
+        toast(r.why, r.ok ? 'ok' : 'warn', 7000);
       } }, 'Test'),
       el('button', { class: 'btn sm ghost', onclick: async () => {
         if (!(await confirmBox('Stop sending notifications to this device?'))) return;
@@ -225,7 +228,7 @@ function notifyCard() {
 
   const card = el('div', { class: 'card tight' });
   card.append(el('label', { class: 'row switch-row', style: 'cursor:pointer' },
-    el('span', {}, '🔔'),
+    el('span', { class: 'row' }, icon('bell', 17)),
     el('div', { style: 'min-width:0' }, el('b', {}, 'Renewal reminders'),
       el('div', { class: 'small muted' },
         !on ? 'Off — nothing will be announced until you switch this back on.'
@@ -236,7 +239,7 @@ function notifyCard() {
     el('div', { class: 'spacer' }), sw));
 
   card.append(el('label', { class: 'row switch-row', style: 'cursor:pointer;margin-top:8px' },
-    el('span', {}, '🔊'),
+    el('span', { class: 'row' }, icon('sound', 17)),
     el('div', { style: 'min-width:0' }, el('b', {}, 'Sound'),
       el('div', { class: 'small muted' }, 'A short chime when a reminder rings inside the app.')),
     el('div', { class: 'spacer' }), sndSw));
@@ -264,7 +267,7 @@ function notifyCard() {
           if (reg) reg.showNotification('Jinnyfin · ' + head.text, opts);
           else new Notification('Jinnyfin · ' + head.text, opts);
         }
-        toast('🔔 ' + head.text + ' — ' + body, 'ok', 6000);
+        toast(head.text + ' — ' + body, 'ok', 6000);
       },
     }, 'Test it'));
   }
@@ -343,7 +346,7 @@ function edit(p = null, startKind = 'insurance') {
     }
     for (const f of files) {
       fileList.append(el('div', { class: 'file-row' },
-        el('span', {}, /pdf/i.test(f.type || '') ? '📄' : '🖼'),
+        el('span', { class: 'row' }, icon('doc', 16)),
         el('span', { class: 'file-name' }, f.name),
         el('span', { class: 'small muted' }, F.prettySize(f.size || 0)),
         el('button', { type: 'button', class: 'btn xs', onclick: () => openFile(f) }, 'Open'),

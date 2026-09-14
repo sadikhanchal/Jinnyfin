@@ -9,6 +9,7 @@ import * as C from '../calc.js';
 import { topbar } from '../app.js';
 import { openTxEditor, typeIcon } from './editor.js';
 import { kpi } from './report.js';
+import { icon } from '../icons.js';
 
 let f = { account: '', tag: '', from: '', to: '', month: 'All', year: 'All' };
 let host = null, showClosed = false;
@@ -133,7 +134,7 @@ function drawList() {
       tb.append(el('tr', { style: 'cursor:pointer', onclick: () => openThing('tag', h.tag) },
         el('td', {}, h.name, el('div', { class: 'small muted' }, entries(h.L.total))),
         el('td', { class: 'n muted' }, money(h.L.inSum, 'INR', false)),
-        el('td', { class: 'n' }, money(h.L.closing, 'INR', false))));
+        el('td', { class: 'n ' + (h.L.closing < 0 ? 'neg' : '') }, money(h.L.closing, 'INR', false))));
     }
     t.append(tb);
     cards.push(el('div', { class: 'card', style: 'margin-bottom:12px' },
@@ -200,7 +201,7 @@ function drawHolding() {
 
   host.append(topbar(h.name,
     el('button', { class: 'btn sm ghost', onclick: () => openThing('') }, '← All accounts'),
-    el('button', { class: 'btn sm', onclick: () => printHolding(h, L, from, to) }, '🧾 Print / PDF'),
+    el('button', { class: 'btn sm', onclick: () => printHolding(h, L, from, to) }, icon('receipt', 15), ' Print / PDF'),
     el('button', { class: 'btn sm', onclick: () => exportHolding(h, L) }, '⬇ CSV')));
 
   host.append(periodFilters());
@@ -236,7 +237,7 @@ function drawHolding() {
   // so it gets a line of its own — otherwise the balance looks unexplained.
   if (L.priorCost) {
     list.append(el('div', { class: 'tx' },
-      el('div', { class: 'av' }, '🏁'),
+      el('div', { class: 'av' }, icon('flag', 18)),
       el('div', { style: 'min-width:0' },
         el('div', { class: 't1' }, 'Cost before this ledger began'),
         el('div', { class: 't2' }, 'Opening cost on the asset')),
@@ -253,9 +254,9 @@ function drawHolding() {
     tb.append(el('tr', { style: 'cursor:pointer', onclick: () => openTxEditor(r) },
       el('td', {}, fmtDate(r.date)), el('td', {}, r.account || ''), el('td', {}, r.sub || r.type),
       el('td', { class: 'wrap' }, r.note || ''),
-      el('td', { class: 'n' }, d > 0 ? num(d) : ''),
-      el('td', { class: 'n' }, d < 0 ? num(-d) : ''),
-      el('td', { class: 'n' }, num(r.balance))));
+      el('td', { class: 'n in' }, d > 0 ? num(d) : ''),
+      el('td', { class: 'n out' }, d < 0 ? num(-d) : ''),
+      el('td', { class: 'n ' + (r.balance < 0 ? 'neg' : '') }, num(r.balance))));
   }
   // Oldest last, so the carried-in cost sits under everything it paid for.
   if (L.priorCost) tb.append(el('tr', { class: 'total' },
@@ -270,7 +271,7 @@ function drawHolding() {
     list, el('div', { class: 'table-wrap stmt-table', style: 'max-height:70vh;overflow:auto' }, t)));
 
   if (!L.total && !L.priorCost) host.append(el('div', { class: 'empty' },
-    el('div', { class: 'big' }, '📄'), el('p', {}, 'Nothing in this period.')));
+    el('div', { class: 'big' }, icon('doc', 40)), el('p', {}, 'Nothing in this period.')));
 }
 
 function printHolding(h, L, from, to) {
@@ -328,7 +329,7 @@ function drawOne() {
 
   host.append(topbar(st.account,
     el('button', { class: 'btn sm ghost', onclick: () => openThing('') }, '← All accounts'),
-    el('button', { class: 'btn sm', onclick: () => printOne(st) }, '🧾 Print / PDF'),
+    el('button', { class: 'btn sm', onclick: () => printOne(st) }, icon('receipt', 15), ' Print / PDF'),
     el('button', { class: 'btn sm', onclick: () => exportCSV(st) }, '⬇ CSV')));
 
   host.append(periodFilters());
@@ -347,7 +348,7 @@ function drawOne() {
     el('div', { class: 'stmt-list' }, ...listRows(st, openingRow)),
     el('div', { class: 'table-wrap stmt-table', style: 'max-height:70vh;overflow:auto' }, tableOf(st, openingRow))));
 
-  if (!st.rows.length && !openingRow) host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, '🧾'), el('p', {}, 'No entries in this period.')));
+  if (!st.rows.length && !openingRow) host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, icon('receipt', 40)), el('p', {}, 'No entries in this period.')));
 }
 
 // ------------------------------------------------------------ phone layout --
@@ -395,8 +396,8 @@ function tableOf(st, openingRow) {
         typeIcon(r.type, 16), r.type)),
       el('td', {}, [r.parent, r.sub].filter(Boolean).join(' · ')),
       el('td', { class: 'wrap' }, r.note || ''),
-      el('td', { class: 'n' }, r.income ? num(r.income) : ''),
-      el('td', { class: 'n' }, r.expense ? num(r.expense) : ''),
+      el('td', { class: 'n in' }, r.income ? num(r.income) : ''),
+      el('td', { class: 'n out' }, r.expense ? num(r.expense) : ''),
       el('td', { class: 'n ' + (r.balance < 0 ? 'neg' : '') }, num(r.balance))));
   }
   t.append(tb);

@@ -62,7 +62,7 @@ function draw() {
       segment([{ v: 'total', t: 'Biggest' }, { v: 'name', t: 'A–Z' }], sortBy, v => { sortBy = v; draw(); }))));
 
   const periodLabel = p.from ? `${fmtDate(p.from)} → ${fmtDate(p.to || todayISO())}` : 'All periods';
-  host.append(el('p', { class: 'small muted', style: 'margin:-4px 0 10px' }, '📅 ' + periodLabel));
+  host.append(el('p', { class: 'small muted', style: 'margin:-4px 0 10px' }, periodLabel));
 
   host.append(el('div', { class: 'grid g3' },
     kpi('▲ Total income (≈ INR)', money(res.income.equiv, 'INR', false), 'income'),
@@ -94,11 +94,12 @@ function draw() {
   const tb = el('tbody');
   for (const r of rows) {
     tb.append(el('tr', {}, el('td', {}, r.name),
-      el('td', { class: 'n' }, r.incSAR ? num(r.incSAR) : '–'),
-      el('td', { class: 'n' }, r.incINR ? num(r.incINR) : '–'),
-      el('td', { class: 'n' }, r.expSAR ? num(r.expSAR) : '–'),
-      el('td', { class: 'n' }, r.expINR ? num(r.expINR) : '–'),
-      el('td', { class: 'n' }, num(r.equiv))));
+      // The dash is an absence, not an amount — it stays grey.
+      el('td', { class: r.incSAR ? 'n in' : 'n muted' }, r.incSAR ? num(r.incSAR) : '–'),
+      el('td', { class: r.incINR ? 'n in' : 'n muted' }, r.incINR ? num(r.incINR) : '–'),
+      el('td', { class: r.expSAR ? 'n out' : 'n muted' }, r.expSAR ? num(r.expSAR) : '–'),
+      el('td', { class: r.expINR ? 'n out' : 'n muted' }, r.expINR ? num(r.expINR) : '–'),
+      el('td', { class: 'n ' + (r.equiv < 0 ? 'neg' : '') }, num(r.equiv))));
   }
   t.append(tb);
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },

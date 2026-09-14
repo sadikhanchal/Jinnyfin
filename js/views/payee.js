@@ -11,6 +11,7 @@ import { topbar } from '../app.js';
 import { openTxEditor } from './editor.js';
 import { kpi } from './report.js';
 import { printStatement, printDate } from './printable.js';
+import { icon } from '../icons.js';
 
 let selected = null, showSettled = false, host = null;
 const range = { from: '', to: '' };
@@ -204,9 +205,13 @@ function ledgerCard(lb) {
       el('td', {}, [r.parent, r.sub].filter(Boolean).join(' · ')),
       el('td', { class: 'wrap' }, r.note || ''),
       ...(L.mixed ? [el('td', {}, r.currency || 'SAR')] : []),
-      el('td', { class: 'n' }, r.income ? num(r.income) : ''),
-      el('td', { class: 'n' }, r.expense ? num(r.expense) : ''),
-      el('td', { class: 'n' }, num(r.balance))));
+      el('td', { class: 'n in' }, r.income ? num(r.income) : ''),
+      el('td', { class: 'n out' }, r.expense ? num(r.expense) : ''),
+      // On this page a balance is a debt, not an account: above zero means you
+      // owe it. So it follows the same reading as the Payee balances table —
+      // red for what you owe, green for what is owed to you — rather than the
+      // plain "below zero is red" an account statement uses.
+      el('td', { class: 'n ' + (r.balance > 0 ? 'neg' : r.balance < 0 ? 'pos' : '') }, num(r.balance))));
   }
   lt.append(ltb);
 
@@ -231,7 +236,7 @@ function ledgerCard(lb) {
     periodRow,
     totals,
     el('div', { class: 'row gap wrap', style: 'margin:6px 0 10px' },
-      el('button', { class: 'btn sm primary', onclick: () => printStatementFor(L) }, '🧾 Statement (print / PDF)'),
+      el('button', { class: 'btn sm primary', onclick: () => printStatementFor(L) }, icon('receipt', 15), ' Statement (print / PDF)'),
       el('button', { class: 'btn sm', onclick: () => statementCSV(L) }, '⬇ CSV'),
       el('span', { class: 'small muted' },
         `${L.rows.length} of ${L.total} entries${range.from || range.to ? ' in this period' : ''}`)),

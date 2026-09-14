@@ -8,6 +8,7 @@ import * as C from '../calc.js';
 import { groupedBars, lineChart, barList, SERIES } from '../charts.js';
 import { topbar, go } from '../app.js';
 import { openTxEditor, fireTemplate, typeIcon } from './editor.js';
+import { icon } from '../icons.js';
 
 // Opening the app should answer "how is this month going", not "how have the
 // last eight years gone" — the period starts at today and widens if you ask.
@@ -29,7 +30,7 @@ function draw() {
 
   host.innerHTML = '';
   host.append(topbar('Dashboard',
-    el('button', { class: 'btn sm', onclick: () => go('insurance') }, '🛡️ Policies')));
+    el('button', { class: 'btn sm', onclick: () => go('insurance') }, icon('shield', 16), ' Policies')));
 
   // ---- insurance headline (mirrors Dashboard I1 / O1) --------------------
   const alertBox = el('div', { class: 'alert ' + head.level },
@@ -61,11 +62,11 @@ function draw() {
 
   // ---- four headline tiles ------------------------------------------------
   const tiles = el('div', { class: 'grid g4 keep2' },
-    tile('💵 Total income', money(tot.incomeINR, 'INR', false), `${money(tot.incomeSAR, 'SAR', false)} earned in SAR`, 'income'),
-    tile('💸 Total expenses', money(tot.expenseINR, 'INR', false), `${money(tot.expenseSAR, 'SAR', false)} spent in SAR`, 'expense'),
-    tile('📊 Net savings', money(tot.netINR, 'INR', false),
+    tile('Total income', money(tot.incomeINR, 'INR', false), `${money(tot.incomeSAR, 'SAR', false)} earned in SAR`, 'income'),
+    tile('Total expenses', money(tot.expenseINR, 'INR', false), `${money(tot.expenseSAR, 'SAR', false)} spent in SAR`, 'expense'),
+    tile('Net savings', money(tot.netINR, 'INR', false),
       `${(tot.savingsRate * 100).toFixed(1)}% of income kept`, tot.netINR >= 0 ? '' : 'expense'),
-    tile('🏦 Net worth', money(nw.total, 'INR', false), 'as of ' + fmtDate(todayISO())));
+    tile('Net worth', money(nw.total, 'INR', false), 'as of ' + fmtDate(todayISO())));
   host.append(tiles);
 
   // ---- income / expense by source ----------------------------------------
@@ -197,7 +198,7 @@ function recentCard() {
         (isIn ? '+' : '−') + money(isIn ? t.income : t.expense, t.currency))));
   }
   if (!recent.length) list.append(el('div', { class: 'empty' },
-    el('div', { class: 'big' }, '📒'), el('p', {}, 'No transactions yet.'),
+    el('div', { class: 'big' }, icon('ledger', 40)), el('p', {}, 'No transactions yet.'),
     el('button', { class: 'btn primary', onclick: () => openTxEditor() }, 'Add the first one')));
   card.append(list);
   return card;

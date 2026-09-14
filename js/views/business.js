@@ -10,6 +10,7 @@ import { groupedBars, SERIES } from '../charts.js';
 import { topbar } from '../app.js';
 import { openTxEditor } from './editor.js';
 import { kpi } from './report.js';
+import { icon } from '../icons.js';
 
 let pick = 0, f = { year: 'All', month: 'All' };
 let host = null;
@@ -24,7 +25,7 @@ function draw() {
     el('button', { class: 'btn sm', onclick: editBusiness }, '+ Business')));
 
   if (!DB.businesses.length) {
-    host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, '📊'),
+    host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, icon('bars', 40)),
       el('p', {}, 'No businesses set up yet.'),
       el('button', { class: 'btn primary', onclick: editBusiness }, 'Add one')));
     return;
@@ -121,10 +122,11 @@ function draw() {
     el('th', { class: 'n' }, 'Expense'), el('th', { class: 'n' }, 'Net profit'))));
   const ytb = el('tbody');
   for (const y of pl.byYear) ytb.append(el('tr', {}, el('td', {}, y.year),
-    el('td', { class: 'n' }, num(y.income)), el('td', { class: 'n' }, num(y.expense)),
+    el('td', { class: 'n in' }, num(y.income)), el('td', { class: 'n out' }, num(y.expense)),
     el('td', { class: 'n ' + (y.net >= 0 ? 'pos' : 'neg') }, num(y.net))));
-  ytb.append(el('tr', { class: 'total' }, el('td', {}, 'TOTAL'), el('td', { class: 'n' }, num(pl.income.equiv)),
-    el('td', { class: 'n' }, num(pl.expense.equiv)), el('td', { class: 'n' }, num(pl.netEquiv))));
+  ytb.append(el('tr', { class: 'total' }, el('td', {}, 'TOTAL'), el('td', { class: 'n in' }, num(pl.income.equiv)),
+    el('td', { class: 'n out' }, num(pl.expense.equiv)),
+    el('td', { class: 'n ' + (pl.netEquiv < 0 ? 'neg' : '') }, num(pl.netEquiv))));
   yt.append(ytb);
 
   const dt = el('table');
@@ -135,8 +137,8 @@ function draw() {
     dtb.append(el('tr', { style: 'cursor:pointer', onclick: () => openTxEditor(r) },
       el('td', {}, fmtDate(r.date)), el('td', {}, r.account),
       el('td', {}, [r.parent, r.sub].filter(Boolean).join(' · ')),
-      el('td', { class: 'n' }, r.income ? num(r.income) + ' ' + r.currency : ''),
-      el('td', { class: 'n' }, r.expense ? num(r.expense) + ' ' + r.currency : ''),
+      el('td', { class: 'n in' }, r.income ? num(r.income) + ' ' + r.currency : ''),
+      el('td', { class: 'n out' }, r.expense ? num(r.expense) + ' ' + r.currency : ''),
       el('td', { class: 'wrap' }, r.note || '')));
   }
   dt.append(dtb);

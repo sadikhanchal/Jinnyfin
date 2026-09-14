@@ -9,7 +9,7 @@
      you whether this device is holding an old stylesheet, so it is bumped with
      every release — not only when the stylesheet itself changes, or the check
      cries wolf. */
-  --jf-css: "1.44";
+  --jf-css: "1.45";
   color-scheme: light;
   --page:        #f9f9f7;
   --surface:     #fcfcfb;
@@ -197,6 +197,12 @@ main { flex: 1; min-width: 0; padding: 18px 20px 28px; }
 .stat.income .value { color: var(--income); }
 .stat.expense .value { color: var(--expense); }
 .pos { color: var(--good-text); } .neg { color: var(--critical); }
+/* One rule for money, everywhere it is written down: what came in is green,
+   what went out is red, and a balance is plain ink until it goes below zero.
+   Tables said none of this before — the same figure read differently on the
+   statement than it did on the row it came from. */
+.n.in  { color: var(--income); }
+.n.out { color: var(--expense); }
 .tnum { font-variant-numeric: tabular-nums; }
 
 /* --------------------------------------------------------------- alerts */
@@ -514,6 +520,7 @@ td.wrap { white-space: normal; min-width: 200px; }
   .type-pick .tl { font-size: 13.5px; }
 }
 .type-pick button.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.type-pick button.on .ic { color: #fff !important; }
 .amount-in { font-size: 22px !important; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
 /* The second amount box sits a shade quieter than the one you actually typed. */
 .field.full > .amount-in ~ .hint { margin-top: 3px; }

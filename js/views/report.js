@@ -193,8 +193,8 @@ export function makeReport(kind) {
       tb.append(el('tr', { style: 'cursor:pointer', onclick: () => openTxEditor(r) },
         el('td', {}, fmtDate(r.date)), el('td', {}, r.account),
         el('td', {}, r.parent || ''), el('td', {}, r.sub || ''),
-        el('td', { class: 'n' }, r.currency === 'SAR' ? num(amt) : ''),
-        el('td', { class: 'n' }, r.currency !== 'SAR' ? num(amt) : ''),
+        el('td', { class: 'n ' + (isIncome ? 'in' : 'out') }, r.currency === 'SAR' ? num(amt) : ''),
+        el('td', { class: 'n ' + (isIncome ? 'in' : 'out') }, r.currency !== 'SAR' ? num(amt) : ''),
         el('td', { class: 'wrap' }, r.note || '')));
     }
     t.append(tb);
