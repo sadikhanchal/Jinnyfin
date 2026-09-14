@@ -251,22 +251,30 @@ export const badYear = v => !!v && +String(v).slice(0, 4) < 1000;
  *
  * Without this, typing the "2" of 2026 hands over the year 2, the screen
  * redraws, and the box being typed into is destroyed with the keyboard still in
- * it — on a PC that means reaching for the mouse to get back in. `commit` is
- * called only for a date worth acting on, and again on the way out of the box.
+ * it — on a PC that means reaching for the mouse to get back in. `badYear`
+ * alone only catches that one case, though: retyping the DAY of a box that
+ * already holds a real date (month and year both already valid) forms a
+ * complete, in-range date on the very first keystroke — day 1 of the month
+ * already showing — so the box still redraws itself away mid-digit, just one
+ * digit later. A short pause after the last keystroke, instead of acting on
+ * every one, is what a text field's own debounce would give it; a date field
+ * has no such thing, so this gives it one. Leaving the box still commits at
+ * once, same as before — only mid-typing waits.
  *
  * Pass a `key` and the screen can hand the cursor back afterwards with
  * restoreDateFocus(host).
  */
 export function dateGuard(input, commit, key = null) {
   if (key) input.dataset.dk = key;
-  const apply = () => {
+  let timer = 0;
+  const fire = () => {
     const v = input.value;
     if (badYear(v)) return;                     // still mid-year, leave it alone
     if (key) pendingDateFocus = key;
     commit(v);
   };
-  input.onchange = apply;
-  input.onblur = apply;                         // committed by leaving the box
+  input.onchange = () => { clearTimeout(timer); timer = setTimeout(fire, 450); };
+  input.onblur = () => { clearTimeout(timer); fire(); };   // committed by leaving the box
   return input;
 }
 
@@ -310,6 +318,94 @@ export function restoreFilterFocus(host) {
   if (!pendingFilterFocus || !host) return;
   const key = pendingFilterFocus; pendingFilterFocus = null;
   requestAnimationFrame(() => host.querySelector(`select[data-fk="${key}"]`)?.focus({ preventScroll: true }));
+}
+
+// ------------------------------------------------------ search combo box --
+/**
+ * A text box that picks from a fixed list — a `<select>` a person can type
+ * into.
+ *
+ * A native select only jumps to an option whose FIRST letter matches what you
+ * type, so "Al Rajhi" needs an "A", not an "R" — typing the word you actually
+ * remember does nothing. This matches on the start of ANY word in an option,
+ * so "Rajhi" and "Al" both find it.
+ *
+ * The box behaves like a real field: `.value` gets and sets the chosen value
+ * without opening the list or firing `change` (same as a select's `.value =`),
+ * `.addEventListener('change', …)` fires only for a person's own choice, and
+ * `.setOptions(list)` replaces what it offers — call it again whenever the
+ * list changes, the way a select's options are rebuilt today.
+ *
+ * `list` entries are `{ value, label, search }` — `search` is what typing is
+ * matched against (the plain account name); `label` is what the closed list
+ * shows (name plus currency, "(idle)", and so on).
+ */
+export function searchSelect(list = []) {
+  const wrap = el('div', { class: 'combo' });
+  const input = el('input', { type: 'text', autocomplete: 'off', style: 'width:100%' });
+  const menu = el('div', { class: 'combo-list', hidden: true });
+  wrap.append(input, menu);
+
+  let options = list;
+  let current = '';                 // the committed value
+  let hi = -1;                      // index into `visible`, while the list is open
+  let visible = [];
+
+  const labelOf = v => options.find(o => o.value === v)?.label ?? '';
+  const commit = (v, fire) => {
+    current = v; input.value = labelOf(v);
+    if (fire) wrap.dispatchEvent(new Event('change'));
+  };
+
+  const render = () => {
+    menu.innerHTML = '';
+    if (!visible.length) { menu.append(el('div', { class: 'combo-empty' }, 'No match')); return; }
+    visible.forEach((o, i) => menu.append(el('div', {
+      class: 'combo-opt' + (i === hi ? ' hi' : ''),
+      // A click already has the value; blur must not run first and revert it.
+      onmousedown: e => e.preventDefault(),
+      onclick: () => { commit(o.value, true); close(); },
+    }, o.label)));
+  };
+
+  const place = () => {
+    const r = input.getBoundingClientRect();
+    Object.assign(menu.style, { left: r.left + 'px', top: r.bottom + 'px', width: r.width + 'px' });
+  };
+
+  const open = q => {
+    const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    visible = !words.length ? options
+      : options.filter(o => words.every(w => o.search.toLowerCase().split(/\s+/).some(part => part.startsWith(w))));
+    hi = visible.length ? 0 : -1;
+    if (menu.hidden) window.addEventListener('scroll', place, true);
+    place(); menu.hidden = false; render();
+  };
+  const close = () => {
+    if (!menu.hidden) window.removeEventListener('scroll', place, true);
+    menu.hidden = true; visible = []; hi = -1;
+  };
+
+  input.addEventListener('focus', () => { input.select(); open(''); });
+  input.addEventListener('input', () => open(input.value));
+  input.addEventListener('blur', () => {
+    // Leaving without finishing a pick — put back what was actually chosen,
+    // so a half-typed search never sits in the field as if it meant something.
+    close(); input.value = labelOf(current);
+  });
+  input.addEventListener('keydown', e => {
+    if (menu.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { open(input.value); return; }
+    if (menu.hidden) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); hi = Math.min(hi + 1, visible.length - 1); render(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); hi = Math.max(hi - 1, 0); render(); }
+    else if (e.key === 'Enter') { if (visible[hi]) { e.preventDefault(); commit(visible[hi].value, true); close(); } }
+    else if (e.key === 'Escape') { close(); input.value = labelOf(current); }
+    else if (e.key === 'Tab' && visible.length === 1) { commit(visible[0].value, true); close(); }
+  });
+
+  Object.defineProperty(wrap, 'value', { get: () => current, set: v => commit(v, false) });
+  wrap.setOptions = newList => { options = newList; if (!menu.hidden) open(input.value); else input.value = labelOf(current); };
+  return wrap;
 }
 
 export function confirmBox(msg, okLabel = 'Yes, do it') {

@@ -1,7 +1,7 @@
 // ============================================================================
 //  statement.js — account statement with a running balance.
 // ============================================================================
-import { el, money, num, fmtDate, MONTHS, downloadCSV, todayISO, endOfMonth,
+import { el, money, num, fmtDate, MONTHS, downloadCSV, todayISO, endOfMonth, iso,
   dateGuard, restoreDateFocus, onFilter, restoreFilterFocus } from '../util.js';
 import { printStatement, printDate } from './printable.js';
 import { DB } from '../store.js';
@@ -314,6 +314,17 @@ function drawOne() {
     else { from = `${y}-01-01`; to = `${y}-12-31`; }
   }
   const st = C.statement(f.account, { from, to });
+  // The account's own opening balance, shown as the earliest line on its
+  // statement — same figure the "Opening balance" card already carries, now
+  // also where a passbook would put it. Only for the full history: a filtered
+  // period's "opening" is a carried-forward number, not the account's own.
+  const openingRow = (!from && st.opening !== 0) ? {
+    __synthetic: true, date: iso(DB.accounts.find(a => a.name === st.account)?.created_at
+      || st.rows[0]?.date || todayISO()),
+    type: 'Opening Balance', parent: 'Opening Balance', sub: null, note: 'Opening balance',
+    income: st.opening > 0 ? st.opening : 0, expense: st.opening < 0 ? -st.opening : 0,
+    balance: st.opening,
+  } : null;
 
   host.append(topbar(st.account,
     el('button', { class: 'btn sm ghost', onclick: () => openThing('') }, '← All accounts'),
@@ -333,16 +344,18 @@ function drawOne() {
     // A seven-column table on a 360px phone means dragging sideways to read one
     // row. Narrow screens get the same rows as a list instead, each carrying its
     // own running balance — the number you actually came here for.
-    el('div', { class: 'stmt-list' }, ...listRows(st)),
-    el('div', { class: 'table-wrap stmt-table', style: 'max-height:70vh;overflow:auto' }, tableOf(st))));
+    el('div', { class: 'stmt-list' }, ...listRows(st, openingRow)),
+    el('div', { class: 'table-wrap stmt-table', style: 'max-height:70vh;overflow:auto' }, tableOf(st, openingRow))));
 
-  if (!st.rows.length) host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, '🧾'), el('p', {}, 'No entries in this period.')));
+  if (!st.rows.length && !openingRow) host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, '🧾'), el('p', {}, 'No entries in this period.')));
 }
 
 // ------------------------------------------------------------ phone layout --
-function listRows(st) {
+function listRows(st, openingRow) {
   const out = [];
-  const rows = st.rows.slice().reverse();
+  // Oldest last, same as the real rows above it — the account's own start,
+  // not a transaction, so it never opens the editor.
+  const rows = openingRow ? [...st.rows.slice().reverse(), openingRow] : st.rows.slice().reverse();
   let day = null;
   rows.forEach((r, i) => {
     if (r.date !== day) {
@@ -353,7 +366,7 @@ function listRows(st) {
         el('span', { class: net >= 0 ? 'pos' : 'neg' }, money(net, st.currency, false))));
     }
     const isIn = Number(r.income) > 0;
-    out.push(el('div', { class: 'tx', onclick: () => openTxEditor(r) },
+    out.push(el('div', { class: 'tx' + (r.__synthetic ? ' muted' : ''), onclick: r.__synthetic ? null : () => openTxEditor(r) },
       el('div', { class: 'av' }, typeIcon(r.type)),
       el('div', { style: 'min-width:0' },
         el('div', { class: 't1' }, r.note || r.sub || r.parent || r.type),
@@ -367,14 +380,16 @@ function listRows(st) {
 }
 
 // ----------------------------------------------------------- wide layout --
-function tableOf(st) {
+function tableOf(st, openingRow) {
   const t = el('table');
   t.append(el('thead', {}, el('tr', {},
     el('th', {}, 'Date'), el('th', {}, 'Type'), el('th', {}, 'Category'), el('th', {}, 'Description'),
     el('th', { class: 'n' }, 'In'), el('th', { class: 'n' }, 'Out'), el('th', { class: 'n' }, 'Balance'))));
   const tb = el('tbody');
-  for (const r of st.rows.slice().reverse()) {
-    tb.append(el('tr', { style: 'cursor:pointer', onclick: () => openTxEditor(r) },
+  const rows = openingRow ? [...st.rows.slice().reverse(), openingRow] : st.rows.slice().reverse();
+  for (const r of rows) {
+    tb.append(el('tr', { class: r.__synthetic ? 'muted' : '',
+      style: r.__synthetic ? '' : 'cursor:pointer', onclick: r.__synthetic ? null : () => openTxEditor(r) },
       el('td', {}, fmtDate(r.date)),
       el('td', {}, typeIcon(r.type) + ' ' + r.type),
       el('td', {}, [r.parent, r.sub].filter(Boolean).join(' · ')),

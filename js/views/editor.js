@@ -2,7 +2,7 @@
 //  editor.js — add / edit a transaction (shared by every screen).
 // ============================================================================
 import { el, modal, toast, todayISO, uuid, evalAmount, confirmBox, money, round2, closeThen,
-  badYear } from '../util.js';
+  badYear, searchSelect } from '../util.js';
 import { DB, put, remove } from '../store.js';
 import { CONFIG } from '../../config.js';
 import { fxFor, currencyOf, convertAmount, parentsFor, subsFor, parentsOfSub, payeeNames, eventNames,
@@ -245,8 +245,8 @@ export function openTxEditor(existing = null, presets = {}) {
     el('label', {}, 'Landed as'), amountBoxB.input, landedHint);
 
   let lastA = null;             // what the amount box held last time it settled
-  const acctSel = el('select', {});
-  const toSel = el('select', {});
+  const acctSel = searchSelect();
+  const toSel = searchSelect();
   // Currency is the account's own, never a separate choice: picking INR on a
   // riyal account silently valued the row twenty-five times wrong.
   const curSel = el('input', { readonly: true, tabindex: '-1', class: 'locked', value: t.currency || 'SAR' });
@@ -411,13 +411,11 @@ export function openTxEditor(existing = null, presets = {}) {
     const live = new Set(activeAccounts().map(a => a.name));
     const fillOne = (sel, allowUnknown) => {
       const keep = sel.value;
-      sel.innerHTML = '';
-      if (allowUnknown) sel.append(el('option', { value: UNKNOWN }, UNKNOWN));
-      for (const a of options) {
+      const rows = options.map(a => {
         const idle = !live.has(a.name);
-        sel.append(el('option', { value: a.name },
-          `${a.name} · ${a.currency}` + (idle ? ' (idle)' : '')));
-      }
+        return { value: a.name, search: a.name, label: `${a.name} · ${a.currency}` + (idle ? ' (idle)' : '') };
+      });
+      sel.setOptions(allowUnknown ? [{ value: UNKNOWN, search: UNKNOWN, label: UNKNOWN }, ...rows] : rows);
       sel.value = keep || '';
     };
     const gap = type === 'Transfer' && !linked && !isNew;

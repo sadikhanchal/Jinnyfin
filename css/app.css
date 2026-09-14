@@ -245,6 +245,16 @@ select { appearance: none; padding-right: 26px;
   background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
 input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--brand); }
 
+/* --------------------------------------------------------- search combo -- */
+.combo { position: relative; min-width: 0; }
+.combo-list {
+  position: fixed; z-index: 150; background: var(--surface); border: 1px solid var(--hair);
+  border-radius: var(--r-sm); box-shadow: var(--shadow); overflow-y: auto; max-height: 240px;
+}
+.combo-opt { padding: 8px 10px; cursor: pointer; font-size: 14px; }
+.combo-opt.hi, .combo-opt:hover { background: color-mix(in srgb, var(--brand) 14%, transparent); }
+.combo-empty { padding: 8px 10px; font-size: 13px; color: var(--ink-3); }
+
 .btn {
   border: 1px solid var(--hair); background: var(--surface); border-radius: var(--r-sm);
   padding: 8px 13px; cursor: pointer; font-weight: 600; font-size: 14px; white-space: nowrap;
