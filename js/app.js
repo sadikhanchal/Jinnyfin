@@ -6,6 +6,7 @@ import { $, el, toast, todayISO, store as safeStore, storageBlocked, confirmBox,
 import * as S from './store.js';
 import { DB, state, getSettings, setSettings } from './store.js';
 import { insuranceHeadline } from './calc.js';
+import { icon } from './icons.js';
 import { checkPin } from './crypto.js';
 import { openTxEditor } from './views/editor.js';
 import * as A from './alerts.js';
@@ -15,22 +16,36 @@ import * as Push from './push.js';
 // question you answer by looking, not by guessing.
 export const BUILD = { version: '1.44', date: '2026-09-14' };
 
+/**
+ * `icon` names a mark in js/icons.js; `tint` is the palette token it wears.
+ *
+ * The colours are the ones already in the stylesheet — the same green the
+ * income figures use, the same red as the expense ones — so a screen and its
+ * numbers agree, and the dark theme swaps them without a second list.
+ */
 const ROUTES = {
-  dashboard:    { title: 'Dashboard',        icon: '🏠', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
-  transactions: { title: 'Transactions',     icon: '📒', tab: 'Transactions', load: () => import('./views/transactions.js') },
-  statement:    { title: 'Account Statement',icon: '🧾', tab: 'A/C Stmt', load: () => import('./views/statement.js') },
-  expense:      { title: 'Expense Report',   icon: '💸', tab: 'Expense', load: () => import('./views/report.js').then(m => m.view('Expense')) },
-  income:       { title: 'Income Report',    icon: '💵', load: () => import('./views/report.js').then(m => m.view('Income')) },
-  incexp:       { title: 'Income vs Expense',icon: '⚖️', load: () => import('./views/incexp.js') },
-  payee:        { title: 'Lend / Borrow',    icon: '🤝', load: () => import('./views/payee.js') },
-  business:     { title: 'Business P&L',     icon: '📊', load: () => import('./views/business.js') },
-  equity:       { title: 'Equity Portfolio', icon: '📈', load: () => import('./views/equity.js') },
-  networth:     { title: 'Net Worth & Assets',icon: '🏦', load: () => import('./views/networth.js') },
-  insurance:    { title: 'Insurance & Documents', icon: '🛡️', load: () => import('./views/insurance.js') },
-  ...(!CONFIG.DEMO ? { cards: { title: 'Card Vault', icon: '💳', load: () => import('./views/cards.js') } } : {}),
-  budgets:      { title: 'Budgets',          icon: '🎯', load: () => import('./views/budgets.js') },
-  tasks:        { title: 'Reminders',        icon: '⏰', load: () => import('./views/tasks.js') },
-  settings:     { title: 'Settings',         icon: '⚙️', load: () => import('./views/settings.js') },
+  dashboard:    { title: 'Dashboard',        icon: 'home',    tint: '--s1', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
+  transactions: { title: 'Transactions',     icon: 'ledger',  tint: '--s7', tab: 'Transactions', load: () => import('./views/transactions.js') },
+  statement:    { title: 'Account Statement',icon: 'receipt', tint: '--s1', tab: 'A/C Stmt', load: () => import('./views/statement.js') },
+  expense:      { title: 'Expense Report',   icon: 'spend',   tint: '--expense', tab: 'Expense', load: () => import('./views/report.js').then(m => m.view('Expense')) },
+  income:       { title: 'Income Report',    icon: 'earn',    tint: '--income', load: () => import('./views/report.js').then(m => m.view('Income')) },
+  incexp:       { title: 'Income vs Expense',icon: 'scales',  tint: '--s4', load: () => import('./views/incexp.js') },
+  payee:        { title: 'Lend / Borrow',    icon: 'hands',   tint: '--s4', load: () => import('./views/payee.js') },
+  business:     { title: 'Business P&L',     icon: 'bars',    tint: '--s2', load: () => import('./views/business.js') },
+  equity:       { title: 'Equity Portfolio', icon: 'trendUp', tint: '--s3', load: () => import('./views/equity.js') },
+  networth:     { title: 'Net Worth & Assets',icon: 'bank',   tint: '--s4', load: () => import('./views/networth.js') },
+  insurance:    { title: 'Insurance & Documents', icon: 'shield', tint: '--s5', load: () => import('./views/insurance.js') },
+  ...(!CONFIG.DEMO ? { cards: { title: 'Card Vault', icon: 'card', tint: '--s8', load: () => import('./views/cards.js') } } : {}),
+  budgets:      { title: 'Budgets',          icon: 'target',  tint: '--s2', load: () => import('./views/budgets.js') },
+  tasks:        { title: 'Reminders',        icon: 'bell',    tint: '--s5', load: () => import('./views/tasks.js') },
+  settings:     { title: 'Settings',         icon: 'gear',    tint: '--ink-3', load: () => import('./views/settings.js') },
+};
+
+/** A route's mark, wearing its tint. */
+const navIcon = (r, size = 18) => {
+  const svg = icon(r.icon, size);
+  if (r.tint) svg.style.color = `var(${r.tint})`;
+  return svg;
 };
 
 const NAV = [
@@ -143,11 +158,11 @@ async function renderShell() {
     const r = ROUTES[item];
     side.append(el('button', {
       class: 'nav-link', dataset: { route: item }, onclick: () => pickFromDrawer(item),
-    }, el('span', { class: 'nav-ico' }, r.icon), r.title));
+    }, el('span', { class: 'nav-ico' }, navIcon(r)), r.title));
   }
   side.append(el('div', { style: 'flex:1' }));
-  side.append(el('button', { class: 'nav-link', onclick: toggleTheme }, el('span', { class: 'nav-ico' }, '◑'), 'Theme'));
-  side.append(el('button', { class: 'nav-link', onclick: askSignOut }, el('span', { class: 'nav-ico' }, '⎋'), 'Sign out'));
+  side.append(el('button', { class: 'nav-link', onclick: toggleTheme }, el('span', { class: 'nav-ico' }, icon('theme')), 'Theme'));
+  side.append(el('button', { class: 'nav-link', onclick: askSignOut }, el('span', { class: 'nav-ico' }, icon('signout')), 'Sign out'));
 
   const main = el('main', { id: 'main' });
   // Tapping the dimmed page is the fastest way out of an open drawer.
@@ -161,13 +176,13 @@ async function renderShell() {
       continue;
     }
     tabs.append(el('button', { dataset: { route: t }, onclick: () => pickFromDrawer(t) },
-      el('span', { class: 'i' }, ROUTES[t].icon), ROUTES[t].tab));
+      el('span', { class: 'i' }, navIcon(ROUTES[t], 21)), ROUTES[t].tab));
   }
   // Everything the four tabs cannot reach lives one tap away, behind ☰.
   tabs.append(el('button', {
     id: 'moretab', title: 'More screens',
     onclick: e => { e.stopPropagation(); drawerOpen() ? closeDrawer() : openDrawer(); },
-  }, el('span', { class: 'i' }, '☰'), 'More'));
+  }, el('span', { class: 'i' }, icon('menu', 21)), 'More'));
   root.append(tabs);
   root.append(el('button', { class: 'fab-desktop', title: 'Add transaction (N)', onclick: () => openTxEditor() }, '+'));
 }
@@ -204,7 +219,7 @@ function watchLift(bar) {
 // that you have not looked at. Tapping it opens the same list the Reminders
 // screen shows, so there is only ever one truth about what is unread.
 function bellButton() {
-  const b = el('button', { class: 'bell', id: 'bell', title: 'Reminders', onclick: openBell }, '🔔',
+  const b = el('button', { class: 'bell', id: 'bell', title: 'Reminders', onclick: openBell }, icon('bell', 19),
     el('span', { class: 'bell-count' }));
   paintBell(b);
   return b;
@@ -449,7 +464,7 @@ async function lockScreen() {
     };
     pin.addEventListener('keydown', e => { if (e.key === 'Enter') tryIt(); });
     root.append(el('div', { class: 'auth-wrap' }, el('div', { class: 'card auth-card' },
-      el('h3', { style: 'margin-bottom:12px' }, '🔒 Enter your app PIN'), pin, err,
+      el('h3', { class: 'row', style: 'margin-bottom:12px' }, icon('lock', 18), 'Enter your app PIN'), pin, err,
       el('button', { class: 'btn primary', style: 'width:100%;margin-top:10px', onclick: tryIt }, 'Unlock'))));
     setTimeout(() => pin.focus(), 60);
   });

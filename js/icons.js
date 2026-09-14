@@ -46,6 +46,10 @@ const P = {
   id:          'M3.2 5.4h17.6a1 1 0 0 1 1 1v11.2a1 1 0 0 1-1 1H3.2a1 1 0 0 1-1-1V6.4a1 1 0 0 1 1-1ZM8.4 12.4a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM5.2 16.2c.4-1.6 1.7-2.4 3.2-2.4s2.8.8 3.2 2.4M14.6 9.6h4.2M14.6 12.6h4.2M14.6 15.4h2.6',
   doc:         'M6.4 2.8h7L18.6 8v13.2H6.4V2.8ZM13.4 2.8V8h5.2M9 12.6h6M9 16h6',
   clock:       'M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8ZM12 7.4V12l3.2 2',
+  menu:        'M4 7h16M4 12h16M4 17h16',
+  // Half filled, half not — the two themes, in one mark.
+  theme:       'M12 3.4a8.6 8.6 0 1 0 0 17.2 8.6 8.6 0 0 0 0-17.2ZM12 3.4v17.2a8.6 8.6 0 0 0 0-17.2Z',
+  signout:     'M9.4 20.4H5.6a1.4 1.4 0 0 1-1.4-1.4V5a1.4 1.4 0 0 1 1.4-1.4h3.8M15.2 16.4l4.6-4.4-4.6-4.4M19.8 12H9.4',
   // Stands in for anything the set has no mark for yet, so a missing name
   // shows as a neutral dot rather than an empty hole.
   dot:         'M12 9.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8Z',

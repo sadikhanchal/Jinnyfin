@@ -106,7 +106,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .nav-link:hover { background: var(--surface-2); color: var(--ink); }
 .nav-link.active { background: var(--surface-3); color: var(--ink); font-weight: 600; }
-.nav-ico { width: 18px; text-align: center; font-size: 15px; }
+.nav-ico { width: 18px; display: flex; align-items: center; justify-content: center; }
 .nav-sep { margin: 10px 8px 4px; font-size: 10.5px; text-transform: uppercase;
   letter-spacing: .08em; color: var(--ink-3); font-weight: 700; }
 
@@ -434,14 +434,15 @@ td.wrap { white-space: normal; min-width: 200px; }
   flex: 1; border: 0; background: none; display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: 2px; font-size: 10.5px; color: var(--ink-3); cursor: pointer; font-weight: 600;
 }
-#tabbar button .i { font-size: 19px; line-height: 1; }
+#tabbar button .i { display: flex; line-height: 1; }
 #tabbar button.active { color: var(--brand); }
+#tabbar button .i .ic { width: 21px; height: 21px; }
 /* Labels on a 360px phone: let them shrink rather than wrap or clip. */
 #tabbar button { min-width: 0; padding: 0 2px; }
 #tabbar button > :last-child {
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-@media (max-width: 400px) { #tabbar button { font-size: 9.5px; } #tabbar button .i { font-size: 18px; } }
+@media (max-width: 400px) { #tabbar button { font-size: 9.5px; } }
 
 /* The + sits in the middle of the bar, docked half above it. Frosted rather
    than solid: it lets the list show through instead of blocking a row. */
@@ -502,11 +503,15 @@ td.wrap { white-space: normal; min-width: 200px; }
 /* "Lend/Borrow" wraps rather than truncates — a type cut to "Lend/Bor…" is a
    guess, and the row it files is the one people get wrong most often. The
    buttons keep one height so the row stays square whatever wraps. */
+/* Five equal columns is what caps this. On a 360px phone a label wider than
+   about 10.5px breaks "Expense" into "Expens e" — measured, not guessed — so
+   the size steps up only where there is actually room for it. */
 .type-pick .tl { font-size: 10.5px; max-width: 100%; white-space: normal; overflow-wrap: break-word; }
 .type-pick button { min-height: 58px; justify-content: center; }
+@media (min-width: 381px) { .type-pick .tl { font-size: 11.5px; } }
 @media (min-width: 521px) {
   .type-pick button { flex-direction: row; gap: 5px; padding: 8px 6px; min-height: 44px; }
-  .type-pick .tl { font-size: 11.5px; }
+  .type-pick .tl { font-size: 13.5px; }
 }
 .type-pick button.on { background: var(--brand); border-color: var(--brand); color: #fff; }
 .amount-in { font-size: 22px !important; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
