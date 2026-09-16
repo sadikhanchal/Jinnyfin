@@ -6,7 +6,7 @@
 //  ringing right now (a policy, a card, an overdue reminder). The second list
 //  is the same one behind the bell, so a thing marked read here is read there.
 // ============================================================================
-import { el, modal, toast, todayISO, fmtDate, confirmBox, daysBetween, badYear } from '../util.js';
+import { el, modal, toast, todayISO, fmtDate, confirmBox, daysBetween, badYear, dateBox} from '../util.js';
 import { DB, put, remove } from '../store.js';
 import { topbar } from '../app.js';
 import * as A from '../alerts.js';
@@ -183,7 +183,7 @@ function edit(v = null) {
 
   const title = el('input', { value: t.title, placeholder: 'What should I remind you about?' });
   const note = el('input', { value: t.note || '', placeholder: 'Any detail (optional)' });
-  const date = el('input', { type: 'date', value: t.due_date || todayISO() });
+  const date = dateBox({ value: t.due_date || todayISO() });
   const time = el('input', { type: 'time', value: t.due_time || '09:00' });
   const rep = el('select', {}, ...REPEATS.map(([v2, l]) => el('option', { value: v2, selected: (t.repeat || 'none') === v2 }, l)));
   const pri = el('select', {}, ...PRIORITY.map(([v2, l]) => el('option', { value: v2, selected: (t.priority || 'normal') === v2 }, l)));

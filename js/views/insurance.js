@@ -2,7 +2,7 @@
 //  insurance.js — policies and documents that expire, with reminders.
 // ============================================================================
 import { el, money, fmtDate, todayISO, modal, toast, confirmBox, addDays, downloadCSV, daysBetween,
-  uuid, badYear } from '../util.js';
+  uuid, badYear, dateBox} from '../util.js';
 import { DB, put, remove, getSettings, setSettings } from '../store.js';
 import * as F from '../files.js';
 import * as C from '../calc.js';
@@ -288,7 +288,7 @@ function edit(p = null, startKind = 'insurance') {
   const label = el('input', { value: v.label, placeholder: 'Car / Health / Iqama / Passport' });
   const policy = el('input', { value: v.policy || '', placeholder: 'Insurer or issuing body' });
   const pno = el('input', { value: v.policy_no || '', placeholder: 'Policy / document number' });
-  const date = el('input', { type: 'date', value: v.renewal_date });
+  const date = dateBox({ value: v.renewal_date });
   const prem = el('input', { type: 'number', step: 'any', value: v.premium || 0 });
   // The premium is paid out of an account, so it is in that account's currency.
   // A free choice here silently valued a riyal premium as rupees.

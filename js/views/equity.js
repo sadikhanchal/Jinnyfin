@@ -1,7 +1,7 @@
 // ============================================================================
 //  equity.js — Geojit equity portfolio: open positions, realised P&L, dividends.
 // ============================================================================
-import { el, money, num, fmtDate, modal, toast, confirmBox, downloadCSV, todayISO, badYear } from '../util.js';
+import { el, money, num, fmtDate, modal, toast, confirmBox, downloadCSV, todayISO, badYear, dateBox} from '../util.js';
 import { DB, put, remove } from '../store.js';
 import * as C from '../calc.js';
 import { barList, SERIES } from '../charts.js';
@@ -123,7 +123,7 @@ function editPos(p = null) {
   const symbol = el('input', { value: v.symbol, placeholder: 'TMPV' });
   const company = el('input', { value: v.company || '', placeholder: 'Tata Motors Passenger Veh' });
   const qty = inp('qty'), avg = inp('avg_cost'), price = inp('price');
-  const pdate = el('input', { type: 'date', value: v.price_date || todayISO() });
+  const pdate = dateBox({ value: v.price_date || todayISO() });
   const closed = el('input', { type: 'checkbox', checked: !!v.closed });
   const bq = inp('buy_qty'), bv = inp('buy_value'), sq = inp('sell_qty'), sv = inp('sell_value');
   const real = inp('realised'), div = inp('dividends');

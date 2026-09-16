@@ -2,7 +2,7 @@
 //  settings.js — accounts, categories, FX rates, reconciliation, backup, import.
 // ============================================================================
 import { el, money, num, fmtDate, todayISO, modal, toast, confirmBox, downloadCSV, downloadFile, monthStart, MONTHS,
-  dateGuard, restoreDateFocus, uuid } from '../util.js';
+  dateGuard, restoreDateFocus, uuid, dateBox} from '../util.js';
 import { DB, put, remove, putMany, getSettings, setSettings, sync, state, resetLocal, signOut,
   changePassword, sendPasswordReset, TABLES } from '../store.js';
 import { store as safeStore } from '../util.js';
@@ -545,7 +545,7 @@ function fx() {
 function reconcile() {
   const s = getSettings();
   const rows = C.reconciliation(asOf);
-  const dateIn = el('input', { type: 'date', value: asOf || todayISO(), style: 'max-width:180px' });
+  const dateIn = dateBox({ value: asOf || todayISO(), style: 'max-width:180px' });
   dateGuard(dateIn, v => {
     if ((v || null) === asOf) return;
     asOf = v || null; draw();

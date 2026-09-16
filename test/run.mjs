@@ -16,7 +16,7 @@ import { existsSync, readdirSync } from 'fs';
 import { extname, join, resolve } from 'path';
 
 const ROOT = resolve(import.meta.dirname, '..');
-const PORT = 8974;
+const PORT = 9212;
 const STUB = readFileSync(join(ROOT, 'test/stub/supabase.mjs'), 'utf8');
 const FIXTURE = JSON.parse(readFileSync(join(ROOT, 'test/stub/fixture.json'), 'utf8'));
 
@@ -752,6 +752,96 @@ test('a transfer changed to an expense takes its other half', async browser => {
   if (left.partnerLeft) throw new Error('the other half is still there — the money is counted twice');
   if (left.stillLinked) throw new Error('the converted row kept its transfer link');
   return `${accts.a} -> ${accts.b}, converted cleanly`;
+});
+
+test('a date box is not torn away while it is being typed in', async browser => {
+  // Type a month, pause to think, type a day. The pause used to be long enough
+  // for the screen to redraw, which destroyed the box and put the caret back
+  // on the FIRST segment — so 11 then 28 came out as 2026-02-08. A date field
+  // has no API to restore the caret to its middle part, so the only fix is not
+  // to rebuild the box at all while the keyboard is in it.
+  const { ctx, page } = await open(browser, 'transactions');
+  const box = page.locator('.filters input[type=date]').first();
+  await box.click();
+  await page.keyboard.press('Home');
+  await page.keyboard.type('09142026');
+  await page.locator('h1').first().click();          // commit
+  await page.waitForTimeout(600);
+  await page.locator('.filters input[type=date]').first().click();
+  await page.keyboard.press('Home');
+  await page.keyboard.type('11');
+  await page.waitForTimeout(800);                    // the pause
+  await page.keyboard.type('28');
+  await page.waitForTimeout(600);
+  const got = await page.locator('.filters input[type=date]').first().inputValue();
+  await ctx.close();
+  if (got !== '2026-11-28') throw new Error(`the digits landed in the wrong segment: ${got}`);
+  return 'typed through a pause, 2026-11-28';
+});
+
+test('a year nobody meant never reaches a filter or a saved row', async browser => {
+  const { ctx, page } = await open(browser, 'transactions');
+  // 1. a filter box puts back what is really in force
+  const box = page.locator('.filters input[type=date]').first();
+  await box.click(); await page.keyboard.press('Home');
+  await page.keyboard.type('02202323');
+  await page.locator('h1').first().click();
+  await page.waitForTimeout(600);
+  const left = await page.locator('.filters input[type=date]').first().inputValue();
+  if (left) throw new Error(`the filter kept a year-2323 date: ${left}`);
+
+  // 2. the editor refuses to save one
+  const before = await page.evaluate(() => window.JINNYFIN.DB.transactions.length);
+  await page.evaluate(() => window.JINNYFIN.openTxEditor());
+  await page.waitForTimeout(500);
+  await page.locator('.modal .amount-in').first().fill('55');
+  const d = page.locator('.modal input[type=date]').first();
+  await d.click(); await page.keyboard.press('Home'); await page.keyboard.type('01012323');
+  await page.evaluate(() => {
+    const i = [...document.querySelectorAll('.modal input')].find(x => x.getAttribute('list')?.includes('parent'));
+    if (i) { i.value = 'Food and Dining'; i.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent.trim() === 'Save')?.click());
+  await page.waitForTimeout(900);
+  const after = await page.evaluate(() => ({
+    n: window.JINNYFIN.DB.transactions.length,
+    weird: window.JINNYFIN.DB.transactions.filter(t => t.date && (+t.date.slice(0, 4) > 2100 || +t.date.slice(0, 4) < 1900)).length,
+  }));
+  await ctx.close();
+  if (after.weird) throw new Error(`${after.weird} row(s) saved outside 1900-2100`);
+  if (after.n !== before) throw new Error('a row was saved when the date should have blocked it');
+  return 'filter reverted, save blocked';
+});
+
+test('a slow mouse click opens a row instead of selecting it', async browser => {
+  // mousedown started a 500ms long-press timer. Half a second is nothing with
+  // a mouse: resting on the button while reading dropped the whole screen into
+  // selection mode. A mouse has a gesture for that already — the right button.
+  const { ctx, page } = await open(browser, 'transactions');
+  const row = page.locator('.tx').first();
+  const b = await row.boundingBox();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(900);
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  const state = await page.evaluate(() => ({
+    picking: !!document.querySelector('.pick'), editor: !!document.querySelector('.modal') }));
+  if (state.picking) { await ctx.close(); throw new Error('a slow click fell into selection mode'); }
+  if (!state.editor) { await ctx.close(); throw new Error('a slow click did not open the row'); }
+  await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+  // right-click still selects, and Escape still leaves
+  await page.locator('.tx').first().click({ button: 'right' });
+  await page.waitForTimeout(400);
+  if (!await page.evaluate(() => !!document.querySelector('.pick'))) {
+    await ctx.close(); throw new Error('right-click no longer starts selection'); }
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+  const out = await page.evaluate(() => !!document.querySelector('.pick'));
+  await ctx.close();
+  if (out) throw new Error('Escape did not leave selection mode');
+  return 'slow click opens, right-click selects, Escape leaves';
 });
 
 // ------------------------------------------------------------------- run ---

@@ -2,7 +2,7 @@
 //  statement.js — account statement with a running balance.
 // ============================================================================
 import { el, money, num, fmtDate, MONTHS, downloadCSV, todayISO, endOfMonth, iso,
-  dateGuard, restoreDateFocus, onFilter, restoreFilterFocus } from '../util.js';
+  dateGuard, restoreDateFocus, onFilter, restoreFilterFocus, dateBox} from '../util.js';
 import { printStatement, printDate } from './printable.js';
 import { DB } from '../store.js';
 import * as C from '../calc.js';
@@ -166,7 +166,7 @@ function periodFilters() {
     return el('div', { class: 'field' }, el('label', {}, label), s);
   };
   const dateIn = (label, key) => {
-    const i = el('input', { type: 'date', value: f[key] || '' });
+    const i = dateBox({ value: f[key] || '' });
     dateGuard(i, v => {
       if (v === (f[key] || '')) return;
       f[key] = v; f.year = 'All'; f.month = 'All'; draw();

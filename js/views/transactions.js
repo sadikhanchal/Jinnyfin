@@ -2,7 +2,7 @@
 //  transactions.js — the full ledger: search, filter, duplicate, edit, export.
 // ============================================================================
 import { el, money, fmtDate, MONTHS, debounce, downloadCSV, todayISO, toast, confirmBox, uuid,
-  onFilter, restoreFilterFocus, dateGuard, restoreDateFocus } from '../util.js';
+  onFilter, restoreFilterFocus, dateGuard, restoreDateFocus, dateBox} from '../util.js';
 import { DB, putMany, remove } from '../store.js';
 import * as C from '../calc.js';
 import { topbar } from '../app.js';
@@ -27,6 +27,16 @@ export async function render(root) {
   draw();
 }
 export function refresh() { if (host) draw(); }
+
+// Escape leaves selection mode, the way it closes anything else in the app.
+// There was no way out from the keyboard at all — you had to find "Done".
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !picking) return;
+  if (!host || !host.isConnected) return;
+  if (document.querySelector('.modal-wrap')) return;   // a sheet owns Esc first
+  e.preventDefault();
+  stopPicking();
+});
 
 function startPicking(id) {
   if (picking) { if (id) picked.add(id); draw(); return; }
@@ -142,7 +152,7 @@ function draw() {
    * keystroke once month and year are already filled. dateGuard covers both.
    */
   const dateIn = (label, key) => {
-    const i = dateGuard(el('input', { type: 'date', value: f[key] || '' }), v => {
+    const i = dateGuard(dateBox({ value: f[key] || '' }), v => {
       if (v === (f[key] || '')) return;
       f[key] = v; shown = PAGE; draw();
     }, key);
@@ -275,10 +285,16 @@ export function txRow(t) {
     openTxEditor(t);
   });
 
-  // Long press starts multi-select; a leftward drag reveals the row's actions.
+  // Long press starts multi-select — on a FINGER only.
+  //
+  // It used to listen on mousedown too, and half a second is no time at all
+  // with a mouse: resting on the button while reading the row, or any click
+  // that is not brisk, dropped the whole screen into selection mode with a
+  // tick on the row you were about to open. A mouse already has a gesture for
+  // this and it is the right one — the right button, wired below.
   let timer = null, sx = 0, sy = 0, moved = false;
   const start = e => {
-    const p = e.touches ? e.touches[0] : e;
+    const p = e.touches[0];
     sx = p.clientX; sy = p.clientY; moved = false;
     timer = setTimeout(() => {
       if (moved || picking) return;
@@ -287,7 +303,7 @@ export function txRow(t) {
     }, 500);
   };
   const move = e => {
-    const p = e.touches ? e.touches[0] : e;
+    const p = e.touches[0];
     const dx = p.clientX - sx, dy = p.clientY - sy;
     if (Math.abs(dx) > 8 || Math.abs(dy) > 8) { moved = true; clearTimeout(timer); }
     if (!picking && Math.abs(dx) > Math.abs(dy) + 6) row.classList.toggle('slid', dx < -40);
@@ -296,9 +312,7 @@ export function txRow(t) {
   row.addEventListener('touchstart', start, { passive: true });
   row.addEventListener('touchmove', move, { passive: true });
   row.addEventListener('touchend', end);
-  row.addEventListener('mousedown', start);
-  row.addEventListener('mouseup', end);
-  row.addEventListener('mouseleave', end);
+  row.addEventListener('touchcancel', end);
   row.addEventListener('contextmenu', e => { e.preventDefault(); startPicking(t.id); });
 
   return slot;

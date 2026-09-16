@@ -3,7 +3,7 @@
 //  statement you can hand to the person on the other side of the debt.
 // ============================================================================
 import { el, money, num, fmtDate, fmtDateShort, downloadCSV, todayISO, esc, toast,
-  dateGuard, restoreDateFocus } from '../util.js';
+  dateGuard, restoreDateFocus, dateBox} from '../util.js';
 import { DB, state, getSettings } from '../store.js';
 import { CONFIG } from '../../config.js';
 import * as C from '../calc.js';
@@ -162,7 +162,7 @@ function ledgerCard(lb) {
 
   // ------------------------------------------------------------- period --
   const dateIn = key => {
-    const i = el('input', { type: 'date', value: range[key] || '' });
+    const i = dateBox({ value: range[key] || '' });
     dateGuard(i, v => {
       if (v === (range[key] || '')) return;
       range[key] = v; draw();

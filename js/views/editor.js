@@ -2,7 +2,7 @@
 //  editor.js — add / edit a transaction (shared by every screen).
 // ============================================================================
 import { el, modal, toast, todayISO, uuid, evalAmount, confirmBox, money, round2, closeThen,
-  badYear, searchSelect } from '../util.js';
+  badYear, searchSelect, dateBox} from '../util.js';
 import { DB, put, remove } from '../store.js';
 import { CONFIG } from '../../config.js';
 import { icon } from '../icons.js';
@@ -141,7 +141,7 @@ export function openTxEditor(existing = null, presets = {}) {
   const form = el('div', { class: 'form-grid' });
   body.append(typeRow, form);
 
-  const dateIn = el('input', { type: 'date', value: t.date });
+  const dateIn = dateBox({ value: t.date });
   const timeIn = el('input', { type: 'time', value: t.time || '' });
   // ── amount boxes ─────────────────────────────────────────────────────────
   // One keypad, one or two boxes. A cross-currency transfer grows a second box
@@ -616,8 +616,12 @@ export function openTxEditor(existing = null, presets = {}) {
     if (!acctSel.value) { toast('Pick an account', 'warn'); return; }
     // Saving straight after typing the first digit of the year would file this
     // in the year 2 — and then every date range in the app steps around it.
-    if (badYear(dateIn.value) || !dateIn.value) {
-      toast('Finish the date first', 'warn'); dateIn.focus(); return;
+    if (!dateIn.value) { toast('Finish the date first', 'warn'); dateIn.focus(); return; }
+    if (badYear(dateIn.value)) {
+      // Year 2 or year 232323 — the browser calls both valid dates, and a row
+      // saved under one sorts to the end of the ledger for ever.
+      toast(`Check the year — ${dateIn.value.slice(0, 4)} is not a date this ledger can hold`, 'warn');
+      dateIn.focus(); return;
     }
     // Every entry needs a category. Without one it is money that happened and
     // belongs to nothing: no report counts it, no budget sees it, and it can

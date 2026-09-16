@@ -2,7 +2,7 @@
 //  incexp.js — Income vs Expense for any period, grouped and sorted.
 // ============================================================================
 import { el, money, num, MONTHS, endOfMonth, downloadCSV, todayISO, fmtDate,
-  dateGuard, restoreDateFocus, onFilter, restoreFilterFocus } from '../util.js';
+  dateGuard, restoreDateFocus, onFilter, restoreFilterFocus, dateBox} from '../util.js';
 import { DB } from '../store.js';
 import * as C from '../calc.js';
 import { groupedBars, SERIES } from '../charts.js';
@@ -41,7 +41,7 @@ function draw() {
     return el('div', { class: 'field' }, el('label', {}, label), s);
   };
   const dateIn = (label, key) => {
-    const i = el('input', { type: 'date', value: f[key] || '' });
+    const i = dateBox({ value: f[key] || '' });
     dateGuard(i, v => {
       if (v === (f[key] || '')) return;
       f[key] = v; f.year = 'All'; f.month = 'All'; draw();

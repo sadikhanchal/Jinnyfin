@@ -2,7 +2,7 @@
 //  networth.js — the full net-worth build-up plus fixed assets at market value.
 // ============================================================================
 import { el, money, num, fmtDate, todayISO, modal, toast, confirmBox, downloadCSV, MON3,
-  dateGuard, restoreDateFocus, badYear } from '../util.js';
+  dateGuard, restoreDateFocus, badYear, dateBox} from '../util.js';
 import { DB, put, remove } from '../store.js';
 import * as C from '../calc.js';
 import { lineChart, barList, SERIES } from '../charts.js';
@@ -29,7 +29,7 @@ function draw() {
   const nw = C.netWorth(asOf);
   const fa = nw.parts.fa, inv = nw.parts.inv, lb = nw.parts.lb;
 
-  const dateIn = dateGuard(el('input', { type: 'date', value: asOf }),
+  const dateIn = dateGuard(dateBox({ value: asOf }),
     v => { if (v === asOf) return; asOf = v; draw(); }, 'asof');
   host.append(topbar('Net Worth & Assets',
     el('div', { class: 'field' }, el('label', { class: 'hint' }, 'As of'), dateIn),
@@ -152,7 +152,7 @@ function addAsset(a = null) {
   const tag = el('input', { value: v.category_tag || '', list: 'dl-cat', placeholder: 'Expense category that feeds it' });
   const open = el('input', { type: 'number', step: 'any', value: v.opening_cost || 0 });
   const mv = el('input', { type: 'number', step: 'any', value: v.market_value || 0 });
-  const md = el('input', { type: 'date', value: v.market_date || todayISO() });
+  const md = dateBox({ value: v.market_date || todayISO() });
   const note = el('input', { value: v.note || '' });
   const dl = el('datalist', { id: 'dl-cat' }); C.parentsFor('Expense').forEach(p => dl.append(el('option', { value: p })));
   const fld = (l, n, cls = '', hint) => el('div', { class: 'field ' + cls }, el('label', {}, l), n, hint ? el('span', { class: 'hint' }, hint) : null);

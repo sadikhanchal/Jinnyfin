@@ -236,45 +236,75 @@ export function dismissOnBackdrop(wrap, close) {
 }
 
 /**
- * A date that is still being typed rather than one somebody means.
+ * The window a date in this ledger can sensibly fall in.
  *
- * A native date field reports a COMPLETE value the moment its three parts make
- * any valid date. Type the "2" of 2026 into a box whose day and month are
- * already filled and the field says year 2 — a real date, 2023 years before the
- * one being aimed at. Every date in this app is a modern one, so a year under
- * 1000 can only mean the person has not finished typing.
+ * A native date box will hand over a year of 2 or of 232323 just as readily as
+ * 2026 — both are dates the browser calls valid. Only a year inside this range
+ * is one somebody meant; anything outside it is a half-typed value or a slip,
+ * and must never reach a filter, a chart axis, or a saved row.
  */
-export const badYear = v => !!v && +String(v).slice(0, 4) < 1000;
+export const MIN_DATE = '1900-01-01';
+export const MAX_DATE = '2100-12-31';
+
+/** A date still being typed, or one nobody could have meant. */
+export const badYear = v => {
+  if (!v) return false;
+  const y = +String(v).slice(0, 4);
+  return !(y >= 1900 && y <= 2100);
+};
+
+/**
+ * Put the range on the box itself, so the browser refuses what it can and the
+ * person sees it refused rather than watching a filter empty out.
+ */
+export function dateBox(attrs = {}) {
+  return el('input', { type: 'date', min: MIN_DATE, max: MAX_DATE, ...attrs });
+}
 
 /**
  * Wire a date box on a screen that redraws itself when the date changes.
  *
- * Without this, typing the "2" of 2026 hands over the year 2, the screen
- * redraws, and the box being typed into is destroyed with the keyboard still in
- * it — on a PC that means reaching for the mouse to get back in. `badYear`
- * alone only catches that one case, though: retyping the DAY of a box that
- * already holds a real date (month and year both already valid) forms a
- * complete, in-range date on the very first keystroke — day 1 of the month
- * already showing — so the box still redraws itself away mid-digit, just one
- * digit later. A short pause after the last keystroke, instead of acting on
- * every one, is what a text field's own debounce would give it; a date field
- * has no such thing, so this gives it one. Leaving the box still commits at
- * once, same as before — only mid-typing waits.
+ * The rule here is one line: WHILE THE BOX HAS THE KEYBOARD, THE SCREEN DOES
+ * NOT REDRAW. Everything else was a workaround for breaking it.
  *
- * Pass a `key` and the screen can hand the cursor back afterwards with
- * restoreDateFocus(host).
+ * A date box is three little fields in a trench coat, and the browser gives no
+ * way to put the caret back on the middle one. So the moment a redraw throws
+ * the box away and builds a new one, `focus()` lands on the FIRST segment —
+ * and the next two digits you type go into the month when you meant the day.
+ * Typing 11, pausing to think, then typing 28 gave 2026-02-08. No amount of
+ * remembering which box had focus can fix that; the box has to survive.
+ *
+ * So the value is committed when the keyboard LEAVES — on blur, or on Enter.
+ * A date picked from the calendar still lands at once: that arrives with no
+ * keystroke behind it, and this can tell the difference.
  */
 export function dateGuard(input, commit, key = null) {
   if (key) input.dataset.dk = key;
-  let timer = 0;
+  if (!input.min) input.min = MIN_DATE;
+  if (!input.max) input.max = MAX_DATE;
+  let lastKey = 0;
+  let good = input.value;          // the value actually filtering right now
   const fire = () => {
     const v = input.value;
-    if (badYear(v)) return;                     // still mid-year, leave it alone
+    // A box reading 2323 while the list below it ignores that year is worse
+    // than a box that simply refuses it. Put back what is really in force.
+    if (badYear(v)) { input.value = good; return; }
+    good = v;
     if (key) pendingDateFocus = key;
     commit(v);
   };
-  input.onchange = () => { clearTimeout(timer); timer = setTimeout(fire, 450); };
-  input.onblur = () => { clearTimeout(timer); fire(); };   // committed by leaving the box
+  input.addEventListener('keydown', e => {
+    lastKey = Date.now();
+    // Enter means "I am done with this box" — commit without waiting to leave.
+    if (e.key === 'Enter') { e.preventDefault(); fire(); }
+  });
+  input.onchange = () => {
+    // Typed? Then the person is still in the middle of it; wait for them to
+    // leave. Clicked out of the calendar? Nothing was typed — act now.
+    if (Date.now() - lastKey < 1200) return;
+    fire();
+  };
+  input.onblur = fire;
   return input;
 }
 
