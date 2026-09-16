@@ -14,8 +14,13 @@ const blank = () => ({ text: '', type: 'All', account: 'All', parent: 'All', pay
                        year: 'All', month: 'All', from: '', to: '' });
 let f = blank();
 let shown = PAGE, host = null;
+let chrome = null, results = null;   // the bar that stays, and the pane that is rebuilt
 let picking = false;            // multi-select mode
 const picked = new Set();       // ids chosen while picking
+// How long a mouse button must be held before it counts as a long press
+// rather than a click. Judged at the release, never by a timer.
+const LONG_PRESS_MS = 550;
+let suppressClick = false;      // a long press ends in a click; ignore that one
 
 // Selection is a mode, not a setting: arriving at this screen always starts
 // clean, and there is exactly one way out of it that also clears the ticks.
@@ -24,9 +29,19 @@ let pickPushed = false;
 export async function render(root) {
   host = root;
   picking = false; picked.clear(); pickPushed = false;
-  draw();
+  mount();
 }
-export function refresh() { if (host) draw(); }
+/**
+ * New data arrived. The pickers list years, accounts and payees that the data
+ * decides, so the bar has to be rebuilt — unless somebody is working in it,
+ * in which case rebuilding it is exactly the thing that must not happen.
+ */
+export function refresh() {
+  if (!host) return;
+  const busy = chrome && [chrome.bar, chrome.search, chrome.filters]
+    .some(n => n.contains(document.activeElement));
+  busy ? draw() : mount();
+}
 
 // Escape leaves selection mode, the way it closes anything else in the app.
 // There was no way out from the keyboard at all — you had to find "Done".
@@ -116,28 +131,44 @@ async function duplicate(rows) {
 }
 
 // ------------------------------------------------------------------ view ---
-function draw() {
-  const keepScroll = window.scrollY;
+/**
+ * The bar of controls is built ONCE and then left alone.
+ *
+ * Everything above the results — the search box, the pickers, the two date
+ * boxes — used to be thrown away and rebuilt on every keystroke. That is what
+ * put the caret back on the first segment of a date, and what threw the cursor
+ * out of the search box and into the To date. A date field has no way to say
+ * "put the caret back on the middle part", so the only answer is that the box
+ * must never be replaced while somebody is using it. Only the list below is
+ * rebuilt now, which is the only part the filters actually change.
+ */
+function mount() {
   host.innerHTML = '';
-  const rows = C.filterTx(f).slice().reverse();
+  chrome = buildChrome();
+  results = el('div', { class: 'tx-results' });
+  host.append(chrome.bar, chrome.search, chrome.filters, results);
+  draw();
+}
 
-  host.append(topbar('Transactions',
+function buildChrome() {
+  const bar = topbar('Transactions',
     el('button', { class: 'btn sm' + (picking ? ' primary' : ''),
       onclick: () => (picking ? stopPicking() : startPicking(null)) }, picking ? 'Done' : '\u2713 Select'),
     el('button', { class: 'btn sm', onclick: () => exportCSV(rows) }, '⬇ CSV'),
-    el('button', { class: 'btn sm primary', onclick: () => openTxEditor() }, '+ Add')));
+    el('button', { class: 'btn sm primary', onclick: () => openTxEditor() }, '+ Add'));
 
   // ------------------------------------------------------------ search ----
+  // The box now survives the redraw, so there is nothing to put the cursor
+  // back into — and nothing to steal it from the date box either.
   const search = el('input', { type: 'search', value: f.text,
     placeholder: 'Search description, category, payee, amount…', enterkeyhint: 'search' });
+  const clearBtn = el('button', { class: 'icon-btn clear', hidden: !f.text,
+    onclick: () => { f.text = ''; search.value = ''; clearBtn.hidden = true; shown = PAGE; draw(); } }, '✕');
   search.addEventListener('input', debounce(() => {
-    f.text = search.value; shown = PAGE; draw();
-    const s = host.querySelector('.searchbar input');
-    if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+    f.text = search.value; clearBtn.hidden = !f.text; shown = PAGE; draw();
   }, 280));
-  host.append(el('div', { class: 'searchbar' },
-    el('span', { class: 'mag' }, icon('search', 16)), search,
-    f.text ? el('button', { class: 'icon-btn clear', onclick: () => { f.text = ''; shown = PAGE; draw(); } }, '✕') : null));
+  const searchBar = el('div', { class: 'searchbar' },
+    el('span', { class: 'mag' }, icon('search', 16)), search, clearBtn);
 
   // ----------------------------------------------------------- filters ----
   const sel = (label, key, options) => {
@@ -158,7 +189,7 @@ function draw() {
     }, key);
     return el('div', { class: 'field' }, el('label', {}, label), i);
   };
-  host.append(el('div', { class: 'filters' },
+  const filters = el('div', { class: 'filters' },
     sel('Type', 'type', C.TYPES),
     sel('Account', 'account', C.accountNames()),
     sel('Category', 'parent', C.parentsFor(null)),
@@ -167,7 +198,21 @@ function draw() {
     sel('Month', 'month', MONTHS.map((m, i) => ({ v: i + 1, t: m }))),
     dateIn('From', 'from'), dateIn('To', 'to'),
     el('div', { class: 'field' }, el('label', {}, ' '),
-      el('button', { class: 'btn sm', onclick: () => { f = blank(); shown = PAGE; draw(); } }, 'Clear'))));
+      el('button', { class: 'btn sm', onclick: () => { f = blank(); mount(); } }, 'Clear')));
+
+  return { bar, search: searchBar, filters };
+}
+
+function draw() {
+  const keepScroll = window.scrollY;
+  const rows = C.filterTx(f).slice().reverse();
+  results.innerHTML = '';
+  const host = results;                 // everything below lands in the results pane
+
+  // The Select button lives in the bar, which is not rebuilt — so its label
+  // has to be kept in step by hand.
+  const selBtn = chrome.bar.querySelector('button');
+  if (selBtn) { selBtn.textContent = picking ? 'Done' : '\u2713 Select'; selBtn.classList.toggle('primary', picking); }
 
   // ----------------------------------------------------------- summary ----
   const eqIn = rows.reduce((s, t) => s + C.inrOf(t), 0);
@@ -229,8 +274,8 @@ function draw() {
   // Only when the redraw was triggered from inside this screen. On a fresh
   // arrival the router restores where you last were, and must not be fought.
   if (keepScroll) requestAnimationFrame(() => window.scrollTo(0, keepScroll));
-  restoreDateFocus(host);     // the redraw threw away the date box you were typing in
-  restoreFilterFocus(host);   // the cursor stays in the filter you were arrowing through
+  // Nothing to hand the cursor back to: the boxes it could be in were never
+  // taken away.
 }
 
 function mini(label, value, cls = '') {
@@ -280,20 +325,28 @@ export function txRow(t) {
   const toggle = () => { picked.has(t.id) ? picked.delete(t.id) : picked.add(t.id); draw(); };
 
   row.addEventListener('click', () => {
+    if (suppressClick) { suppressClick = false; return; }   // that was a long press
     if (picking) { toggle(); return; }
     if (row.classList.contains('slid')) { row.classList.remove('slid'); return; }
     openTxEditor(t);
   });
 
-  // Long press starts multi-select — on a FINGER only.
+  // ------------------------------------------------------- long press ----
+  // A finger and a mouse need different rules for the same gesture.
   //
-  // It used to listen on mousedown too, and half a second is no time at all
-  // with a mouse: resting on the button while reading the row, or any click
-  // that is not brisk, dropped the whole screen into selection mode with a
-  // tick on the row you were about to open. A mouse already has a gesture for
-  // this and it is the right one — the right button, wired below.
-  let timer = null, sx = 0, sy = 0, moved = false;
-  const start = e => {
+  // A FINGER gets a timer: hold still for half a second and the row is picked,
+  // with a buzz to say so — you find out while your finger is still down,
+  // which is what makes it feel like a long press.
+  //
+  // A MOUSE is judged at the moment the button comes back up, by how long it
+  // was held. A timer was wrong here: half a second is no time at all with a
+  // mouse, so resting on the button while reading a row dropped the screen
+  // into selection mode before the click had even finished. Deciding at the
+  // release means one press does exactly one thing — a quick click opens the
+  // row, a deliberate hold picks it — and never both.
+  let timer = null, sx = 0, sy = 0, moved = false, downAt = 0;
+
+  const touchStart = e => {
     const p = e.touches[0];
     sx = p.clientX; sy = p.clientY; moved = false;
     timer = setTimeout(() => {
@@ -302,17 +355,35 @@ export function txRow(t) {
       startPicking(t.id);
     }, 500);
   };
-  const move = e => {
+  const touchMove = e => {
     const p = e.touches[0];
     const dx = p.clientX - sx, dy = p.clientY - sy;
     if (Math.abs(dx) > 8 || Math.abs(dy) > 8) { moved = true; clearTimeout(timer); }
     if (!picking && Math.abs(dx) > Math.abs(dy) + 6) row.classList.toggle('slid', dx < -40);
   };
-  const end = () => clearTimeout(timer);
-  row.addEventListener('touchstart', start, { passive: true });
-  row.addEventListener('touchmove', move, { passive: true });
-  row.addEventListener('touchend', end);
-  row.addEventListener('touchcancel', end);
+  row.addEventListener('touchstart', touchStart, { passive: true });
+  row.addEventListener('touchmove', touchMove, { passive: true });
+  row.addEventListener('touchend', () => clearTimeout(timer));
+  row.addEventListener('touchcancel', () => clearTimeout(timer));
+
+  row.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    downAt = Date.now(); sx = e.clientX; sy = e.clientY; moved = false;
+  });
+  row.addEventListener('mousemove', e => {
+    if (!downAt) return;
+    if (Math.abs(e.clientX - sx) > 8 || Math.abs(e.clientY - sy) > 8) moved = true;
+  });
+  row.addEventListener('mouseleave', () => { downAt = 0; });
+  row.addEventListener('mouseup', e => {
+    if (e.button !== 0 || !downAt) return;
+    const held = Date.now() - downAt;
+    downAt = 0;
+    if (held < LONG_PRESS_MS || moved || picking) return;   // an ordinary click
+    suppressClick = true;        // the click that follows this is not a click
+    startPicking(t.id);
+  });
+
   row.addEventListener('contextmenu', e => { e.preventDefault(); startPicking(t.id); });
 
   return slot;

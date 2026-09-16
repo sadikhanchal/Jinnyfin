@@ -754,29 +754,42 @@ test('a transfer changed to an expense takes its other half', async browser => {
   return `${accts.a} -> ${accts.b}, converted cleanly`;
 });
 
-test('a date box is not torn away while it is being typed in', async browser => {
-  // Type a month, pause to think, type a day. The pause used to be long enough
-  // for the screen to redraw, which destroyed the box and put the caret back
-  // on the FIRST segment — so 11 then 28 came out as 2026-02-08. A date field
-  // has no API to restore the caret to its middle part, so the only fix is not
-  // to rebuild the box at all while the keyboard is in it.
+test('a date filters as it is typed, without losing the caret', async browser => {
+  // Two things at once, because they are one bug. The filter bar used to be
+  // rebuilt on every keystroke: that threw the caret back to the FIRST segment
+  // — type 11, pause, type 28 and you got 2026-02-08 — and it is also why the
+  // results could not follow the typing. The bar is built once now; only the
+  // list below it is redrawn.
   const { ctx, page } = await open(browser, 'transactions');
-  const box = page.locator('.filters input[type=date]').first();
-  await box.click();
-  await page.keyboard.press('Home');
-  await page.keyboard.type('09142026');
-  await page.locator('h1').first().click();          // commit
-  await page.waitForTimeout(600);
-  await page.locator('.filters input[type=date]').first().click();
-  await page.keyboard.press('Home');
+  const box = () => page.locator('.filters input[type=date]').first();
+  const rows = () => page.evaluate(() => document.querySelectorAll('.tx').length);
+  const sameNode = () => page.evaluate(() => {
+    const i = document.querySelector('.filters input[type=date]');
+    const same = window.__dateNode ? window.__dateNode === i : true;
+    window.__dateNode = i; return same;
+  });
+  await sameNode();
+  const before = await rows();
+
+  // An empty box starts on its first segment, so the caret's position is known.
+  // Type a month, stop long enough for any redraw to have happened, then carry
+  // on. If the box survived, the rest lands where it was aimed.
+  await box().click();
   await page.keyboard.type('11');
-  await page.waitForTimeout(800);                    // the pause
-  await page.keyboard.type('28');
-  await page.waitForTimeout(600);
-  const got = await page.locator('.filters input[type=date]').first().inputValue();
+  await page.waitForTimeout(800);
+  if (!await sameNode()) { await ctx.close(); throw new Error('the box was replaced during the pause'); }
+  await page.keyboard.type('282024');
+  await page.waitForTimeout(700);
+
+  const got = await box().inputValue();
+  const live = await rows();
+  const held = await sameNode();
   await ctx.close();
-  if (got !== '2026-11-28') throw new Error(`the digits landed in the wrong segment: ${got}`);
-  return 'typed through a pause, 2026-11-28';
+  if (!held) throw new Error('the box was replaced while being typed in');
+  if (got !== '2024-11-28') throw new Error(`the digits landed in the wrong segment: ${got}`);
+  // No Tab, no Enter, no click away — the list must already have followed.
+  if (live === before) throw new Error('results did not follow the typing');
+  return `live results (${before} -> ${live}), caret held through a pause`;
 });
 
 test('a year nobody meant never reaches a filter or a saved row', async browser => {
@@ -814,34 +827,44 @@ test('a year nobody meant never reaches a filter or a saved row', async browser 
   return 'filter reverted, save blocked';
 });
 
-test('a slow mouse click opens a row instead of selecting it', async browser => {
-  // mousedown started a 500ms long-press timer. Half a second is nothing with
-  // a mouse: resting on the button while reading dropped the whole screen into
-  // selection mode. A mouse has a gesture for that already — the right button.
+test('click opens a row, long press picks it', async browser => {
+  // Both gestures, on a mouse. A timer on mousedown got this wrong: half a
+  // second is nothing with a mouse, so resting on the button while reading
+  // dropped the screen into selection mode. The hold is judged at the release
+  // instead, so one press does exactly one thing.
   const { ctx, page } = await open(browser, 'transactions');
-  const row = page.locator('.tx').first();
-  const b = await row.boundingBox();
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
-  await page.mouse.down();
-  await page.waitForTimeout(900);
-  await page.mouse.up();
-  await page.waitForTimeout(500);
-  const state = await page.evaluate(() => ({
+  const state = () => page.evaluate(() => ({
     picking: !!document.querySelector('.pick'), editor: !!document.querySelector('.modal') }));
-  if (state.picking) { await ctx.close(); throw new Error('a slow click fell into selection mode'); }
-  if (!state.editor) { await ctx.close(); throw new Error('a slow click did not open the row'); }
+  const press = async ms => {
+    const b = await page.locator('.tx').first().boundingBox();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await page.mouse.down(); await page.waitForTimeout(ms); await page.mouse.up();
+    await page.waitForTimeout(450);
+  };
+
+  await press(80);                       // an ordinary click
+  let st = await state();
+  if (st.picking) { await ctx.close(); throw new Error('a quick click fell into selection mode'); }
+  if (!st.editor) { await ctx.close(); throw new Error('a quick click did not open the row'); }
   await page.keyboard.press('Escape'); await page.waitForTimeout(400);
-  // right-click still selects, and Escape still leaves
-  await page.locator('.tx').first().click({ button: 'right' });
+
+  await press(900);                      // a deliberate hold
+  st = await state();
+  if (!st.picking) { await ctx.close(); throw new Error('a long press did not pick the row'); }
+  if (st.editor) { await ctx.close(); throw new Error('a long press also opened the editor'); }
+  const ticked = await page.evaluate(() => document.querySelectorAll('.pick:checked').length);
+  if (!ticked) { await ctx.close(); throw new Error('the row it was held on was not ticked'); }
+
+  await page.keyboard.press('Escape'); await page.waitForTimeout(500);
+  if (await page.evaluate(() => !!document.querySelector('.pick'))) {
+    await ctx.close(); throw new Error('Escape did not leave selection mode'); }
+
+  await page.locator('.tx').first().click({ button: 'right' });   // right-click still picks
   await page.waitForTimeout(400);
-  if (!await page.evaluate(() => !!document.querySelector('.pick'))) {
-    await ctx.close(); throw new Error('right-click no longer starts selection'); }
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
-  const out = await page.evaluate(() => !!document.querySelector('.pick'));
+  const viaRight = await page.evaluate(() => !!document.querySelector('.pick'));
   await ctx.close();
-  if (out) throw new Error('Escape did not leave selection mode');
-  return 'slow click opens, right-click selects, Escape leaves';
+  if (!viaRight) throw new Error('right-click no longer starts selection');
+  return 'click opens, hold picks, Escape leaves, right-click picks';
 });
 
 // ------------------------------------------------------------------- run ---

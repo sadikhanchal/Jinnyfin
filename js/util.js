@@ -282,29 +282,39 @@ export function dateGuard(input, commit, key = null) {
   if (key) input.dataset.dk = key;
   if (!input.min) input.min = MIN_DATE;
   if (!input.max) input.max = MAX_DATE;
-  let lastKey = 0;
-  let good = input.value;          // the value actually filtering right now
-  const fire = () => {
+  let good = input.value;          // the value actually in force right now
+  let timer = 0;
+  /**
+   * @param {boolean} leaving true when the keyboard is on its way out.
+   *
+   * Mid-typing a half-built date is simply not acted on: the year passes
+   * through 2, then 20, then 202 on the way to 2026, and every one of those
+   * is a date the browser calls valid. It is left alone — putting the box
+   * back to its old value there would wipe what is being typed.
+   *
+   * On the way out is different. Whatever is left in the box then is what the
+   * person meant, and if that is a year nobody meant, the box goes back to
+   * the date actually filtering — because a box reading 2323 over a list that
+   * ignores 2323 is worse than one that plainly refuses it.
+   */
+  const fire = (leaving = false) => {
+    clearTimeout(timer);
     const v = input.value;
-    // A box reading 2323 while the list below it ignores that year is worse
-    // than a box that simply refuses it. Put back what is really in force.
-    if (badYear(v)) { input.value = good; return; }
-    good = v;
+    if (badYear(v)) { if (leaving) input.value = good; return; }
+    if (v === good) return;        // nothing changed — do not redraw, and do
+    good = v;                      // not leave a focus request behind either
     if (key) pendingDateFocus = key;
     commit(v);
   };
-  input.addEventListener('keydown', e => {
-    lastKey = Date.now();
-    // Enter means "I am done with this box" — commit without waiting to leave.
-    if (e.key === 'Enter') { e.preventDefault(); fire(); }
-  });
-  input.onchange = () => {
-    // Typed? Then the person is still in the middle of it; wait for them to
-    // leave. Clicked out of the calendar? Nothing was typed — act now.
-    if (Date.now() - lastKey < 1200) return;
-    fire();
-  };
-  input.onblur = fire;
+  // Results follow the typing, a beat behind it. That is only safe because
+  // the screens that use this no longer rebuild the box underneath the
+  // caret — see the note on mount() in transactions.js. If a screen ever goes
+  // back to wiping its filter bar on every draw, this becomes the bug where
+  // typing 11 then 28 lands as 2026-02-08.
+  input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => fire(false), 350); });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); fire(true); } });
+  input.onchange = () => fire(false);
+  input.onblur = () => fire(true);
   return input;
 }
 
