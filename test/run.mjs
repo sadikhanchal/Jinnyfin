@@ -944,6 +944,89 @@ test('a payee can be renamed across its entries, and merged only after a second 
   return 'rename moves every entry; merge needs its own yes';
 });
 
+test('a payee ledger splits into two sides that still add up', async browser => {
+  // One person can owe you money while you owe him money. Each half is a whole
+  // debt — lent/collected on one side, borrowed/repaid on the other — and must
+  // be readable, totalled and printable by itself. What it must never do is
+  // invent a number: the two closing balances still make the net one.
+  const { ctx, page, errors } = await open(browser, 'payee');
+  const pick = async name => {
+    await page.evaluate(n => {
+      const td = [...document.querySelectorAll('tbody td')].find(x => x.textContent.trim().startsWith(n));
+      td?.closest('tr')?.click();
+    }, name);
+    await page.waitForTimeout(500);
+  };
+  const chip = async label => {
+    const hit = await page.evaluate(l => {
+      const b = [...document.querySelectorAll('#payee-ledger button')].find(x => x.textContent.includes(l));
+      if (!b) return false; b.click(); return true;
+    }, label);
+    if (!hit) { await ctx.close(); throw new Error(`no "${label}" chip`); }
+    await page.waitForTimeout(450);
+  };
+  // What the ledger table on screen is actually showing: its kinds and its
+  // last balance — read off the DOM, because the screen is the deliverable.
+  const shown = () => page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#payee-ledger tbody tr')];
+    const cells = r => [...r.querySelectorAll('td')].map(c => c.textContent.trim());
+    return { kinds: rows.map(r => cells(r)[2]).filter(Boolean),
+      count: rows.length,
+      closing: [...document.querySelectorAll('#payee-ledger .kpi')]
+        .map(k => k.textContent).filter(t => /Closing/.test(t))[0] || '' };
+  });
+
+  // The fixture's payee is lent-to only. Give him one borrowing too, in the
+  // live DB, so the split has something to split — a person who owes you AND
+  // is owed by you is exactly the case this screen exists for.
+  await page.evaluate(() => {
+    const t = window.JINNYFIN.DB.transactions.find(x => x.payee === 'Yahiya SAR');
+    window.JINNYFIN.DB.transactions.push({ ...t, id: 'test-borrow-1', date: '2026-01-05',
+      parent: 'Borrow', sub: 'Borrow', income: 400, expense: 0, note: 'test borrowing' });
+    window.JINNYFIN.go('payee');
+  });
+  await page.waitForTimeout(600);
+
+  await pick('Yahiya SAR');
+  const all = await shown();
+  if (!all.count) { await ctx.close(); throw new Error('the ledger did not open'); }
+  if (!all.kinds.some(k => /Lend/i.test(k))) { await ctx.close(); throw new Error('fixture changed: no Lend rows'); }
+
+  await chip('They owe me');
+  const lend = await shown();
+  if (!lend.count) { await ctx.close(); throw new Error('the lend side came up empty'); }
+  if (lend.kinds.some(k => /Borrow|Repay/i.test(k))) {
+    await ctx.close(); throw new Error(`a borrow row survived the lend filter: ${lend.kinds.join(', ')}`); }
+
+  await chip('I owe them');
+  const borrow = await shown();
+  if (borrow.kinds.some(k => /Lend|Collect/i.test(k))) {
+    await ctx.close(); throw new Error(`a lend row survived the borrow filter: ${borrow.kinds.join(', ')}`); }
+  if (lend.count + borrow.count !== all.count) {
+    await ctx.close();
+    throw new Error(`${lend.count} + ${borrow.count} rows do not make the ${all.count} the whole ledger shows`); }
+
+  // The arithmetic: each side's closing, and the two together against the net.
+  const sums = await page.evaluate(() => {
+    const rows = window.JINNYFIN.DB.transactions
+      .filter(t => t.type === 'Lend/Borrow' && t.payee === 'Yahiya SAR' && !t.deleted);
+    const half = r => {
+      const s = `${r.parent || ''} ${r.sub || ''}`.toLowerCase();
+      return /lend|collect/.test(s) ? 'lend' : /borrow|repay/.test(s) ? 'borrow' : 'other';
+    };
+    const net = a => a.reduce((n, r) => n + (+r.income || 0) - (+r.expense || 0), 0);
+    return { all: net(rows), lend: net(rows.filter(r => half(r) === 'lend')),
+      borrow: net(rows.filter(r => half(r) === 'borrow')),
+      other: rows.filter(r => half(r) === 'other').length };
+  });
+  await ctx.close();
+  if (sums.other) throw new Error('fixture changed: unlabelled Lend/Borrow rows');
+  if (Math.abs((sums.lend + sums.borrow) - sums.all) > 0.005) {
+    throw new Error(`the two sides close at ${sums.lend} + ${sums.borrow}, the whole at ${sums.all}`); }
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `${all.count} rows split ${lend.count}/${borrow.count}, balances still reconcile`;
+});
+
 // ------------------------------------------------------------------- run ---
 const only = process.argv.slice(2).filter(a => !a.startsWith('-'));
 const server = await serve();

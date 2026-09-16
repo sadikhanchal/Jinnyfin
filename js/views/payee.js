@@ -14,7 +14,29 @@ import { printStatement, printDate } from './printable.js';
 import { icon } from '../icons.js';
 
 let selected = null, showSettled = false, host = null;
+let side = 'all';                       // all | lend | borrow — which half of the relationship
 const range = { from: '', to: '' };
+
+// One relationship can run both ways at once: money you lent him, and money you
+// borrowed from him. Each is a whole debt with its own two directions —
+// Lend/Collecting debts on one side, Borrow/Repayment on the other — so each can
+// be read, totalled and handed over as a statement by itself. Their two closing
+// balances still add up to the net figure; nothing is invented by splitting.
+export const sideOf = r => {
+  const s = `${r.parent || ''} ${r.sub || ''}`.toLowerCase();
+  if (/lend|collect/.test(s)) return 'lend';
+  if (/borrow|repay/.test(s)) return 'borrow';
+  return 'other';                       // old rows that never carried a label
+};
+const SIDE = {
+  all: { chip: 'All', title: 'Statement of account', line: '' },
+  lend: { chip: '⬇ They owe me', title: 'Amounts due from',
+    line: 'This statement covers only what was lent and collected back. '
+      + 'Anything borrowed from them is a separate account with its own statement.' },
+  borrow: { chip: '⬆ I owe them', title: 'Amounts due to',
+    line: 'This statement covers only what was borrowed and repaid. '
+      + 'Anything lent to them is a separate account with its own statement.' },
+};
 
 export async function render(root) { host = root; draw(); }
 export function refresh() { if (host) draw(); }
@@ -25,8 +47,19 @@ export function refresh() { if (host) draw(); }
  * before `from`. A statement without an opening balance is a lie by omission —
  * the other side has to see where the number started.
  */
-export function ledgerFor(payee, from = '', to = '') {
-  const all = C.payeeLedger(payee);
+export function ledgerFor(payee, from = '', to = '', half = 'all') {
+  let all = C.payeeLedger(payee);
+  const unplaced = all.filter(r => sideOf(r) === 'other').length;
+  if (half !== 'all') {
+    // The running balance has to be re-walked over this half alone, or the
+    // column would still be carrying the other half's movements.
+    const run = new Map();
+    all = all.filter(r => sideOf(r) === half).map(r => {
+      const c = r.currency || 'SAR';
+      run.set(c, (run.get(c) || 0) + (+r.income || 0) - (+r.expense || 0));
+      return { ...r, balance: Math.round(run.get(c) * 100) / 100 };
+    });
+  }
   const before = from ? all.filter(r => r.date < from) : [];
   const rows = all.filter(r => (!from || r.date >= from) && (!to || r.date <= to));
   const cur1 = r => r.currency || 'SAR';
@@ -46,7 +79,7 @@ export function ledgerFor(payee, from = '', to = '') {
     };
   }).filter(c => c.count || Math.abs(c.opening) >= 0.005);
   const main = cur[0] || { currency: 'SAR', opening: 0, inSum: 0, outSum: 0, closing: 0 };
-  return { rows, cur, total: all.length, mixed: cur.length > 1,
+  return { rows, cur, total: all.length, mixed: cur.length > 1, half, unplaced,
     // What the rest of the screen already speaks, for the ordinary one-currency
     // payee. Never read these when `mixed` is true.
     currency: main.currency, opening: main.opening,
@@ -112,7 +145,7 @@ function draw() {
     tb.append(el('tr', {
       class: r.payee === selected ? 'picked' : '',
       style: 'cursor:pointer',
-      onclick: () => { selected = r.payee; draw(); document.querySelector('#payee-ledger')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+      onclick: () => { selected = r.payee; side = 'all'; draw(); document.querySelector('#payee-ledger')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
     },
       el('td', {}, el('span', { class: 'row gap', style: 'align-items:center;gap:6px' },
         el('span', {}, r.payee),
@@ -213,7 +246,7 @@ function renamePayee(name) {
 
 // ------------------------------------------------------------ one ledger ---
 function ledgerCard(lb) {
-  const L = ledgerFor(selected, range.from, range.to);
+  const L = ledgerFor(selected, range.from, range.to, side);
   const lastAcct = L.rows.length ? L.rows[L.rows.length - 1].account : undefined;
   // Which way the money is owed, read off the ledger itself rather than the
   // summary row — the summary picks one currency to show and would call a
@@ -254,7 +287,13 @@ function ledgerCard(lb) {
       el('div', { class: 'row gap wrap' },
         quick('All time', '', ''),
         quick('This year', `${y}-01-01`, todayISO()),
-        quick('Last 12 months', new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10), todayISO()))));
+        quick('Last 12 months', new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10), todayISO()))),
+    el('div', { class: 'field', style: 'flex:2 1 300px' }, el('label', {}, 'Side of the account'),
+      el('div', { class: 'row gap wrap' },
+        ...['all', 'lend', 'borrow'].map(k => el('button', {
+          class: 'btn sm' + (side === k ? ' primary' : ' ghost'),
+          onclick: () => { side = k; draw(); },
+        }, SIDE[k].chip)))));
 
   // -------------------------------------------------------------- table --
   const lt = el('table');
@@ -301,13 +340,22 @@ function ledgerCard(lb) {
       c.closing < 0 ? 'income' : c.closing > 0 ? 'expense' : ''))));
 
   return el('div', { class: 'card', id: 'payee-ledger', style: 'margin-top:12px' },
-    el('div', { class: 'card-head' }, el('h3', {}, `Ledger — ${selected}`), el('div', { class: 'spacer' }),
+    el('div', { class: 'card-head' }, el('h3', {}, `Ledger — ${selected}`
+      + (side === 'all' ? '' : side === 'lend' ? ' · they owe me' : ' · I owe them')), el('div', { class: 'spacer' }),
       el('button', { class: 'btn sm ghost', onclick: () => { selected = null; draw(); } }, 'Close'),
       ...actions),
     el('p', { class: 'small muted', style: 'margin:-4px 0 10px' },
       { 'they-owe': '⬇ ', 'i-owe': '⬆ ', both: '⇅ ', settled: '✓ ' }[owedWay]
-      + standingLine(selected, L.cur)),
+      + standingLine(selected, L.cur)
+      + (side === 'all' ? '' : ' ' + SIDE[side].line)),
     periodRow,
+    // Rows from the old workbook that never carried a Lend or Borrow label
+    // cannot be put on either side. They stay in All, and the reader is told.
+    side !== 'all' && L.unplaced
+      ? el('div', { class: 'alert slim' }, el('span', { class: 'ico' }, 'ℹ️'),
+        el('div', {}, `${L.unplaced} of this payee's entries carry no Lend or Borrow label, `
+          + 'so they are in neither side. The All view shows them.'))
+      : null,
     totals,
     el('div', { class: 'row gap wrap', style: 'margin:6px 0 10px' },
       el('button', { class: 'btn sm primary', onclick: () => printStatementFor(L) }, icon('receipt', 15), ' Statement (print / PDF)'),
@@ -345,9 +393,11 @@ function printStatementFor(L) {
   const pad = (label, c, a, b, bal) => ['', '', label, ...(L.mixed ? [c] : []), a, b, bal];
 
   printStatement({
-    title: 'Statement of account',
-    subtitle: `${selected} · ${cur}`,
-    meta: [['Period', period], ['Entries', String(L.rows.length)], ['Currency', cur]],
+    title: side === 'all' ? 'Statement of account' : `${SIDE[side].title} ${esc(selected)}`,
+    subtitle: `${selected} · ${cur}`
+      + (side === 'all' ? '' : side === 'lend' ? ' · lent and collected' : ' · borrowed and repaid'),
+    meta: [['Period', period], ['Entries', String(L.rows.length)], ['Currency', cur],
+      ...(side === 'all' ? [] : [['Covers', side === 'lend' ? 'Lend · Collecting debts' : 'Borrow · Repayment']])],
     head: ['Date', 'Kind', 'Description', ...C0, 'In', 'Out', 'Balance'],
     numeric: L.mixed ? [4, 5, 6] : [3, 4, 5],
     widths: L.mixed ? [13, 16, 21, 8, 13, 13, 16] : [14, 18, 24, 14, 14, 16],
@@ -362,7 +412,8 @@ function printStatementFor(L) {
     standing: line,
     note: `“In” is money received from ${esc(selected)}; “Out” is money paid to them. `
         + 'A positive balance is owed to them; a negative balance is owed to you.'
-        + (L.mixed ? ' Each currency carries its own running balance; the two are never added together.' : ''),
+        + (L.mixed ? ' Each currency carries its own running balance; the two are never added together.' : '')
+        + (side === 'all' ? '' : ' ' + SIDE[side].line),
   });
 }
 
@@ -377,7 +428,8 @@ function statementCSV(L) {
     rows.push(['', '', '', '', 'Closing balance', c.currency,
       c.inSum.toFixed(2), c.outSum.toFixed(2), c.closing.toFixed(2)]);
   }
-  const tag = [selected.replace(/[^\w]+/g, '-'), range.from || 'start', range.to || todayISO()].join('_');
+  const tag = [selected.replace(/[^\w]+/g, '-'), ...(side === 'all' ? [] : [side]),
+    range.from || 'start', range.to || todayISO()].join('_');
   downloadCSV(`jinnyfin-statement-${tag}.csv`, [head, ...rows]);
 }
 
