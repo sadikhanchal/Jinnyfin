@@ -3,8 +3,8 @@
 //  statement you can hand to the person on the other side of the debt.
 // ============================================================================
 import { el, money, num, fmtDate, fmtDateShort, downloadCSV, todayISO, esc, toast,
-  dateGuard, restoreDateFocus, dateBox} from '../util.js';
-import { DB, state, getSettings } from '../store.js';
+  dateGuard, restoreDateFocus, dateBox, modal, confirmBox } from '../util.js';
+import { DB, state, getSettings, put, putMany, remove } from '../store.js';
 import { CONFIG } from '../../config.js';
 import * as C from '../calc.js';
 import { topbar } from '../app.js';
@@ -114,7 +114,12 @@ function draw() {
       style: 'cursor:pointer',
       onclick: () => { selected = r.payee; draw(); document.querySelector('#payee-ledger')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
     },
-      el('td', {}, r.payee), el('td', {}, r.currency),
+      el('td', {}, el('span', { class: 'row gap', style: 'align-items:center;gap:6px' },
+        el('span', {}, r.payee),
+        el('button', {
+          class: 'icon-btn sm', title: `Rename ${r.payee}`, 'aria-label': `Rename ${r.payee}`,
+          onclick: e => { e.stopPropagation(); renamePayee(r.payee); },
+        }, icon('pencil', 14)))), el('td', {}, r.currency),
       // Every open currency, side by side. The colour follows the INR
       // equivalent, which is the only figure that can judge the two together.
       el('td', { class: 'n ' + (r.equiv > 0 ? 'neg' : r.equiv < 0 ? 'pos' : '') },
@@ -135,6 +140,75 @@ function draw() {
 
   if (keep) requestAnimationFrame(() => window.scrollTo(0, keep));
   restoreDateFocus(host);        // put the cursor back in the date box the redraw ate
+}
+
+// --------------------------------------------------------- rename / merge ---
+/** Every payee name the ledger actually uses, spelt as it is spelt there. */
+const payeeNames = () => [...new Set(DB.transactions
+  .filter(t => t.payee && !t.deleted).map(t => t.payee))];
+
+const entriesOf = name => DB.transactions.filter(t => t.payee === name && !t.deleted);
+
+/** What the two sides add up to, per currency — never across them. */
+function combinedLine(a, b) {
+  const sum = new Map();
+  for (const c of [...ledgerFor(a).cur, ...ledgerFor(b).cur]) {
+    sum.set(c.currency, (sum.get(c.currency) || 0) + c.closing);
+  }
+  const parts = [...sum].filter(([, v]) => Math.abs(v) >= 0.005)
+    .map(([c, v]) => `${money(Math.abs(v), c)} ${v > 0 ? 'you owe' : 'owed to you'}`);
+  return parts.length ? parts.join(', ') : 'nothing outstanding';
+}
+
+/**
+ * Rename a payee across every entry that carries the name. Typing a name that
+ * already exists is a merge, and a merge is never done on the rename confirm
+ * alone — it asks again, by itself, naming both sides and the joint balance.
+ */
+function renamePayee(name) {
+  const input = el('input', { type: 'text', value: name, maxlength: 80, autocomplete: 'off' });
+  const m = modal('Rename payee',
+    el('div', { class: 'form-grid' },
+      el('div', { class: 'field full' }, el('label', {}, 'Name'), input),
+      el('p', { class: 'hint full', style: 'margin:0' },
+        `${entriesOf(name).length.toLocaleString('en-IN')} entries carry this name, and all of them change together. `
+        + 'Type the name of another payee to merge the two.')),
+    { footer: [el('button', { class: 'btn primary', onclick: () => save() }, 'Save')] });
+  input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); save(); } };
+  setTimeout(() => { input.focus(); input.select(); }, 30);
+
+  async function save() {
+    const next = input.value.trim();
+    if (!next) return toast('Name?', 'warn');
+    if (next === name) return m.close();
+    const rows = entriesOf(name);
+    const hit = payeeNames().find(p => p !== name && p.toLowerCase() === next.toLowerCase());
+
+    if (hit) {
+      const ok = await confirmBox(
+        `“${hit}” already exists. Merge “${name}” (${rows.length.toLocaleString('en-IN')} entries) `
+        + `into “${hit}” (${entriesOf(hit).length.toLocaleString('en-IN')} entries)? `
+        + `The two balances become one: ${combinedLine(name, hit)}. This cannot be undone.`,
+        'Yes, merge them');
+      if (!ok) return;
+      if (rows.length) await putMany('transactions', rows.map(t => ({ ...t, payee: hit })));
+      const old = DB.payees.find(p => p.name === name);
+      if (old) await remove('payees', old.id);
+      if (selected === name) selected = hit;
+      toast(`Merged into ${hit}`);
+    } else {
+      const ok = await confirmBox(
+        `Rename “${name}” to “${next}” on ${rows.length.toLocaleString('en-IN')} entries?`, 'Yes, rename');
+      if (!ok) return;
+      if (rows.length) await putMany('transactions', rows.map(t => ({ ...t, payee: next })));
+      const old = DB.payees.find(p => p.name === name);
+      await put('payees', old ? { ...old, name: next } : { name: next });
+      if (selected === name) selected = next;
+      toast('Renamed');
+    }
+    m.close();
+    draw();
+  }
 }
 
 // ------------------------------------------------------------ one ledger ---

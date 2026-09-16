@@ -867,6 +867,83 @@ test('click opens a row, long press picks it', async browser => {
   return 'click opens, hold picks, Escape leaves, right-click picks';
 });
 
+test('a payee can be renamed across its entries, and merged only after a second yes', async browser => {
+  // Payees had no rename at all: a typo lived on every row it was typed into.
+  // Renaming moves every entry; typing a name that already exists is a merge,
+  // and a merge must never ride in on the rename confirm — it asks by itself.
+  const { ctx, page, errors } = await open(browser, 'payee');
+  const count = name => page.evaluate(n => window.JINNYFIN.DB.transactions
+    .filter(t => t.payee === n && !t.deleted).length, name);
+  const openRename = async name => {
+    await page.evaluate(() => {
+      const cb = [...document.querySelectorAll('.card-head input[type=checkbox]')][0];
+      if (cb && !cb.checked) cb.click();
+    });
+    await page.waitForTimeout(300);
+    const hit = await page.evaluate(n => {
+      const b = [...document.querySelectorAll('button[title]')].find(x => x.title === `Rename ${n}`);
+      if (!b) return false;
+      b.click(); return true;
+    }, name);
+    if (!hit) { await ctx.close(); throw new Error(`no rename control for ${name}`); }
+    await page.waitForTimeout(250);
+  };
+  const typeName = async v => {
+    await page.fill('.modal-body input[type=text]', v);
+    await topClick(page, ['Save']);
+    await page.waitForTimeout(250);
+  };
+  const dialogText = () => page.evaluate(() => {
+    const all = [...document.querySelectorAll('.modal')];
+    return all[all.length - 1]?.textContent || '';
+  });
+
+  if (await count('Farooq') !== 1) { await ctx.close(); throw new Error('fixture changed: Farooq'); }
+  const yahiyaWas = await count('Yahiya SAR');
+
+  // 1. a plain rename happens only after the confirm, and moves every entry
+  await openRename('Farooq');
+  await typeName('Farooq Ali');
+  if (!/Rename .*Farooq.* on 1 entries\?/.test(await dialogText())) {
+    await ctx.close(); throw new Error('the rename confirm did not say how many entries move'); }
+  await topClick(page, ['Cancel']);
+  await page.waitForTimeout(250);
+  if (await count('Farooq Ali')) { await ctx.close(); throw new Error('Cancel renamed it anyway'); }
+  await topClick(page, ['Save']);
+  await page.waitForTimeout(250);
+  await topClick(page, ['Yes, rename']);
+  await page.waitForTimeout(400);
+  if (await count('Farooq') !== 0 || await count('Farooq Ali') !== 1) {
+    await ctx.close(); throw new Error('the rename did not move the entry'); }
+
+  // 2. typing a name that already exists asks a second, different question —
+  //    and answering it with Cancel leaves both payees exactly as they were.
+  //    (Whichever name the row carries now: the stub syncs the fixture back.)
+  const live = await count('Farooq Ali') ? 'Farooq Ali' : 'Farooq';
+  await openRename(live);
+  await typeName('Yahiya SAR');
+  const ask = await dialogText();
+  if (!/merge/i.test(ask) || !/Yahiya SAR/.test(ask)) {
+    await ctx.close(); throw new Error(`no merge confirmation: ${ask.slice(0, 140)}`); }
+  await topClick(page, ['Cancel']);
+  await page.waitForTimeout(250);
+  if (await count('Yahiya SAR') !== yahiyaWas) {
+    await ctx.close(); throw new Error('Cancel merged them anyway'); }
+
+  // 3. and merges only when that question is answered
+  await topClick(page, ['Save']);
+  await page.waitForTimeout(250);
+  await topClick(page, ['Yes, merge them']);
+  await page.waitForTimeout(400);
+  const after = await count('Yahiya SAR');
+  const left = await count(live);
+  await ctx.close();
+  if (left !== 0) throw new Error('the merged-away payee still has entries');
+  if (after !== yahiyaWas + 1) throw new Error(`merged total is ${after}, expected ${yahiyaWas + 1}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'rename moves every entry; merge needs its own yes';
+});
+
 // ------------------------------------------------------------------- run ---
 const only = process.argv.slice(2).filter(a => !a.startsWith('-'));
 const server = await serve();
