@@ -15,6 +15,7 @@ import { icon } from '../icons.js';
 
 let selected = null, showSettled = false, host = null;
 let side = 'all';                       // all | lend | borrow — which half of the relationship
+let ccy = 'all';                        // all | SAR | INR | … — which currency of it
 const range = { from: '', to: '' };
 
 // One relationship can run both ways at once: money you lent him, and money you
@@ -47,7 +48,7 @@ export function refresh() { if (host) draw(); }
  * before `from`. A statement without an opening balance is a lie by omission —
  * the other side has to see where the number started.
  */
-export function ledgerFor(payee, from = '', to = '', half = 'all') {
+export function ledgerFor(payee, from = '', to = '', half = 'all', onlyCur = 'all') {
   let all = C.payeeLedger(payee);
   const unplaced = all.filter(r => sideOf(r) === 'other').length;
   if (half !== 'all') {
@@ -60,6 +61,10 @@ export function ledgerFor(payee, from = '', to = '', half = 'all') {
       return { ...r, balance: Math.round(run.get(c) * 100) / 100 };
     });
   }
+  // The currencies this side was dealt in — what the picker may offer, and
+  // read before the picker narrows it, or it would only ever offer itself.
+  const currencies = [...new Set(all.map(r => r.currency || 'SAR'))];
+  if (onlyCur !== 'all') all = all.filter(r => (r.currency || 'SAR') === onlyCur);
   const before = from ? all.filter(r => r.date < from) : [];
   const rows = all.filter(r => (!from || r.date >= from) && (!to || r.date <= to));
   const cur1 = r => r.currency || 'SAR';
@@ -79,7 +84,7 @@ export function ledgerFor(payee, from = '', to = '', half = 'all') {
     };
   }).filter(c => c.count || Math.abs(c.opening) >= 0.005);
   const main = cur[0] || { currency: 'SAR', opening: 0, inSum: 0, outSum: 0, closing: 0 };
-  return { rows, cur, total: all.length, mixed: cur.length > 1, half, unplaced,
+  return { rows, cur, total: all.length, mixed: cur.length > 1, half, unplaced, currencies,
     // What the rest of the screen already speaks, for the ordinary one-currency
     // payee. Never read these when `mixed` is true.
     currency: main.currency, opening: main.opening,
@@ -145,7 +150,7 @@ function draw() {
     tb.append(el('tr', {
       class: r.payee === selected ? 'picked' : '',
       style: 'cursor:pointer',
-      onclick: () => { selected = r.payee; side = 'all'; draw(); document.querySelector('#payee-ledger')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+      onclick: () => { selected = r.payee; side = 'all'; ccy = 'all'; draw(); document.querySelector('#payee-ledger')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
     },
       el('td', {}, el('span', { class: 'row gap', style: 'align-items:center;gap:6px' },
         el('span', {}, r.payee),
@@ -246,7 +251,7 @@ function renamePayee(name) {
 
 // ------------------------------------------------------------ one ledger ---
 function ledgerCard(lb) {
-  const L = ledgerFor(selected, range.from, range.to, side);
+  const L = ledgerFor(selected, range.from, range.to, side, ccy);
   const lastAcct = L.rows.length ? L.rows[L.rows.length - 1].account : undefined;
   // Which way the money is owed, read off the ledger itself rather than the
   // summary row — the summary picks one currency to show and would call a
@@ -288,12 +293,24 @@ function ledgerCard(lb) {
         quick('All time', '', ''),
         quick('This year', `${y}-01-01`, todayISO()),
         quick('Last 12 months', new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10), todayISO()))),
-    el('div', { class: 'field', style: 'flex:2 1 300px' }, el('label', {}, 'Side of the account'),
-      el('div', { class: 'row gap wrap' },
+    el('div', { class: 'field', style: 'flex:3 1 340px' }, el('label', {}, 'Side of the account'),
+      el('div', { class: 'row gap wrap', style: 'align-items:center' },
         ...['all', 'lend', 'borrow'].map(k => el('button', {
           class: 'btn sm' + (side === k ? ' primary' : ' ghost'),
-          onclick: () => { side = k; draw(); },
-        }, SIDE[k].chip)))));
+          onclick: () => {
+            side = k;
+            if (ccy !== 'all' && !ledgerFor(selected, '', '', k).currencies.includes(ccy)) ccy = 'all';
+            draw();
+          },
+        }, SIDE[k].chip)),
+        // One payee, two currencies, is the only case where this is a question
+        // worth asking — so the picker appears only then, and takes a corner.
+        L.currencies.length > 1
+          ? el('select', { style: 'margin-left:auto;max-width:132px',
+            onchange: e => { ccy = e.target.value; draw(); } },
+          ...['all', ...L.currencies].map(c => el('option',
+            { value: c, selected: ccy === c }, c === 'all' ? 'All currencies' : c)))
+          : null)));
 
   // -------------------------------------------------------------- table --
   const lt = el('table');
@@ -429,6 +446,7 @@ function statementCSV(L) {
       c.inSum.toFixed(2), c.outSum.toFixed(2), c.closing.toFixed(2)]);
   }
   const tag = [selected.replace(/[^\w]+/g, '-'), ...(side === 'all' ? [] : [side]),
+    ...(ccy === 'all' ? [] : [ccy]),
     range.from || 'start', range.to || todayISO()].join('_');
   downloadCSV(`jinnyfin-statement-${tag}.csv`, [head, ...rows]);
 }

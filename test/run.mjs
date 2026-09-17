@@ -1027,6 +1027,72 @@ test('a payee ledger splits into two sides that still add up', async browser => 
   return `${all.count} rows split ${lend.count}/${borrow.count}, balances still reconcile`;
 });
 
+test('picking a currency leaves only that currency in the payee statement', async browser => {
+  // A payee lent riyals and rupees has two debts that must never be added. The
+  // picker shows one of them at a time — and shows itself only when there are
+  // two, because one currency is not a question.
+  const { ctx, page, errors } = await open(browser, 'payee');
+  const seed = async () => page.evaluate(() => {
+    const t = window.JINNYFIN.DB.transactions.find(x => x.payee === 'Yahiya SAR');
+    window.JINNYFIN.DB.transactions.push({ ...t, id: 'test-inr-1', date: '2026-01-06',
+      currency: 'INR', parent: 'Lend', sub: 'Lend', income: 0, expense: 900, note: 'rupee loan' });
+    window.JINNYFIN.go('payee');
+  });
+  const pick = async name => {
+    await page.evaluate(n => {
+      const td = [...document.querySelectorAll('tbody td')].find(x => x.textContent.trim().startsWith(n));
+      td?.closest('tr')?.click();
+    }, name);
+    await page.waitForTimeout(500);
+  };
+  const picker = () => page.evaluate(() => {
+    const sel = document.querySelector('#payee-ledger select');
+    return sel ? [...sel.options].map(o => o.value) : null;
+  });
+  const rowCurrencies = () => page.evaluate(() => {
+    const head = [...document.querySelectorAll('#payee-ledger thead th')].map(h => h.textContent.trim());
+    const i = head.indexOf('Cur');
+    if (i < 0) return null;                       // one currency: the column is gone
+    return [...new Set([...document.querySelectorAll('#payee-ledger tbody tr')]
+      .map(r => r.querySelectorAll('td')[i]?.textContent.trim()).filter(Boolean))];
+  });
+  const rowCount = () => page.evaluate(() =>
+    document.querySelectorAll('#payee-ledger tbody tr').length);
+
+  await pick('Yahiya SAR');
+  if (await picker()) { await ctx.close(); throw new Error('a one-currency payee was offered a currency picker'); }
+
+  await seed();
+  await page.waitForTimeout(600);
+  await pick('Yahiya SAR');
+  const opts = await picker();
+  if (!opts || !opts.includes('SAR') || !opts.includes('INR')) {
+    await ctx.close(); throw new Error(`the picker did not offer both currencies: ${opts}`); }
+  const both = await rowCount();
+  if ((await rowCurrencies() || []).length !== 2) {
+    await ctx.close(); throw new Error('the unfiltered ledger is not showing both currencies'); }
+
+  await page.selectOption('#payee-ledger select', 'INR');
+  await page.waitForTimeout(500);
+  const inrRows = await rowCount();
+  if (await rowCurrencies() !== null) {
+    await ctx.close(); throw new Error('the Cur column stayed after narrowing to one currency'); }
+  if (inrRows !== 1) { await ctx.close(); throw new Error(`INR shows ${inrRows} rows, expected 1`); }
+  const inrText = await page.evaluate(() => document.querySelector('#payee-ledger tbody').textContent);
+  if (!/rupee loan/.test(inrText)) { await ctx.close(); throw new Error('the INR row is not the rupee one'); }
+
+  await page.selectOption('#payee-ledger select', 'SAR');
+  await page.waitForTimeout(500);
+  const sarRows = await rowCount();
+  const sarText = await page.evaluate(() => document.querySelector('#payee-ledger tbody').textContent);
+  await ctx.close();
+  if (/rupee loan/.test(sarText)) throw new Error('a rupee row survived the SAR filter');
+  if (sarRows + inrRows !== both) {
+    throw new Error(`${sarRows} + ${inrRows} rows do not make the ${both} shown unfiltered`); }
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `picker appears only when needed; ${both} rows split ${sarRows} SAR / ${inrRows} INR`;
+});
+
 // ------------------------------------------------------------------- run ---
 const only = process.argv.slice(2).filter(a => !a.startsWith('-'));
 const server = await serve();
