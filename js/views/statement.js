@@ -40,6 +40,18 @@ function openThing(kind, name) {
   draw(); window.scrollTo(0, 0);
 }
 
+/**
+ * The menu's own entry, pressed while this screen is already open. First press
+ * brings you back to where you left it (the shell does that). A second press
+ * means the account on screen is not the one you came for — so it does exactly
+ * what "← All accounts" does, and says it handled it.
+ */
+export function again() {
+  if (!f.account && !f.tag) return false;     // already on the list: let the shell scroll up
+  openThing('');
+  return true;
+}
+
 export async function render(root) { host = root; readUrl(); draw(); }
 export function refresh() { if (host) { readUrl(); draw(); } }
 

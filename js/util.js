@@ -59,7 +59,11 @@ export function fmtDateShort(d) {
 const NF = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const NF0 = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
 
-export const SYM = { SAR: 'ر.س', INR: '₹', USD: '$' };
+// Written left-to-right on purpose. The Arabic ﷼ mark is a right-to-left run,
+// and a right-to-left run next to a figure drags the browser's own reordering
+// into every line it sits in: "173% used" came out as "173ر.س% used", and a
+// budget's "191 / 18" read back as "18 / 191". No symbol is worth a wrong number.
+export const SYM = { SAR: 'SR ', INR: '₹', USD: '$' };
 
 export function money(v, cur = 'INR', decimals = true) {
   const n = Number(v) || 0;
@@ -485,6 +489,7 @@ export function confirmBox(msg, okLabel = 'Yes, do it') {
         cancel,
         el('button', { class: 'btn danger', onclick: () => done(true) }, okLabel)));
     wrap.append(box);
+    trapFocus(box);
     dismissOnBackdrop(wrap, () => done(false));
     document.body.append(wrap);
     document.addEventListener('keydown', onKey, true);
@@ -507,18 +512,50 @@ export function closeThen(overlay, fn) {
   overlay.close();
 }
 
+/**
+ * Keep the keyboard inside the sheet. Tab used to walk out of an open editor
+ * and into the page behind it, so the next Enter pressed a button nobody could
+ * see. Here Tab runs the sheet's own fields in order and wraps from the last
+ * back to the first — and a date or time box is ONE stop, not three: its
+ * segments are reached by typing into them, which is how they already behave.
+ */
+const FOCUSABLE = 'a[href],button,input,select,textarea,[tabindex]';
+export function trapFocus(box) {
+  const stops = () => [...box.querySelectorAll(FOCUSABLE)].filter(n =>
+    !n.disabled && n.tabIndex !== -1 && n.type !== 'hidden'
+    && !n.closest('[hidden]') && (n.offsetWidth || n.offsetHeight || n.getClientRects().length));
+  box.addEventListener('keydown', e => {
+    if (e.key !== 'Tab') return;
+    const list = stops();
+    if (!list.length) return;
+    e.preventDefault();                       // we decide where it goes, not the browser
+    const here = list.indexOf(document.activeElement);
+    const next = here < 0 ? (e.shiftKey ? list.length - 1 : 0)
+      : (here + (e.shiftKey ? -1 : 1) + list.length) % list.length;
+    const n = list[next];
+    n.focus();
+    if (typeof n.select === 'function' && /^(text|number|search|tel|url|password)$/.test(n.type || 'text')) {
+      try { n.select(); } catch { /* not selectable */ }
+    }
+  });
+}
+
 export function modal(title, body, { wide = false, footer = null, lead = null } = {}) {
   const wrap = el('div', { class: 'modal-wrap' });
   let disarm = () => {};
   const close = () => { disarm(); wrap.remove(); document.removeEventListener('keydown', onKey); };
   const onKey = e => { if (e.key === 'Escape') close(); };
+  // The head's two buttons are for the pointer and for Escape. Leaving them in
+  // the Tab order put a stop between Save and the first field for no purpose.
+  if (lead) lead.tabIndex = -1;
   const box = el('div', { class: 'modal' + (wide ? ' wide' : '') },
     el('div', { class: 'modal-head' },
       lead, el('h3', {}, title),
-      el('button', { class: 'icon-btn', onclick: close, title: 'Close' }, '✕')),
+      el('button', { class: 'icon-btn', tabindex: '-1', onclick: close, title: 'Close' }, '✕')),
     el('div', { class: 'modal-body' }, body),
     footer ? el('div', { class: 'modal-foot' }, footer) : null);
   wrap.append(box);
+  trapFocus(box);
   dismissOnBackdrop(wrap, close);
   document.addEventListener('keydown', onKey);
   document.body.append(wrap);

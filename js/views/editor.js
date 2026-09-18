@@ -569,7 +569,10 @@ export function openTxEditor(existing = null, presets = {}) {
   }
 
   for (const ty of TYPES) {
-    const b = el('button', { class: type === ty ? 'on' : '', onclick: () => {
+    // The type row is a picker for the pointer. In the Tab order it sat between
+    // Save and the Amount box, so the loop back to the top ran through six
+    // buttons that change the whole sheet if Enter lands on one.
+    const b = el('button', { class: type === ty ? 'on' : '', tabindex: '-1', onclick: () => {
       if (type === ty) return;
       type = ty;
       [...typeRow.children].forEach(c => c.classList.toggle('on', c.dataset.ty === ty));
@@ -813,7 +816,7 @@ export function openTxEditor(existing = null, presets = {}) {
 
   const footer = [
     existing ? el('button', {
-      class: 'btn ghost', style: 'margin-right:auto;color:var(--critical)',
+      class: 'btn ghost', tabindex: '-1', style: 'margin-right:auto;color:var(--critical)',
       onclick: async () => {
         // Deleting one leg of a transfer and leaving the other is how a balance
         // goes quietly wrong, so say plainly what is about to happen.
@@ -832,7 +835,7 @@ export function openTxEditor(existing = null, presets = {}) {
       },
     }, 'Delete') : null,
     existing ? el('button', {
-      class: 'btn', onclick: async () => {
+      class: 'btn', tabindex: '-1', onclick: async () => {
         // A copy is the same entry on a new day — nothing else changes. For a
         // transfer that means BOTH sides, as a fresh pair of their own, or the
         // copy would be money arriving from nowhere.

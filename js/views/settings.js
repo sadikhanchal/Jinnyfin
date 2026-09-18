@@ -17,7 +17,8 @@ import { icon } from '../icons.js';
 
 let tab = 'general', host = null;
 let showInactive = false;      // closed accounts stay out of the way by default
-let showArchivedCats = false;  // and archived categories do too
+let catQuery = '';             // the category search box
+const catOpen = new Set();     // which type cards are expanded (closed by default)
 let asOf = null;               // reconcile up to this date (null = today)
 const TABS = [['general', 'General'], ['accounts', 'Accounts'], ['categories', 'Categories'],
   ['fx', 'Exchange rates'], ['reconcile', 'Reconcile'], ['check', 'Data check'],
@@ -372,55 +373,98 @@ function categories() {
         el('a', { href: '#', onclick: e => { e.preventDefault(); tab = 'check'; draw(); } }, 'see them in Data check'))));
   }
 
+  // Everything used to be open at once: six types, a hundred names, and finding
+  // one meant the browser's own find. Closed by default, with a box that
+  // searches the names, is the difference between a list and a filing cabinet.
+  const q = catQuery.trim().toLowerCase();
+  const hit = c => !q || (c.parent || '').toLowerCase().includes(q) || (c.sub || '').toLowerCase().includes(q);
+
   const byType = {};
   for (const c of DB.categories) {
-    if (c.active === false && !showArchivedCats) continue;
     if (!byType[c.type]) byType[c.type] = {};
     byType[c.type][c.parent] = [...(byType[c.type][c.parent] || []), c];
   }
-  const archived = DB.categories.filter(c => c.active === false).length;
-  host.append(el('div', { class: 'row', style: 'margin-bottom:10px' },
+
+  const search = el('input', { type: 'search', value: catQuery, placeholder: 'Search categories…',
+    style: 'max-width:260px', oninput: e => { catQuery = e.target.value; draw(); } });
+  host.append(el('div', { class: 'row gap wrap', style: 'margin-bottom:10px;align-items:center' },
     el('button', { class: 'btn sm primary', onclick: () => editCat() }, '+ Category'),
-    archived ? el('label', { class: 'chip', style: 'cursor:pointer' },
-      el('input', { type: 'checkbox', checked: showArchivedCats,
-        onchange: e => { showArchivedCats = e.target.checked; draw(); } }),
-      ` show ${archived} archived`) : null));
+    search,
+    el('div', { class: 'spacer' }),
+    el('button', { class: 'btn sm ghost', onclick: () => {
+      const all = Object.keys(byType);
+      if (all.every(t => catOpen.has(t))) catOpen.clear(); else all.forEach(t => catOpen.add(t));
+      draw();
+    } }, 'Expand / collapse all')));
   host.append(el('p', { class: 'small muted', style: 'margin:0 0 10px' },
     'Archiving takes a category out of every picker and leaves it on every entry that already uses it. '
-    + 'Use it for something like Family Visit that you may need again years later.'));
+    + 'Use it for something like Family Visit that you may need again years later. '
+    + 'Archived names sit in their own section at the foot of each type.'));
+
+  /** One category's row — the name, what it is on, and its two buttons. */
+  const parentRow = (type, parent, list) => {
+    const subs = list.filter(c => c.sub);
+    const live = list.some(c => c.active !== false);
+    // By type as well as name: "Gift" can be an Income category and an Expense
+    // one, and counting them together overstated both.
+    const used = DB.transactions.filter(t => !t.deleted && t.type === type && t.parent === parent).length;
+    return el('div', { style: 'padding:7px 0;border-bottom:1px solid var(--grid)' },
+      el('div', { class: 'row' },
+        el('b', { style: live ? '' : 'color:var(--warning)' }, parent),
+        live ? null : el('span', { class: 'small', style: 'color:var(--warning)' }, ' · archived'),
+        el('div', { class: 'spacer' }),
+        el('span', { class: 'small muted' }, used + ' entries'),
+        el('button', { class: 'icon-btn',
+          title: live
+            ? `Archive — the ${used} entries keep it, the pickers lose it`
+            : 'Bring it back into the pickers',
+          onclick: async () => {
+            // Every row under the name flips together, so the parent leaves
+            // the dropdown as one thing rather than half of one.
+            await putMany('categories', list.map(c => ({ ...c, active: !live })));
+            toast(live ? `${parent} archived` : `${parent} is back`);
+            draw();
+          } }, live ? icon('archive', 15) : '\u21A9'),
+        el('button', { class: 'icon-btn', title: 'Add a sub-category',
+          onclick: () => editCat({ type, parent, sub: null }) }, '+')),
+      subs.length ? el('div', { class: 'pill-list', style: 'margin-top:5px' },
+        subs.map(c => el('button', {
+          class: 'chip', style: c.active === false ? 'color:var(--warning);border-color:var(--warning)' : '',
+          onclick: () => editCat(c),
+        }, c.sub + (c.active === false ? ' · archived' : '')))) : null);
+  };
+
   for (const [type, parents] of Object.entries(byType)) {
-    const card = el('div', { class: 'card', style: 'margin-bottom:12px' },
-      el('div', { class: 'card-head' }, el('h3', {}, `${type} — ${Object.keys(parents).length} categories`)));
-    for (const [parent, list] of Object.entries(parents).sort()) {
-      const subs = list.filter(c => c.sub);
-      const live = list.some(c => c.active !== false);
-      // By type as well as name: "Gift" can be an Income category and an Expense
-      // one, and counting them together overstated both.
-      const used = DB.transactions.filter(t => !t.deleted && t.type === type && t.parent === parent).length;
-      card.append(el('div', { style: 'padding:7px 0;border-bottom:1px solid var(--grid)' },
-        el('div', { class: 'row' },
-          el('b', { style: live ? '' : 'opacity:.55' }, parent),
-          live ? null : el('span', { class: 'small muted' }, ' · archived'),
-          el('div', { class: 'spacer' }),
-          el('span', { class: 'small muted' }, used + ' entries'),
-          el('button', { class: 'icon-btn',
-            title: live
-              ? `Archive — the ${used} entries keep it, the pickers lose it`
-              : 'Bring it back into the pickers',
-            onclick: async () => {
-              // Every row under the name flips together, so the parent leaves
-              // the dropdown as one thing rather than half of one.
-              await putMany('categories', list.map(c => ({ ...c, active: !live })));
-              toast(live ? `${parent} archived` : `${parent} is back`);
-              draw();
-            } }, live ? icon('archive', 15) : '\u21A9'),
-          el('button', { class: 'icon-btn', title: 'Add a sub-category',
-            onclick: () => editCat({ type, parent, sub: null }) }, '+')),
-        subs.length ? el('div', { class: 'pill-list', style: 'margin-top:5px' },
-          subs.map(c => el('button', {
-            class: 'chip', style: c.active === false ? 'opacity:.55' : '',
-            onclick: () => editCat(c),
-          }, c.sub + (c.active === false ? ' · archived' : '')))) : null));
+    const entries = Object.entries(parents).sort();
+    const isLive = list => list.some(c => c.active !== false);
+    const liveOnes = entries.filter(([, l]) => isLive(l));
+    const goneOnes = entries.filter(([, l]) => !isLive(l));
+    // A search shows what it found, wherever it is; without one, the card
+    // opens only if it was opened.
+    const shownLive = q ? liveOnes.filter(([, l]) => l.some(hit)) : liveOnes;
+    const shownGone = q ? goneOnes.filter(([, l]) => l.some(hit)) : goneOnes;
+    if (q && !shownLive.length && !shownGone.length) continue;
+    const open = q ? true : catOpen.has(type);
+
+    const head = el('div', { class: 'card-head', style: 'cursor:pointer',
+      onclick: () => { if (q) return; catOpen.has(type) ? catOpen.delete(type) : catOpen.add(type); draw(); } },
+    el('span', { class: 'small muted', style: 'width:14px;display:inline-block' }, open ? '\u25BE' : '\u25B8'),
+    el('h3', {}, `${type} — ${liveOnes.length} categories`),
+    goneOnes.length
+      ? el('span', { class: 'small', style: 'color:var(--warning)' }, `${goneOnes.length} archived`)
+      : null);
+    const card = el('div', { class: 'card', style: 'margin-bottom:12px' }, head);
+
+    if (open) {
+      for (const [parent, list] of shownLive) card.append(parentRow(type, parent, list));
+      if (shownGone.length) {
+        card.append(el('div', { class: 'row', style: 'margin-top:12px;align-items:center;gap:8px' },
+          el('span', { style: 'color:var(--warning);display:flex' }, icon('archive', 15)),
+          el('b', { class: 'small', style: 'color:var(--warning)' },
+            `Archived (${shownGone.length})`),
+          el('span', { class: 'small muted' }, '— out of the pickers, still on their entries')));
+        for (const [parent, list] of shownGone) card.append(parentRow(type, parent, list));
+      }
     }
     host.append(card);
   }

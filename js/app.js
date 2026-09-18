@@ -14,7 +14,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.51', date: '2026-09-16' };
+export const BUILD = { version: '1.52', date: '2026-09-16' };
 
 /**
  * `icon` names a mark in js/icons.js; `tint` is the palette token it wears.
@@ -104,16 +104,33 @@ function closeDrawerSettled() {
   });
 }
 
+/**
+ * Tapping the screen you are already on means "take me back to the top of it".
+ * On the statement that is the account list — the same thing "← All accounts"
+ * does, without hunting for the button after a long scroll. A view says what
+ * that means for itself by exporting `again()`; the rest simply scroll up.
+ */
+function sameRouteAgain() {
+  const done = currentView && typeof currentView.again === 'function' && currentView.again();
+  if (!done) window.scrollTo({ top: 0, behavior: 'smooth' });
+  return true;
+}
+
 /** Navigating from the drawer: unwind its history entry FIRST, then route. */
 function pickFromDrawer(r) {
   if (drawerPushed) { pendingRoute = r; closeDrawer(true); return; }
-  closeDrawer(false); go(r);
+  closeDrawer(false);
+  if (r === route()) { sameRouteAgain(); return; }
+  go(r);
 }
 
 addEventListener('popstate', () => {
   drawerPushed = false;
   closeDrawer(false);
-  if (pendingRoute) { const r = pendingRoute; pendingRoute = null; go(r); }
+  if (pendingRoute) {
+    const r = pendingRoute; pendingRoute = null;
+    if (r === route()) sameRouteAgain(); else go(r);
+  }
 });
 addEventListener('keydown', e => { if (e.key === 'Escape' && drawerOpen()) closeDrawer(); });
 

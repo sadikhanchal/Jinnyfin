@@ -1093,6 +1093,173 @@ test('picking a currency leaves only that currency in the payee statement', asyn
   return `picker appears only when needed; ${both} rows split ${sarRows} SAR / ${inrRows} INR`;
 });
 
+test('Tab runs the editor in order and never leaves it', async browser => {
+  // Tab used to walk out of an open sheet and into the page behind it, so the
+  // next Enter pressed a button nobody could see. And a date box swallowed
+  // three Tabs of its own — its segments are reached by typing, not by Tab.
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  await page.evaluate(() => window.JINNYFIN.openTxEditor());
+  await page.waitForTimeout(500);
+  const where = () => page.evaluate(() => {
+    const a = document.activeElement;
+    if (!a) return 'nothing';
+    const inModal = !!a.closest('.modal');
+    const field = a.closest('.field')?.querySelector('label')?.textContent?.trim();
+    return `${inModal ? '' : 'OUTSIDE:'}${field || a.textContent?.trim() || a.type || a.tagName}`;
+  });
+  const seen = [];
+  for (let i = 0; i < 14; i++) { seen.push(await where()); await page.keyboard.press('Tab'); await page.waitForTimeout(90); }
+  const outside = seen.filter(x => x.startsWith('OUTSIDE:'));
+  if (outside.length) { await ctx.close(); throw new Error(`focus left the sheet: ${outside[0]} (${seen.join(' → ')})`); }
+  if (seen[0] !== 'Amount') { await ctx.close(); throw new Error(`the sheet did not open on Amount: ${seen[0]}`); }
+  // Every stop is a different field: a date or time box is one stop, not three.
+  const runs = seen.filter((x, i) => i && x === seen[i - 1]);
+  if (runs.length) { await ctx.close(); throw new Error(`Tab stayed inside one box: ${runs[0]}`); }
+  // and it comes back round to where it started
+  if (!seen.slice(1).includes('Amount')) {
+    await ctx.close(); throw new Error(`Tab never wrapped back to Amount: ${seen.join(' → ')}`); }
+  const order = seen.slice(0, seen.indexOf('Amount', 1));
+  await ctx.close();
+  const want = ['Amount', 'Account', 'Date', 'Time'];
+  for (let i = 0; i < want.length; i++) {
+    if (order[i] !== want[i]) throw new Error(`stop ${i + 1} is ${order[i]}, expected ${want[i]} (${order.join(' → ')})`);
+  }
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return order.join(' → ') + ' → (loops)';
+});
+
+test('one category cannot hold two budgets for the same period', async browser => {
+  // Three budgets on Food and Dining made one ₹4,831 of spending read as
+  // ₹14,493 in the total at the top — and a figure at the top of a screen is
+  // the one people believe.
+  const { ctx, page, errors } = await open(browser, 'budgets');
+  const totals = () => page.evaluate(() => [...document.querySelectorAll('.kpi')]
+    .map(k => k.textContent.replace(/\s+/g, ' ').trim()));
+  const seed = n => page.evaluate(count => {
+    const t = window.JINNYFIN.DB.transactions.find(x => x.type === 'Expense' && x.parent);
+    window.JINNYFIN.DB.budgets = [];
+    for (let i = 0; i < count; i++) {
+      window.JINNYFIN.DB.budgets.push({ id: 'test-b' + i, parent: t.parent, sub: null,
+        amount: 400, currency: 'INR', period: 'monthly', updated_at: `2026-01-0${i + 1}` });
+    }
+    window.JINNYFIN.go('dashboard');
+    return t.parent;
+  }, n).then(async parent => {
+    await page.waitForTimeout(250);
+    await page.evaluate(() => window.JINNYFIN.go('budgets'));
+    return parent;
+  });
+
+  const cat = await seed(1);
+  await page.waitForTimeout(700);
+  const one = await totals();
+  await seed(3);
+  await page.waitForTimeout(700);
+  const three = await totals();
+  if (JSON.stringify(one) !== JSON.stringify(three)) {
+    await ctx.close();
+    throw new Error(`the same spending counted differently: ${one.join(' | ')}  vs  ${three.join(' | ')}`); }
+
+  // and the page offers to clear the repeats it found
+  const offered = await page.evaluate(() => {
+    const a = [...document.querySelectorAll('a')].find(x => /Remove the repeats/i.test(x.textContent));
+    if (!a) return false; a.click(); return true;
+  });
+  if (!offered) { await ctx.close(); throw new Error('no offer to remove the repeated budgets'); }
+  await page.waitForTimeout(350);
+  await topClick(page, ['Remove them']);
+  await page.waitForTimeout(600);
+  const left = await page.evaluate(() => window.JINNYFIN.DB.budgets.length);
+  if (left !== 1) { await ctx.close(); throw new Error(`${left} budgets left, expected 1`); }
+
+  // a second one cannot be made by hand either
+  await page.evaluate(() => [...document.querySelectorAll('button')]
+    .find(b => /\+ Budget/.test(b.textContent))?.click());
+  await page.waitForTimeout(350);
+  await page.selectOption('.modal-body select', cat);
+  await page.waitForTimeout(200);
+  await page.fill('.modal-body input[type=number]', '999');
+  await topClick(page, ['Save']);
+  await page.waitForTimeout(400);
+  const asked = await page.evaluate(() => {
+    const all = [...document.querySelectorAll('.modal')];
+    return all[all.length - 1]?.textContent || '';
+  });
+  await topClick(page, ['Cancel']);
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => window.JINNYFIN.DB.budgets.length);
+  await ctx.close();
+  if (!/already has a/i.test(asked)) throw new Error(`a duplicate was accepted quietly: ${asked.slice(0, 120)}`);
+  if (after !== 1) throw new Error(`${after} budgets after cancelling the duplicate, expected 1`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'totals count each spend once; a repeat is refused and the old ones can be cleared';
+});
+
+test('the statement menu entry, pressed twice, goes back to the account list', async browser => {
+  const { ctx, page, errors } = await open(browser, 'statement');
+  const openAccount = async () => {
+    await page.evaluate(() => {
+      const td = [...document.querySelectorAll('tbody td')][0];
+      td?.closest('tr')?.click();
+    });
+    await page.waitForTimeout(600);
+  };
+  // The URL is not the answer: the menu navigates to a bare #/statement either
+  // way. What matters is what is on screen — the list, or one account's sheet.
+  const onList = () => page.evaluate(() =>
+    !document.querySelector('#main button')?.textContent?.includes('All accounts')
+    && !!document.querySelector('#main tbody tr'));
+  const navClick = async () => {
+    const hit = await page.evaluate(() => {
+      const b = document.querySelector('[data-route="statement"]');
+      if (!b) return false; b.click(); return true;
+    });
+    if (!hit) { await ctx.close(); throw new Error('no statement entry in the menu'); }
+    await page.waitForTimeout(700);
+  };
+
+  if (!await onList()) { await ctx.close(); throw new Error('the statement did not open on the account list'); }
+  await openAccount();
+  if (await onList()) { await ctx.close(); throw new Error('clicking an account did not open its statement'); }
+  await navClick();
+  const back = await onList();
+  await ctx.close();
+  if (!back) throw new Error('pressing the statement entry again did not return to the account list');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'a second press on the open screen is “← All accounts”';
+});
+
+test('the category list opens closed, and its search finds a name', async browser => {
+  // Six types and a hundred names, all open at once, meant the browser's own
+  // find was the only way through.
+  const { ctx, page, errors } = await open(browser, 'settings');
+  await page.evaluate(() => [...document.querySelectorAll('.seg button')]
+    .find(b => b.textContent.trim() === 'Categories')?.click());
+  await page.waitForTimeout(600);
+  const names = () => page.evaluate(() =>
+    [...document.querySelectorAll('.card b')].map(b => b.textContent.trim()));
+  const shut = await names();
+  if (shut.length) { await ctx.close(); throw new Error(`the list opened expanded: ${shut.slice(0, 4).join(', ')}`); }
+
+  const heads = await page.evaluate(() =>
+    [...document.querySelectorAll('.card-head h3')].map(h => h.textContent.trim()));
+  if (!heads.length) { await ctx.close(); throw new Error('no type cards at all'); }
+  await page.evaluate(() => document.querySelector('.card-head')?.click());
+  await page.waitForTimeout(400);
+  const opened = await names();
+  if (!opened.length) { await ctx.close(); throw new Error('clicking a type card did not open it'); }
+
+  const want = opened[Math.min(1, opened.length - 1)];
+  await page.fill('input[type=search]', want);
+  await page.waitForTimeout(450);
+  const found = await names();
+  await ctx.close();
+  if (!found.includes(want)) throw new Error(`searching for ${want} did not find it`);
+  if (found.length > opened.length) throw new Error('the search widened the list instead of narrowing it');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `${heads.length} types, closed; search found ${want}`;
+});
+
 // ------------------------------------------------------------------- run ---
 const only = process.argv.slice(2).filter(a => !a.startsWith('-'));
 const server = await serve();

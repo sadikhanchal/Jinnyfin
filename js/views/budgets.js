@@ -37,11 +37,34 @@ function draw() {
       el('button', { class: 'btn primary', onclick: () => edit() }, 'Set the first budget')));
     return;
   }
-  const spent = rows.reduce((s, r) => s + r.spent, 0), limit = rows.reduce((s, r) => s + r.limit, 0);
+  // Three budgets on Food and Dining used to make one ₹4,831 of spending read
+  // as ₹14,493 up here. A figure at the top of a screen is the one people
+  // believe, so it counts every riyal once: duplicates fold together, and where
+  // a whole category is budgeted, its sub-budgets are already inside it.
+  const whole = new Set(rows.filter(r => !r.sub).map(r => r.parent));
+  const seen = new Set();
+  const forTotals = rows.filter(r => {
+    if (r.sub && whole.has(r.parent)) return false;
+    const key = `${r.parent}|${r.sub || ''}|${r.period || 'monthly'}`;
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+  const spent = forTotals.reduce((s, r) => s + r.spent, 0);
+  const limit = forTotals.reduce((s, r) => s + r.limit, 0);
+  const dupes = rows.length - new Set(rows.map(r => `${r.parent}|${r.sub || ''}|${r.period || 'monthly'}`)).size;
   host.append(el('div', { class: 'grid g3' },
     kpi('Budgeted', money(limit, 'INR', false)),
     kpi('Spent', money(spent, 'INR', false), spent > limit ? 'expense' : ''),
     kpi('Left', money(limit - spent, 'INR', false), limit - spent < 0 ? 'expense' : 'income')));
+
+  if (dupes) {
+    host.append(el('div', { class: 'alert slim', style: 'margin-top:10px' },
+      el('span', { class: 'ico' }, '⚠'),
+      el('div', {}, `${dupes} budget${dupes > 1 ? 's repeat' : ' repeats'} a category that is already budgeted `
+        + 'for the same period. Only one ceiling per category can mean anything. ',
+      el('a', { href: '#', onclick: e => { e.preventDefault(); dropDuplicates(rows); } },
+        'Remove the repeats'))));
+  }
 
   const list = el('div', { class: 'grid', style: 'margin-top:12px' });
   for (const r of rows) {
@@ -68,6 +91,28 @@ function draw() {
   }
   host.append(list);
   restoreFilterFocus(host);   // the cursor stays in the filter you were arrowing through
+}
+
+/** Keep the newest of each repeated category; the older ones go. */
+async function dropDuplicates(rows) {
+  const keep = new Map();
+  const drop = [];
+  for (const r of rows) {
+    const key = `${r.parent}|${r.sub || ''}|${r.period || 'monthly'}`;
+    const held = keep.get(key);
+    if (!held) { keep.set(key, r); continue; }
+    // The newest wins, because that is the one he set last.
+    const older = (r.updated_at || '') > (held.updated_at || '') ? held : r;
+    if (older === held) keep.set(key, r);
+    drop.push(older);
+  }
+  if (!drop.length) return;
+  const names = [...new Set(drop.map(r => r.parent + (r.sub ? ' · ' + r.sub : '')))].join(', ');
+  if (!(await confirmBox(`Remove ${drop.length} repeated budget${drop.length > 1 ? 's' : ''} `
+    + `(${names}), keeping the one set most recently? No spending is touched.`, 'Remove them'))) return;
+  for (const r of drop) await remove('budgets', r.id);
+  toast(`${drop.length} removed`);
+  draw();
 }
 
 function edit(b = null) {
@@ -106,6 +151,19 @@ function edit(b = null) {
         onclick: async () => { if (await confirmBox('Remove this budget?')) { await remove('budgets', b.id); m.close(); } } }, 'Delete') : null,
       el('button', { class: 'btn primary', onclick: async () => {
         if (!parent.value) return toast('Pick a category', 'warn');
+        // One category, one ceiling, per period. A second one does not add a
+        // rule — it just counts the same spending twice on this screen.
+        const clash = DB.budgets.find(x => x.id !== (b?.id)
+          && x.parent === parent.value && (x.sub || null) === (sub.value || null)
+          && (x.period || 'monthly') === period.value);
+        if (clash) {
+          const what = parent.value + (sub.value ? ' · ' + sub.value : '');
+          m.close();
+          if (await confirmBox(`${what} already has a ${period.value === 'yearly' ? 'yearly' : 'monthly'} budget `
+            + `of ${money(clash.currency === 'SAR' ? clash.amount : clash.amount, clash.currency, false)}. `
+            + 'Open that one instead?', 'Open it')) edit(clash);
+          return;
+        }
         await put('budgets', { ...v, parent: parent.value, sub: sub.value || null,
           amount: +amount.value || 0, currency: cur.value, period: period.value });
         m.close();
