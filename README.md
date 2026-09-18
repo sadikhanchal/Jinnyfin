@@ -94,4 +94,4 @@ Commit). Bump `jinnyfin-v1` in `sw.js` so installed copies pick the change up.
   small residual balances stay out of the cash total. Settings → Accounts lists
   them if you ever want to clear them properly.
 - Investment holdings tracked by category rather than by account compute as
-  deposits + returns − withdrawals.
+  deposits + returns − withdrawals. 
