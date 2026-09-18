@@ -1120,12 +1120,37 @@ test('Tab runs the editor in order and never leaves it', async browser => {
     await ctx.close(); throw new Error(`Tab never wrapped back to Amount: ${seen.join(' → ')}`); }
   const order = seen.slice(0, seen.indexOf('Amount', 1));
   await ctx.close();
-  const want = ['Amount', 'Account', 'Date', 'Time'];
+  const want = ['Amount', 'Account', 'Date', 'Time', 'Category', 'Sub-category', 'Description'];
   for (let i = 0; i < want.length; i++) {
     if (order[i] !== want[i]) throw new Error(`stop ${i + 1} is ${order[i]}, expected ${want[i]} (${order.join(' → ')})`);
   }
+  // Payee and Event are for the pointer on an ordinary entry — they are not
+  // worth a Tab each on every one of the other forty-nine.
+  const stray = order.filter(x => /Payee|Event/.test(x));
+  if (stray.length) throw new Error(`${stray.join(' and ')} should not be in the Tab run for an Expense`);
   if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
   return order.join(' → ') + ' → (loops)';
+});
+
+test('on a Lend/Borrow the payee keeps its place in the Tab run', async browser => {
+  // Skipping Payee is right for a shop receipt and wrong here: on a loan the
+  // payee is the entry. Whoever it is owed to has to be reachable by keyboard.
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  await page.evaluate(() => window.JINNYFIN.openTxEditor(null, { type: 'Lend/Borrow' }));
+  await page.waitForTimeout(500);
+  const seen = [];
+  for (let i = 0; i < 12; i++) {
+    seen.push(await page.evaluate(() => {
+      const a = document.activeElement;
+      return a?.closest('.field')?.querySelector('label')?.textContent?.trim()
+        || a?.textContent?.trim() || a?.tagName || 'nothing';
+    }));
+    await page.keyboard.press('Tab'); await page.waitForTimeout(90);
+  }
+  await ctx.close();
+  if (!seen.includes('Payee')) throw new Error(`Payee is not in the run: ${seen.join(' → ')}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return seen.slice(0, seen.indexOf('Amount', 1) || 9).join(' → ');
 });
 
 test('one category cannot hold two budgets for the same period', async browser => {
@@ -1258,6 +1283,130 @@ test('the category list opens closed, and its search finds a name', async browse
   if (found.length > opened.length) throw new Error('the search widened the list instead of narrowing it');
   if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
   return `${heads.length} types, closed; search found ${want}`;
+});
+
+test('a loan entry opens on Lend and writes its own description', async browser => {
+  // Nine Lend/Borrow entries in ten are a loan, and every one of them used to
+  // open on Borrow and need the same sentence typed by hand.
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  await page.evaluate(() => window.JINNYFIN.openTxEditor(null, { type: 'Lend/Borrow' }));
+  await page.waitForTimeout(500);
+  const pick = () => page.evaluate(() => [...document.querySelectorAll('.modal-body select')]
+    .map(s => s.value));
+  const note = () => page.evaluate(() =>
+    [...document.querySelectorAll('.modal-body input')]
+      .find(i => i.placeholder === 'Description')?.value || '');
+  const typePayee = async name => {
+    await page.evaluate(n => {
+      const p = [...document.querySelectorAll('.modal-body input')].find(i => i.placeholder === 'Who?');
+      p.focus(); p.value = n;
+    }, name);
+    await page.keyboard.press('Tab');       // leaving the box is what settles it
+    await page.waitForTimeout(350);
+  };
+  const setSub = async value => {
+    await page.evaluate(v => {
+      const sels = [...document.querySelectorAll('.modal-body select')];
+      const s = sels[1];
+      s.value = v; s.dispatchEvent(new Event('change', { bubbles: true }));
+    }, value);
+    await page.waitForTimeout(300);
+  };
+
+  const [cat, sb] = await pick();
+  if (cat !== 'Lend' || sb !== 'Lend') {
+    await ctx.close(); throw new Error(`opened on ${cat} · ${sb}, expected Lend · Lend`); }
+
+  await typePayee('Mustafa');
+  if (await note() !== 'Mustafa took out a loan') {
+    await ctx.close(); throw new Error(`Lend · Lend wrote: “${await note()}”`); }
+
+  await setSub('Collecting debts');
+  if (await note() !== 'Mustafa repaid money') {
+    await ctx.close(); throw new Error(`Lend · Collecting debts wrote: “${await note()}”`); }
+
+  // his own words are never overwritten
+  await page.evaluate(() => {
+    const n = [...document.querySelectorAll('.modal-body input')].find(i => i.placeholder === 'Description');
+    n.value = 'for the car repair'; n.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await setSub('Lend');
+  await typePayee('Mustafa');
+  const mine = await note();
+  await ctx.close();
+  if (mine !== 'for the car repair') throw new Error(`it overwrote what he typed: “${mine}”`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'opens on Lend · Lend; the line follows the payee and the sub, and stops at his own words';
+});
+
+test('the type row is one Tab stop, walked with the arrow keys', async browser => {
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  await page.evaluate(() => window.JINNYFIN.openTxEditor());
+  await page.waitForTimeout(500);
+  const active = () => page.evaluate(() => {
+    const a = document.activeElement;
+    return { type: a?.dataset?.ty || '', label: a?.closest('.field')?.querySelector('label')?.textContent?.trim() || '' };
+  });
+  // Shift+Tab out of the Amount box lands on the row, on the type in force
+  await page.keyboard.press('Shift+Tab');
+  await page.waitForTimeout(200);
+  let at = await active();
+  if (!at.type) { await ctx.close(); throw new Error(`Shift+Tab from Amount went to ${at.label || 'nowhere'}`); }
+  const first = at.type;
+
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(350);
+  at = await active();
+  if (!at.type || at.type === first) {
+    await ctx.close(); throw new Error('the right arrow did not move along the row'); }
+  const second = at.type;
+  const changed = await page.evaluate(t => {
+    const on = document.querySelector('.type-pick .on');
+    return on?.dataset?.ty === t;
+  }, second);
+  if (!changed) { await ctx.close(); throw new Error('the arrow moved the focus but not the choice'); }
+
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(350);
+  if ((await active()).type !== first) {
+    await ctx.close(); throw new Error('the left arrow did not come back'); }
+
+  // and Tab off the row goes into the sheet, not through five more buttons
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(200);
+  const landed = await active();
+  await ctx.close();
+  if (landed.label !== 'Amount') throw new Error(`Tab off the type row went to ${landed.label || landed.type}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `one stop; ← → walk ${first} ↔ ${second}; Tab returns to Amount`;
+});
+
+test('a budget sub-category fills in its own category', async browser => {
+  // The sub is what he remembers; which parent it hangs under is the app's job.
+  const { ctx, page, errors } = await open(browser, 'budgets');
+  const known = await page.evaluate(() => {
+    const c = window.JINNYFIN.DB.categories.find(x => x.type === 'Expense' && x.sub
+      && window.JINNYFIN.DB.categories.filter(y => y.type === 'Expense' && y.sub === x.sub).length === 1);
+    return c ? { parent: c.parent, sub: c.sub } : null;
+  });
+  if (!known) { await ctx.close(); throw new Error('fixture has no sub belonging to exactly one category'); }
+
+  await page.evaluate(() => [...document.querySelectorAll('button')]
+    .find(b => /\+ Budget/.test(b.textContent))?.click());
+  await page.waitForTimeout(400);
+  const parentNow = () => page.evaluate(() => document.querySelector('.modal-body select')?.value || '');
+  if (await parentNow()) { await ctx.close(); throw new Error('the new-budget sheet did not open empty'); }
+
+  await page.evaluate(sub => {
+    const i = [...document.querySelectorAll('.modal-body input')].find(x => x.getAttribute('list'));
+    i.focus(); i.value = sub; i.dispatchEvent(new Event('change', { bubbles: true }));
+  }, known.sub);
+  await page.waitForTimeout(400);
+  const got = await parentNow();
+  await ctx.close();
+  if (got !== known.parent) throw new Error(`typing “${known.sub}” set the category to “${got}”, expected “${known.parent}”`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `${known.sub} → ${known.parent}`;
 });
 
 // ------------------------------------------------------------------- run ---

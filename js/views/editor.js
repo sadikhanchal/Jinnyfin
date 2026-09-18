@@ -26,7 +26,9 @@ export const typeIcon = (t, size = 18) => {
 // ── the two types whose categories are a closed set ────────────────────────
 // Free text there only invites typos, and a wrong sub-category silently flips
 // the direction of the money — so these are dropdowns with fixed choices.
-export const LB_SUBS = { Borrow: ['Borrow', 'Repayment'], Lend: ['Lend', 'Collecting debts'] };
+// Lend stands first on purpose: a new Lend/Borrow entry opens on Lend · Lend,
+// which is what nine out of ten of them are. Borrow is two clicks away.
+export const LB_SUBS = { Lend: ['Lend', 'Collecting debts'], Borrow: ['Borrow', 'Repayment'] };
 
 const SAVINGS_SUBS = ['Deposit', 'Interest/Return', 'Withdrawal'];
 const TRADING_SUBS = ['Buy', 'Sell', 'Charges & Taxes', 'Funding In', 'Funding Out'];
@@ -332,7 +334,30 @@ export function openTxEditor(existing = null, presets = {}) {
           } }, p));
       }
     });
-  const settlePayee = listBox(payeeIn, payeeChip, payeeNames, 'payee');
+  /**
+   * A loan entry's description is the same sentence every time, with one name
+   * in it. Typing it out forty times a year is work a computer should do — so
+   * naming the payee writes it, and anything he writes himself is never
+   * overwritten: the line only moves while it is still ours, word for word.
+   */
+  const LB_NOTE = {
+    'Lend|Lend': n => `${n} took out a loan`,
+    'Lend|Collecting debts': n => `${n} repaid money`,
+    'Borrow|Borrow': n => `Borrowed money from ${n}`,
+    'Borrow|Repayment': n => `Repaid money for ${n}`,
+  };
+  let autoNote = '';                        // the last line this wrote
+  function fillNote() {
+    if (type !== 'Lend/Borrow') return;
+    const name = payeeIn.value.trim();
+    const say = LB_NOTE[`${parentIn.value}|${subIn.value}`];
+    if (!name || !say) return;
+    const now = noteIn.value.trim();
+    if (now && now !== autoNote) return;     // his own words stay his
+    autoNote = say(name);
+    noteIn.value = autoNote;
+  }
+  const settlePayee = listBox(payeeIn, payeeChip, payeeNames, 'payee', () => fillNote());
   const settleEvent = listBox(eventIn, eventChip, eventNames, 'event');
   const settleAll = () => { settleParent(); settleSub(); settlePayee(); settleEvent(); };
 
@@ -352,8 +377,8 @@ export function openTxEditor(existing = null, presets = {}) {
     subIn.value = subSel.value;
     paintAmount();
   }
-  catSel.addEventListener('change', () => { parentIn.value = catSel.value; syncFixed(null); });
-  subSel.addEventListener('change', () => { subIn.value = subSel.value; paintAmount(); });
+  catSel.addEventListener('change', () => { parentIn.value = catSel.value; syncFixed(null); fillNote(); });
+  subSel.addEventListener('change', () => { subIn.value = subSel.value; paintAmount(); fillNote(); });
 
   /** Colour the amount by direction — no words needed. */
   function paintAmount() {
@@ -552,6 +577,12 @@ export function openTxEditor(existing = null, presets = {}) {
       add('Sub-category', subIn, '', subChip);
     }
 
+    // Payee and Event are typed on maybe one entry in fifty, and every Tab
+    // spent passing them is paid on the other forty-nine. They are one click
+    // away for the times they are wanted. On a Lend/Borrow the payee IS the
+    // entry, so there it keeps its place in the run.
+    payeeIn.tabIndex = type === 'Lend/Borrow' ? 0 : -1;
+    eventIn.tabIndex = -1;
     if (type === 'Lend/Borrow') add('Payee', payeeIn, 'full', payeeChip);
     else { add('Payee / tag', payeeIn, '', payeeChip); add('Event', eventIn, '', eventChip); }
     add('Description', noteIn, 'full');
@@ -572,10 +603,15 @@ export function openTxEditor(existing = null, presets = {}) {
     // The type row is a picker for the pointer. In the Tab order it sat between
     // Save and the Amount box, so the loop back to the top ran through six
     // buttons that change the whole sheet if Enter lands on one.
-    const b = el('button', { class: type === ty ? 'on' : '', tabindex: '-1', onclick: () => {
+    const b = el('button', { class: type === ty ? 'on' : '', tabindex: type === ty ? '0' : '-1', onclick: () => {
       if (type === ty) return;
       type = ty;
-      [...typeRow.children].forEach(c => c.classList.toggle('on', c.dataset.ty === ty));
+      [...typeRow.children].forEach(c => {
+        c.classList.toggle('on', c.dataset.ty === ty);
+        // One stop for the whole row, always the chosen one — so Tab passes
+        // the row in a single step and the arrows do the choosing.
+        c.tabIndex = c.dataset.ty === ty ? 0 : -1;
+      });
       // A category belongs to its type. Carrying it across is how you end up
       // filing an investment under "Borrow".
       //
@@ -595,6 +631,19 @@ export function openTxEditor(existing = null, presets = {}) {
       el('span', { class: 'tl' }, { 'Lend/Borrow': 'Lend/\u200BBorrow', Investment: 'Invest' }[ty] || ty));
     typeRow.append(b);
   }
+  // Left and right walk the types and choose as they go, the way a row of
+  // tabs behaves everywhere else.
+  typeRow.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault();
+    const kids = [...typeRow.children];
+    const here = kids.indexOf(document.activeElement);
+    if (here < 0) return;
+    const next = kids[(here + (e.key === 'ArrowRight' ? 1 : -1) + kids.length) % kids.length];
+    next.click();
+    next.focus();
+  });
+
   layout();
   syncCurrency();
 

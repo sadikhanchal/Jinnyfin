@@ -128,28 +128,49 @@ function edit(b = null) {
     // budget cannot quietly repoint it at something else
     ...(v.parent && !cats.includes(v.parent) ? [v.parent] : []).concat(cats)
       .map(p => el('option', { value: p, selected: v.parent === p }, p)));
-  const sub = el('select', {});
+  // A sub-category is the thing he remembers; which parent it hangs under is
+  // the app's business. So this is a box you type into, and naming a sub that
+  // belongs to exactly one category fills that category in above it — the same
+  // as the transaction sheet does. A picker that only worked the other way
+  // round meant finding the parent first, every time.
+  const sub = el('input', { list: 'dl-budget-sub', value: v.sub || '',
+    placeholder: 'All sub-categories', autocomplete: 'off' });
+  const dl = el('datalist', { id: 'dl-budget-sub' });
   const fillSubs = () => {
-    const list = parent.value ? C.subsFor('Expense', parent.value) : [];
-    sub.replaceChildren(el('option', { value: '' }, 'All sub-categories'),
-      ...list.map(s => el('option', { value: s, selected: v.sub === s }, s)));
-    if (v.sub && !list.includes(v.sub)) sub.append(el('option', { value: v.sub, selected: true }, v.sub));
+    const list = parent.value ? C.subsFor('Expense', parent.value) : C.subsFor('Expense');
+    dl.replaceChildren(...list.map(x => el('option', { value: x })));
   };
+  const linkParent = () => {
+    const name = sub.value.trim();
+    if (!name) return;
+    // Spelt as the list spells it, so "fuel" saves as "Fuel" and matches.
+    const exact = C.subsFor('Expense').find(x => x.toLowerCase() === name.toLowerCase());
+    if (exact) sub.value = exact;
+    const owners = C.parentsOfSub('Expense', sub.value);
+    if (owners.length === 1 && parent.value !== owners[0]) { parent.value = owners[0]; fillSubs(); }
+    // Naming the ones it could be beats "this is ambiguous" and a dropdown of fifty.
+    else if (owners.length > 1 && !owners.includes(parent.value)) {
+      toast(`“${sub.value}” is under ${owners.join(' or ')} — pick which one`, 'warn', 5000);
+    }
+  };
+  sub.addEventListener('change', linkParent);
+  sub.addEventListener('blur', linkParent);
   fillSubs();
-  parent.onchange = () => { v.sub = ''; fillSubs(); };
+  parent.onchange = () => { v.sub = ''; sub.value = ''; fillSubs(); };
   const amount = el('input', { type: 'number', step: 'any', value: v.amount || '' });
   const cur = el('select', {}, ...['INR', 'SAR'].map(c => el('option', { value: c, selected: v.currency === c }, c)));
   const period = el('select', {}, el('option', { value: 'monthly', selected: v.period !== 'yearly' }, 'Per month'),
     el('option', { value: 'yearly', selected: v.period === 'yearly' }, 'Per year'));
   const fld = (l, n, cls = '') => el('div', { class: 'field ' + cls }, el('label', {}, l), n);
   const body = el('div', { class: 'form-grid' },
-    fld('Category', parent, 'full'), fld('Sub-category', sub, 'full'),
+    fld('Category', parent, 'full'), fld('Sub-category', sub, 'full'), dl,
     fld('Amount', amount), fld('Currency', cur), fld('Period', period, 'full'));
   const m = modal(b ? 'Edit budget' : 'New budget', body, {
     footer: [
       b ? el('button', { class: 'btn ghost', style: 'margin-right:auto;color:var(--critical)',
         onclick: async () => { if (await confirmBox('Remove this budget?')) { await remove('budgets', b.id); m.close(); } } }, 'Delete') : null,
       el('button', { class: 'btn primary', onclick: async () => {
+        linkParent();                       // in case Save was reached without leaving the box
         if (!parent.value) return toast('Pick a category', 'warn');
         // One category, one ceiling, per period. A second one does not add a
         // rule — it just counts the same spending twice on this screen.

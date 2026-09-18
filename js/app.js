@@ -14,7 +14,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.52', date: '2026-09-16' };
+export const BUILD = { version: '1.54', date: '2026-09-16' };
 
 /**
  * `icon` names a mark in js/icons.js; `tint` is the palette token it wears.
