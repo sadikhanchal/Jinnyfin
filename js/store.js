@@ -74,7 +74,7 @@ export function onlyColumns(table, row) {
 export const state = {
   user: null, online: navigator.onLine, syncing: false,
   lastSync: null, pending: 0, ready: false, sb: null, sbError: null, sbLoading: null,
-  storageError: null,
+  storageError: null, recovery: false,
 };
 
 const listeners = new Set();
@@ -173,23 +173,42 @@ export async function initSupabase({ quiet = true, ms = 9000 } = {}) {
         },
       },
     });
-    const { data } = await state.sb.auth.getSession();
-    state.user = data?.session?.user || null;
-    // Supabase re-reads its stored session every time the tab becomes visible
-    // again, and fires SIGNED_IN / TOKEN_REFRESHED for the SAME account. Passing
-    // that on as an auth change made the app rebuild its shell and re-render the
-    // screen from scratch — the "Loading…" line, and the page back at the top —
-    // every single time you alt-tabbed away and came back.
-    //
-    // Only a change of account is an auth change. A refreshed token for the same
-    // person is announced as 'session', which repaints the sync chip and the bell
-    // and touches nothing else.
-    state.sb.auth.onAuthStateChange((_e, s) => {
+    // The listener has to go on BEFORE any other auth call. Supabase reports the
+    // tab's starting state exactly once — as PASSWORD_RECOVERY when this load
+    // came from an emailed reset link, otherwise silently — and getSession()
+    // below is what actually waits for that one-time check to finish. A listener
+    // attached only after that await would simply never see it: the notification
+    // already fired, to nobody. That was the whole reason a correctly-redirected
+    // reset link used to just strand you on the ordinary dashboard.
+    let seenInitial = false;
+    state.sb.auth.onAuthStateChange((event, s) => {
       const next = s?.user || null;
+      if (event === 'PASSWORD_RECOVERY') {
+        seenInitial = true;
+        state.user = next;
+        state.recovery = true;
+        emit('recovery');
+        return;
+      }
+      // The very first callback is just Supabase announcing the session it
+      // already found (or didn't) — that is not a change to react to, only the
+      // starting point everything after it is compared against.
+      if (!seenInitial) { seenInitial = true; state.user = next; return; }
+      // Supabase re-reads its stored session every time the tab becomes visible
+      // again, and fires SIGNED_IN / TOKEN_REFRESHED for the SAME account. Passing
+      // that on as an auth change made the app rebuild its shell and re-render the
+      // screen from scratch — the "Loading…" line, and the page back at the top —
+      // every single time you alt-tabbed away and came back.
+      //
+      // Only a change of account is an auth change. A refreshed token for the same
+      // person is announced as 'session', which repaints the sync chip and the bell
+      // and touches nothing else.
       const same = (state.user?.id || null) === (next?.id || null);
       state.user = next;
       emit(same ? 'session' : 'auth');
     });
+    const { data } = await state.sb.auth.getSession();
+    if (!seenInitial) { seenInitial = true; state.user = data?.session?.user || null; }
     state.sbError = null;
     return state.sb;
     })();
@@ -296,6 +315,21 @@ export async function sendPasswordReset(email) {
   const { error } = await sb.auth.resetPasswordForEmail(email,
     { redirectTo: location.origin + location.pathname });
   if (error) throw error;
+  return true;
+}
+
+/**
+ * The other half of the reset link. Opening that link already left the browser
+ * signed in \u2014 as a special PASSWORD_RECOVERY session, flagged by state.recovery
+ * \u2014 so this only has to set the password on it, with no old password to check.
+ */
+export async function finishPasswordRecovery(newPassword) {
+  const sb = state.sb;
+  if (!sb) throw new Error('Not connected \u2014 open the reset link again.');
+  const { data, error } = await sb.auth.updateUser({ password: newPassword });
+  if (error) throw error;
+  state.user = data.user || state.user;
+  state.recovery = false;
   return true;
 }
 

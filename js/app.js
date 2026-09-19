@@ -14,7 +14,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.56', date: '2026-09-16' };
+export const BUILD = { version: '1.57', date: '2026-09-19' };
 
 /**
  * `icon` names a mark in js/icons.js; `tint` is the palette token it wears.
@@ -418,6 +418,23 @@ export function toggleTheme() {
 }
 
 // ---------------------------------------------------------------- login ---
+/** The branding half of the two-pane auth screens — identical whether the
+ *  other pane is asking for credentials or for a new password. */
+function brandPane() {
+  return el('div', { class: 'art' },
+    el('div', { class: 'glow' }),
+    el('div', { class: 'wordmark' }, brandMark(54),
+      el('div', {}, el('b', {}, 'Jinnyfin'), el('span', {}, 'Personal finance'))),
+    el('div', { class: 'pitch' },
+      el('h2', {}, 'One ledger for everything you earn, owe and own.'),
+      el('p', {}, 'Spending, transfers, loans and investments in one place — '
+        + 'with statements you can hand to anyone who asks.')),
+    el('ul', { class: 'points' },
+      el('li', {}, el('b', {}, '✓'), 'Works with no internet, once signed in'),
+      el('li', {}, el('b', {}, '✓'), 'Multi-currency, each one kept in its own right'),
+      el('li', {}, el('b', {}, '✓'), 'Your data stays yours, in your own account')));
+}
+
 function loginScreen(msg) {
   const root = $('#root');
   root.innerHTML = '';
@@ -515,18 +532,7 @@ function loginScreen(msg) {
       el('span', { class: 'mono' }, 'SETUP.md'), '.');
 
   root.append(el('div', { class: 'signin' },
-    el('div', { class: 'art' },
-      el('div', { class: 'glow' }),
-      el('div', { class: 'wordmark' }, brandMark(54),
-        el('div', {}, el('b', {}, 'Jinnyfin'), el('span', {}, 'Personal finance'))),
-      el('div', { class: 'pitch' },
-        el('h2', {}, 'One ledger for everything you earn, owe and own.'),
-        el('p', {}, 'Spending, transfers, loans and investments in one place — '
-          + 'with statements you can hand to anyone who asks.')),
-      el('ul', { class: 'points' },
-        el('li', {}, el('b', {}, '\u2713'), 'Works with no internet, once signed in'),
-        el('li', {}, el('b', {}, '\u2713'), 'Multi-currency, each one kept in its own right'),
-        el('li', {}, el('b', {}, '\u2713'), 'Your data stays yours, in your own account'))),
+    brandPane(),
     el('div', { class: 'side' },
       el('div', { class: 'box' },
         el('h3', {}, 'Welcome back'),
@@ -534,6 +540,69 @@ function loginScreen(msg) {
         form))));
 
   setTimeout(() => (email.value ? pass : email).focus(), 80);
+}
+
+/**
+ * Shown when the browser reports a PASSWORD_RECOVERY session — opening the
+ * emailed reset link signs the browser in on its own, but only for the one job
+ * of choosing a new password. There is deliberately no way out of this screen
+ * but finishing it: the old password is gone the moment this session exists,
+ * so leaving without setting a new one would just relock the account.
+ */
+function recoveryScreen() {
+  const root = $('#root');
+  root.innerHTML = '';
+  // Same reason loginScreen sets this: a screen that is meant to sit and wait
+  // for someone to think of a password is not a boot that is stuck.
+  window.__jinnyfinReady = true;
+  const pw1 = el('input', { type: 'password', placeholder: 'New password', autocomplete: 'new-password' });
+  const pw2 = el('input', { type: 'password', placeholder: 'Confirm new password', autocomplete: 'new-password' });
+  const peek = el('button', { type: 'button', class: 'peek', tabindex: '-1',
+    onclick: () => {
+      const showing = pw1.type === 'text';
+      pw1.type = pw2.type = showing ? 'password' : 'text';
+      peek.textContent = showing ? 'show' : 'hide';
+      pw1.focus();
+    } }, 'show');
+  const said = el('p', { class: 'said bad' }, '');
+  const btn = el('button', { class: 'btn gold', style: 'width:100%' }, 'Set new password');
+
+  const say = (text, good = false) => {
+    said.textContent = text;
+    said.classList.toggle('good', good);
+    said.classList.toggle('bad', !good);
+  };
+
+  const submit = async () => {
+    if (pw1.value.length < 6) { say('At least 6 characters'); pw1.focus(); return; }
+    if (pw1.value !== pw2.value) { say('The two passwords do not match'); pw2.focus(); pw2.select(); return; }
+    btn.disabled = true; btn.textContent = 'Saving…'; say('');
+    try {
+      await S.finishPasswordRecovery(pw1.value);
+      await S.sync({ full: !S.state.lastSync });
+      start(); Push.refresh(); Push.syncZone();
+    } catch (e) {
+      say(e.message || 'Could not set the new password');
+      btn.disabled = false; btn.textContent = 'Set new password';
+    }
+  };
+  btn.onclick = submit;
+  for (const box of [pw1, pw2]) box.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+
+  root.append(el('div', { class: 'signin' },
+    brandPane(),
+    el('div', { class: 'side' },
+      el('div', { class: 'box' },
+        el('h3', {}, 'Set a new password'),
+        el('p', { class: 'lede' }, 'That link confirmed it’s you — choose a new password to finish signing in.'),
+        el('div', {},
+          el('div', { class: 'field' }, el('label', {}, 'New password'),
+            el('div', { class: 'pw' }, pw1, peek)),
+          el('div', { class: 'field' }, el('label', {}, 'Confirm new password'), pw2),
+          btn,
+          said)))));
+
+  setTimeout(() => pw1.focus(), 80);
 }
 
 // ------------------------------------------------------------ screen lock -
@@ -643,7 +712,12 @@ function holdRedrawWhileTyping(node) {
 S.onChange(what => {
   updateChip();
   paintBell();
-  if (what === 'auth') {
+  if (what === 'recovery') {
+    // Overrides whatever is on screen — sign-in, dashboard, mid-edit — because
+    // Supabase already swapped the session under it for a recovery-only one.
+    renderedFor = state.user?.id || null;
+    recoveryScreen();
+  } else if (what === 'auth') {
     // Belt and braces for the same thing store.js guards at the source: only a
     // change of ACCOUNT may tear the screen down and build it again. Anything
     // else — a token refreshed in the background, a session re-read when the
@@ -760,7 +834,11 @@ async function maybeNotify() {
     document.dispatchEvent(new CustomEvent('jinnyfin-boot-failed', { detail: e.message || String(e) }));
     return;
   }
-  if (!state.user) {
+  if (state.recovery) {
+    // A reset link was opened to load this page. store.js already caught that
+    // during boot and rendered recoveryScreen() through the 'recovery' event —
+    // there is nothing to layer on top of it here.
+  } else if (!state.user) {
     // Local data but no session (token expired, or Supabase not set up yet):
     // the app is still fully usable — it just cannot sync until you sign in.
     if (DB.transactions.length) start();

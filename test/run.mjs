@@ -126,6 +126,28 @@ async function openSignedOut(browser, vp = { width: 1280, height: 800 }) {
   return { ctx, page, errors };
 }
 
+/** The app as a reset-link click loads it: Supabase already swapped the
+ *  session for a recovery-only one before the page's own code ever runs. */
+async function openRecovery(browser, vp = { width: 1280, height: 800 }) {
+  const ctx = await browser.newContext({ viewport: vp });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('pageerror', e => errors.push(String(e.message || e)));
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r =>
+    r.fulfill({ status: 200, contentType: 'text/javascript', body: STUB }));
+  await page.addInitScript(() => {
+    globalThis.__sb = { rows: {}, pushed: [], cb: null,
+      user: { id: 'test-user', email: 'test@jinnyfin.local' },
+      recoveryOnInit: true,
+      fire(e, s) { globalThis.__sb.cb?.(e, s === undefined ? { user: globalThis.__sb.user } : s); } };
+  });
+  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => !!document.querySelector('.signin'), null, { timeout: 30000 });
+  await page.waitForTimeout(300);
+  return { ctx, page, errors };
+}
+
 // ------------------------------------------------------------------ cases --
 const CASES = [];
 const test = (name, fn) => CASES.push({ name, fn });
@@ -1512,6 +1534,62 @@ test('the sign-in screen fills the width, split evenly on a desktop', async brow
     throw new Error(`the two panes split ${Math.round(ratio * 100)}/${Math.round((1 - ratio) * 100)}, not close to 50/50`); }
   if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
   return `full width at ${m.vw}px, panes ${Math.round(ratio * 100)}/${Math.round((1 - ratio) * 100)}`;
+});
+
+test('a reset-link visit lands on a set-new-password screen, not the dashboard', async browser => {
+  // The bug this guards: Supabase delivers PASSWORD_RECOVERY as part of the
+  // very same check getSession() awaits, to whoever is already listening at
+  // that moment. A listener attached after awaiting getSession() — the old
+  // order — would never see it, and the visitor would land silently signed
+  // in on the ordinary dashboard with no way to actually set a password.
+  const { ctx, page, errors } = await openRecovery(browser);
+  const text = await page.evaluate(() => document.querySelector('#root')?.textContent || '');
+  const onMain = await page.evaluate(() => !!document.querySelector('#main'));
+  await ctx.close();
+  if (onMain) throw new Error('the dashboard rendered instead of the recovery screen');
+  if (!text.includes('Set a new password')) throw new Error(`the screen did not ask for a new password (saw: ${text.slice(0, 80)})`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'PASSWORD_RECOVERY caught before getSession() could swallow it';
+});
+
+test('a reset link rejects a short or mismatched password before saving anything', async browser => {
+  const { ctx, page, errors } = await openRecovery(browser);
+  const said = () => page.evaluate(() => document.querySelector('.signin .said')?.textContent || '');
+
+  await page.fill('.signin input[placeholder="New password"]', 'abc');
+  await page.fill('.signin input[placeholder="Confirm new password"]', 'abc');
+  await page.click('.signin .btn.gold');
+  await page.waitForTimeout(200);
+  if (!/6 characters/.test(await said())) { await ctx.close(); throw new Error('a 3-character password was not rejected'); }
+
+  await page.fill('.signin input[placeholder="New password"]', 'correcthorse');
+  await page.fill('.signin input[placeholder="Confirm new password"]', 'correcthorsE');
+  await page.click('.signin .btn.gold');
+  await page.waitForTimeout(200);
+  const mismatch = await said();
+  const saved = await page.evaluate(() => globalThis.__sb.updatedPassword);
+  const onMain = await page.evaluate(() => !!document.querySelector('#main'));
+  await ctx.close();
+  if (!/do not match/.test(mismatch)) throw new Error(`mismatched passwords were not caught (said: “${mismatch}”)`);
+  if (saved) throw new Error('a password reached the server despite the mismatch');
+  if (onMain) throw new Error('the app moved on despite the mismatch');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'short and mismatched passwords both refused, nothing sent';
+});
+
+test('setting a new password after a reset link signs you straight in', async browser => {
+  const { ctx, page, errors } = await openRecovery(browser);
+  await page.fill('.signin input[placeholder="New password"]', 'a-brand-new-password');
+  await page.fill('.signin input[placeholder="Confirm new password"]', 'a-brand-new-password');
+  await page.click('.signin .btn.gold');
+  await page.waitForFunction(() => !!document.querySelector('#main'), null, { timeout: 10000 });
+  const saved = await page.evaluate(() => globalThis.__sb.updatedPassword);
+  const stillOnRecovery = await page.evaluate(() => !!document.querySelector('.signin'));
+  await ctx.close();
+  if (saved !== 'a-brand-new-password') throw new Error(`the server received “${saved}”, not the typed password`);
+  if (stillOnRecovery) throw new Error('the recovery screen is still showing after a successful save');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'password saved, app moved straight to the dashboard';
 });
 
 // ------------------------------------------------------------------- run ---

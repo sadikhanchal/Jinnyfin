@@ -23,7 +23,17 @@ const S = (globalThis.__sb ||= {
 export function createClient() {
   return {
     auth: {
-      getSession: async () => ({ data: { session: { user: S.user } } }),
+      // The real client fires PASSWORD_RECOVERY as part of the SAME internal
+      // check that getSession() awaits, and only to whoever is already
+      // listening when that happens — a listener attached after this resolves
+      // has missed it for good. recoveryOnInit reproduces exactly that: the
+      // event reaches S.cb only if onAuthStateChange was called before
+      // getSession(), so a regression that swaps the order back would make
+      // this fire to nobody, same as it did in production.
+      getSession: async () => {
+        if (S.recoveryOnInit && !S.recoveryFired) { S.recoveryFired = true; S.cb?.('PASSWORD_RECOVERY', { user: S.user }); }
+        return { data: { session: { user: S.user } } };
+      },
       getUser: async () => ({ data: { user: S.user }, error: null }),
       onAuthStateChange(cb) {
         S.cb = cb;
@@ -34,7 +44,7 @@ export function createClient() {
         S.signOutAuthStorage = localStorage.getItem('jinnyfin-auth');
         return { error: null };
       },
-      updateUser: async () => ({ data: { user: S.user }, error: null }),
+      updateUser: async (opts) => { if (opts && 'password' in opts) S.updatedPassword = opts.password; return { data: { user: S.user }, error: null }; },
       resetPasswordForEmail: async (email) => { S.resetFor = email; return { error: null }; },
     },
     from(table) {
