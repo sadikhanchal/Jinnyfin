@@ -107,6 +107,25 @@ const mark = page => page.evaluate(() => {
 });
 const survived = page => page.evaluate(() => !!document.querySelector('#main #jf-mark'));
 
+/** The app as a stranger meets it: no session, so the sign-in screen renders. */
+async function openSignedOut(browser, vp = { width: 1280, height: 800 }) {
+  const ctx = await browser.newContext({ viewport: vp });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('pageerror', e => errors.push(String(e.message || e)));
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r =>
+    r.fulfill({ status: 200, contentType: 'text/javascript', body: STUB }));
+  await page.addInitScript(() => {
+    globalThis.__sb = { rows: {}, pushed: [], cb: null, user: null,
+      fire(e, s) { globalThis.__sb.cb?.(e, s === undefined ? null : s); } };
+  });
+  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__jinnyfinReady === true, null, { timeout: 30000 });
+  await page.waitForTimeout(300);
+  return { ctx, page, errors };
+}
+
 // ------------------------------------------------------------------ cases --
 const CASES = [];
 const test = (name, fn) => CASES.push({ name, fn });
@@ -1407,6 +1426,92 @@ test('a budget sub-category fills in its own category', async browser => {
   if (got !== known.parent) throw new Error(`typing “${known.sub}” set the category to “${got}”, expected “${known.parent}”`);
   if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
   return `${known.sub} → ${known.parent}`;
+});
+
+test('the sign-in screen says what the app is, and can send a reset link', async browser => {
+  // This is the one screen a stranger sees before anything else — a demo link,
+  // a store listing, a new phone. It used to be a bare card with two boxes.
+  const { ctx, page, errors } = await openSignedOut(browser);
+  const said = () => page.evaluate(() => document.querySelector('#root')?.textContent || '');
+  const text = await said();
+  for (const want of ['Jinnyfin', 'Sign in', 'Forgot your password?']) {
+    if (!text.includes(want)) { await ctx.close(); throw new Error(`the screen never says “${want}”`); }
+  }
+  // nothing that dates itself or names two currencies out of the world's list
+  for (const no of ['Nine years', 'SAR and INR']) {
+    if (text.includes(no)) { await ctx.close(); throw new Error(`“${no}” is still on the sign-in screen`); }
+  }
+  const gold = await page.evaluate(() => !!document.querySelector('#root .btn.gold'));
+  if (!gold) { await ctx.close(); throw new Error('the Sign in button is not the gold one'); }
+
+  // show / hide actually changes the box
+  const pwType = () => page.evaluate(() => document.querySelector('#root input[type=password], #root .pw input')?.type);
+  if (await pwType() !== 'password') { await ctx.close(); throw new Error('the password box does not start hidden'); }
+  await page.click('#root .peek');
+  await page.waitForTimeout(150);
+  if (await pwType() !== 'text') { await ctx.close(); throw new Error('“show” did not reveal the password'); }
+  await page.click('#root .peek');
+  await page.waitForTimeout(150);
+  if (await pwType() !== 'password') { await ctx.close(); throw new Error('“hide” did not cover it again'); }
+
+  // a reset asked for with no address must not go anywhere
+  await page.fill('#root input[type=email]', '');
+  await page.click('#root .linkbtn');
+  await page.waitForTimeout(300);
+  let sent = await page.evaluate(() => globalThis.__sb.resetFor);
+  if (sent) { await ctx.close(); throw new Error(`a reset was sent to “${sent}” with the box empty`); }
+  if (!/email address first/i.test(await said())) {
+    await ctx.close(); throw new Error('it did not ask for the address'); }
+
+  // and with one, it goes to exactly that address
+  await page.fill('#root input[type=email]', 'sadikh@example.com');
+  await page.click('#root .linkbtn');
+  await page.waitForTimeout(500);
+  sent = await page.evaluate(() => globalThis.__sb.resetFor);
+  const told = await said();
+  await ctx.close();
+  if (sent !== 'sadikh@example.com') throw new Error(`the reset went to “${sent}”`);
+  if (!told.includes('sadikh@example.com')) throw new Error('it did not say where the link was sent');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'named, gold, show/hide works, reset link goes to the address typed';
+});
+
+test('the sign-in screen fits a phone without a sideways scroll', async browser => {
+  const { ctx, page, errors } = await openSignedOut(browser, { width: 360, height: 740 });
+  const m = await page.evaluate(() => ({
+    over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    band: document.querySelector('.signin .art')?.getBoundingClientRect().height || 0,
+    formVisible: (() => {
+      const b = document.querySelector('#root .btn.gold')?.getBoundingClientRect();
+      return !!b && b.top < window.innerHeight && b.width > 200;
+    })(),
+  }));
+  await ctx.close();
+  if (m.over > 1) throw new Error(`${m.over}px of sideways scroll on a 360px screen`);
+  if (m.band > 420) throw new Error(`the brand band eats ${Math.round(m.band)}px of a 740px screen`);
+  if (!m.formVisible) throw new Error('the Sign in button is not on screen without scrolling');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `band ${Math.round(m.band)}px, no sideways scroll, button in view`;
+});
+
+test('the sign-in screen fills the width, split evenly on a desktop', async browser => {
+  // #root is a flex row (the app shell's own layout), and a lone child with no
+  // explicit size shrinks to its content — which left a bare strip down the
+  // right edge at every width, on the phone screen and the desktop screen alike.
+  const { ctx, page, errors } = await openSignedOut(browser, { width: 1280, height: 800 });
+  const m = await page.evaluate(() => {
+    const rect = s => document.querySelector(s)?.getBoundingClientRect();
+    const root = rect('#root'), signin = rect('.signin'), art = rect('.art'), side = rect('.side');
+    return { vw: innerWidth, rootW: root?.width, signinW: signin?.width, artW: art?.width, sideW: side?.width };
+  });
+  await ctx.close();
+  if (!m.signinW || Math.abs(m.signinW - m.vw) > 2) {
+    throw new Error(`the sign-in page is ${Math.round(m.signinW || 0)}px wide on a ${m.vw}px screen`); }
+  const ratio = m.artW / (m.artW + m.sideW);
+  if (Math.abs(ratio - 0.5) > 0.05) {
+    throw new Error(`the two panes split ${Math.round(ratio * 100)}/${Math.round((1 - ratio) * 100)}, not close to 50/50`); }
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `full width at ${m.vw}px, panes ${Math.round(ratio * 100)}/${Math.round((1 - ratio) * 100)}`;
 });
 
 // ------------------------------------------------------------------- run ---

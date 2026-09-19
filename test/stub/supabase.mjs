@@ -35,7 +35,7 @@ export function createClient() {
         return { error: null };
       },
       updateUser: async () => ({ data: { user: S.user }, error: null }),
-      resetPasswordForEmail: async () => ({ error: null }),
+      resetPasswordForEmail: async (email) => { S.resetFor = email; return { error: null }; },
     },
     from(table) {
       const q = {

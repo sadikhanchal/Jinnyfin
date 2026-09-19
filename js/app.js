@@ -14,7 +14,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.54', date: '2026-09-16' };
+export const BUILD = { version: '1.56', date: '2026-09-16' };
 
 /**
  * `icon` names a mark in js/icons.js; `tint` is the palette token it wears.
@@ -424,45 +424,116 @@ function loginScreen(msg) {
   // When the browser refuses to keep anything, every reload lands here — so say
   // why, instead of letting it look like the app lost the password.
   const blocked = !!state.storageError || storageBlocked();
-  const email = el('input', { type: 'email', placeholder: 'you@example.com', autocomplete: 'username', value: safeStore('jinnyfin-email') || '' });
+  const email = el('input', { type: 'email', placeholder: 'you@example.com', autocomplete: 'username',
+    value: safeStore('jinnyfin-email') || '' });
   const pass = el('input', { type: 'password', placeholder: 'Password', autocomplete: 'current-password' });
-  const err = el('p', { class: 'small', style: 'color:var(--critical);min-height:18px' }, msg || '');
-  const btn = el('button', { class: 'btn primary', style: 'width:100%' }, 'Sign in');
+  // A password box you cannot read is how a wrong password gets typed three
+  // times on a phone keyboard.
+  const peek = el('button', { type: 'button', class: 'peek', tabindex: '-1',
+    onclick: () => {
+      const showing = pass.type === 'text';
+      pass.type = showing ? 'password' : 'text';
+      peek.textContent = showing ? 'show' : 'hide';
+      pass.focus();
+    } }, 'show');
+  const said = el('p', { class: 'said bad' }, msg || '');
+  const btn = el('button', { class: 'btn gold', style: 'width:100%' }, 'Sign in');
+
+  const say = (text, good = false) => {
+    said.textContent = text;
+    said.classList.toggle('good', good);
+    said.classList.toggle('bad', !good);
+  };
+
   const doLogin = async () => {
-    btn.disabled = true; err.textContent = '';
+    const who = email.value.trim();
+    if (!who) { say('Enter your email'); email.focus(); return; }
+    // Disabled AND saying so: a button that merely greys out on a slow
+    // connection looks like nothing happened, and gets pressed again.
+    btn.disabled = true; btn.textContent = 'Signing in…'; say('');
     try {
-      safeStore('jinnyfin-email', email.value.trim());
-      await S.signIn(email.value.trim(), pass.value);
+      safeStore('jinnyfin-email', who);
+      await S.signIn(who, pass.value);
       await S.sync({ full: !S.state.lastSync });
       start();
-    } catch (e) { err.textContent = e.message || 'Sign-in failed'; btn.disabled = false; }
+    } catch (e) {
+      say(e.message || 'Sign-in failed');
+      btn.disabled = false; btn.textContent = 'Sign in';
+      pass.focus(); pass.select();
+    }
   };
   btn.onclick = doLogin;
-  pass.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  for (const box of [email, pass]) {
+    box.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  }
+
+  /**
+   * Forgotten password. Supabase sends the link; all this screen can honestly
+   * promise is that it asked — so it says exactly that, and never reveals
+   * whether the address is on the system.
+   */
+  const forgot = el('button', { class: 'linkbtn', type: 'button', onclick: async () => {
+    const who = email.value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(who)) {
+      say('Type your email address first, then tap this again');
+      email.focus(); return;
+    }
+    forgot.disabled = true;
+    const was = forgot.textContent;
+    forgot.textContent = 'Sending…';
+    try {
+      await S.sendPasswordReset(who);
+      say(`A reset link is on its way to ${who}. Open it on this device.`, true);
+    } catch (e) {
+      say(e.message || 'Could not send the reset link');
+    }
+    forgot.disabled = false; forgot.textContent = was;
+  } }, 'Forgot your password?');
 
   window.__jinnyfinReady = true;
   const configured = CONFIG.SUPABASE_URL && !CONFIG.SUPABASE_URL.startsWith('PASTE');
-  root.append(el('div', { class: 'auth-wrap' },
-    el('div', { class: 'card auth-card' },
-      el('div', { class: 'brand', style: 'padding-left:0' },
-        brandMark(44),
-        el('div', {}, el('div', { class: 'brand-name' }, 'Jinnyfin'),
-          el('div', { class: 'brand-sub' }, 'Sign in to sync this device'))),
-      configured ? el('div', { class: 'grid', style: 'gap:10px' },
-        el('div', { class: 'field' }, el('label', {}, 'Email'), email),
-        el('div', { class: 'field' }, el('label', {}, 'Password'), pass),
-        err, btn,
-        blocked
-          ? el('div', { class: 'warn-box', style: 'margin-top:4px' },
-              el('b', {}, 'This browser is blocking storage for this site. '),
-              'That is why it asks again every time, and why it will not open without internet. ',
-              'Tap the lock icon next to the address bar → Cookies and site data → allow this site.')
-          : el('p', { class: 'hint' }, 'Your data stays on this device too — once signed in, the app works with no internet.'))
-        : el('div', { class: 'warn-box' },
-          el('b', {}, 'Setup not finished. '),
-          'Open ', el('span', { class: 'mono' }, 'config.js'),
-          ' and paste your Supabase project URL and anon key, then reload. Full steps are in ',
-          el('span', { class: 'mono' }, 'SETUP.md'), '.'))));
+
+  const form = configured
+    ? el('div', {},
+      el('div', { class: 'field' }, el('label', {}, 'Email'), email),
+      el('div', { class: 'field' }, el('label', {}, 'Password'),
+        el('div', { class: 'pw' }, pass, peek)),
+      el('div', { class: 'linkline' }, forgot),
+      btn,
+      said,
+      blocked
+        ? el('div', { class: 'warn-box', style: 'margin-top:10px' },
+          el('b', {}, 'This browser is blocking storage for this site. '),
+          'That is why it asks again every time, and why it will not open without internet. ',
+          'Tap the lock icon next to the address bar → Cookies and site data → allow this site.')
+        : el('p', { class: 'hint', style: 'margin-top:10px' },
+          'Your data stays on this device too — once signed in, the app works with no internet.'))
+    : el('div', { class: 'warn-box' },
+      el('b', {}, 'Setup not finished. '),
+      'Open ', el('span', { class: 'mono' }, 'config.js'),
+      ' and paste your Supabase project URL and anon key, then reload. Full steps are in ',
+      el('span', { class: 'mono' }, 'SETUP.md'), '.');
+
+  root.append(el('div', { class: 'signin' },
+    el('div', { class: 'art' },
+      el('div', { class: 'glow' }),
+      el('div', { class: 'wordmark' }, brandMark(54),
+        el('div', {}, el('b', {}, 'Jinnyfin'), el('span', {}, 'Personal finance'))),
+      el('div', { class: 'pitch' },
+        el('h2', {}, 'One ledger for everything you earn, owe and own.'),
+        el('p', {}, 'Spending, transfers, loans and investments in one place — '
+          + 'with statements you can hand to anyone who asks.')),
+      el('ul', { class: 'points' },
+        el('li', {}, el('b', {}, '\u2713'), 'Works with no internet, once signed in'),
+        el('li', {}, el('b', {}, '\u2713'), 'Multi-currency, each one kept in its own right'),
+        el('li', {}, el('b', {}, '\u2713'), 'Your data stays yours, in your own account'))),
+    el('div', { class: 'side' },
+      el('div', { class: 'box' },
+        el('h3', {}, 'Welcome back'),
+        el('p', { class: 'lede' }, 'Sign in to sync this device.'),
+        form))));
+
+  setTimeout(() => (email.value ? pass : email).focus(), 80);
 }
 
 // ------------------------------------------------------------ screen lock -
@@ -480,9 +551,14 @@ async function lockScreen() {
       } else { err.textContent = 'Wrong PIN'; pin.value = ''; }
     };
     pin.addEventListener('keydown', e => { if (e.key === 'Enter') tryIt(); });
+    // Same door, same colours — this is the app asking, not the browser.
     root.append(el('div', { class: 'auth-wrap' }, el('div', { class: 'card auth-card' },
-      el('h3', { class: 'row', style: 'margin-bottom:12px' }, icon('lock', 18), 'Enter your app PIN'), pin, err,
-      el('button', { class: 'btn primary', style: 'width:100%;margin-top:10px', onclick: tryIt }, 'Unlock'))));
+      el('div', { class: 'wordmark', style: 'display:flex;align-items:center;gap:11px;margin-bottom:14px' },
+        brandMark(40),
+        el('div', {}, el('b', { style: 'font-size:17px;letter-spacing:-.01em;display:block' }, 'Jinnyfin'),
+          el('span', { class: 'small muted' }, 'Enter your app PIN'))),
+      pin, err,
+      el('button', { class: 'btn gold', style: 'width:100%;margin-top:10px', onclick: tryIt }, 'Unlock'))));
     setTimeout(() => pin.focus(), 60);
   });
 }
