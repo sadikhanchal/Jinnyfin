@@ -71,6 +71,31 @@ export function onlyColumns(table, row) {
   return out;
 }
 
+/**
+ * A column added to the schema after rows already existed can sit at null on
+ * a local copy that has not been touched since — every editor in this app
+ * writes it as a real boolean, but a row queued years ago, before the column
+ * existed, still carries whatever `{ ...row }` picked up back then. Sending
+ * that null to a NOT NULL column fails the row, and — before this — failed
+ * every OTHER row queued behind it too, forever, on every device, silently.
+ *
+ * The fix is to drop the key rather than guess a value: with the key absent,
+ * the database applies its own DEFAULT, which is exactly what a row from
+ * before this column existed should have gotten in the first place.
+ *
+ * Scoped to the one column this has actually happened to. A future column
+ * with the same "added later" shape belongs on this list too, the day it
+ * shows up in a sync error — not guessed at in advance.
+ */
+const RISKY_IF_NULL = { accounts: ['pinned'] };
+function healForPush(table, row) {
+  const risky = RISKY_IF_NULL[table];
+  if (!risky) return row;
+  const out = { ...row };
+  for (const k of risky) if (out[k] == null) delete out[k];
+  return out;
+}
+
 export const state = {
   user: null, online: navigator.onLine, syncing: false,
   lastSync: null, pending: 0, ready: false, sb: null, sbError: null, sbLoading: null,
@@ -479,14 +504,19 @@ export async function sync({ full = false } = {}) {
     if (q.length) {
       const byTable = {};
       for (const item of q) { if (!byTable[item.table]) byTable[item.table] = []; byTable[item.table].push(item); }
+      // Rows the server keeps refusing after everything else here — named and
+      // reported rather than left to retry forever with nothing on screen.
+      const stuck = [];
       for (const [table, items] of Object.entries(byTable)) {
         // keep only the newest version of each row
         const latest = new Map();
         for (const it of items) latest.set(it.row.id, it.row);
+        const qidOf = new Map(items.map(it => [it.row.id, it.qid]));
         // Filter here as well as in put(): a row queued by an older build may
         // still be carrying a worked-out field, and it should drain quietly
         // instead of raising a migration warning that is not true.
-        let rows = [...latest.values()].map(r => onlyColumns(table, { ...r, user_id: state.user.id }));
+        let rows = [...latest.values()].map(r => onlyColumns(table, healForPush(table, { ...r, user_id: state.user.id })));
+        const doneIds = new Set();
         for (let i = 0; i < rows.length; i += 500) {
           let chunk = rows.slice(i, i + 500);
           let { error } = await sb.from(table).upsert(chunk, { onConflict: 'id' });
@@ -503,13 +533,35 @@ export async function sync({ full = false } = {}) {
             ({ error } = await sb.from(table).upsert(chunk, { onConflict: 'id' }));
             if (epoch !== dataEpoch) return;
           }
-          if (error) throw error;
+          if (!error) { for (const r of chunk) doneIds.add(r.id); continue; }
+          // A dropped connection fails every row the same way — that is not
+          // this row's fault, so it is left queued whole and tried again next
+          // time, exactly as before.
+          if (/Failed to fetch|NetworkError|Load failed/i.test(error.message || '')) throw error;
+          // Something the retries above do not cover: a NOT NULL a migration
+          // never backfilled, a value the server no longer accepts. One row
+          // like that used to hold its neighbours in this chunk — and every
+          // other table queued behind it, and the pull that follows — hostage
+          // forever, with the pending count climbing and nothing to show why.
+          // Sending them one at a time costs nothing extra in the normal case
+          // (this only runs once a whole chunk has already failed) and means
+          // the one genuinely bad row is the only thing that stays queued.
+          for (const r of chunk) {
+            const { error: e1 } = await sb.from(table).upsert([r], { onConflict: 'id' });
+            if (epoch !== dataEpoch) return;
+            if (!e1) doneIds.add(r.id); else stuck.push({ table, id: r.id, message: e1.message || String(e1) });
+          }
         }
+        if (epoch !== dataEpoch) return;
+        const qids = [...doneIds].map(id => qidOf.get(id)).filter(Boolean);
+        if (qids.length) await queueClear(qids);
+        if (epoch !== dataEpoch) return;
+        pushed += doneIds.size;
       }
-      if (epoch !== dataEpoch) return;
-      await queueClear(q.map(i => i.qid));
-      if (epoch !== dataEpoch) return;
-      pushed = q.length;
+      if (stuck.length) {
+        console.warn('[sync] rows the server will not accept:', stuck);
+        toast(`${stuck.length} ${stuck.length === 1 ? 'entry' : 'entries'} will not sync — ${stuck[0].message}`, 'warn', 7000);
+      }
     }
     // 2 ── pull everything changed since the last sync
     //

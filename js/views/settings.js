@@ -385,8 +385,28 @@ function categories() {
     byType[c.type][c.parent] = [...(byType[c.type][c.parent] || []), c];
   }
 
+  // draw() rebuilds this whole tab, search box included — an immediate redraw
+  // on every keystroke throws the box away mid-word. The focus that was on it
+  // then lands on the page itself, so the very next key you type is read as a
+  // shortcut instead of a letter: "n" opens a new transaction, "/" jumps to
+  // Transactions. Debouncing the redraw and handing focus back afterwards is
+  // the same fix report.js already uses for its own description search.
   const search = el('input', { type: 'search', value: catQuery, placeholder: 'Search categories…',
-    style: 'max-width:260px', oninput: e => { catQuery = e.target.value; draw(); } });
+    style: 'max-width:260px', 'data-fk': 'cat-search',
+    oninput: () => {
+      const caret = search.selectionStart ?? search.value.length;
+      catQuery = search.value;
+      clearTimeout(search._timer);
+      search._timer = setTimeout(() => {
+        draw();
+        requestAnimationFrame(() => {
+          const next = host.querySelector('input[data-fk="cat-search"]');
+          if (!next) return;
+          next.focus({ preventScroll: true });
+          next.setSelectionRange(caret, caret);
+        });
+      }, 120);
+    } });
   host.append(el('div', { class: 'row gap wrap', style: 'margin-bottom:10px;align-items:center' },
     el('button', { class: 'btn sm primary', onclick: () => editCat() }, '+ Category'),
     search,
@@ -410,7 +430,8 @@ function categories() {
     const used = DB.transactions.filter(t => !t.deleted && t.type === type && t.parent === parent).length;
     return el('div', { style: 'padding:7px 0;border-bottom:1px solid var(--grid)' },
       el('div', { class: 'row' },
-        el('b', { style: live ? '' : 'color:var(--warning)' }, parent),
+        el('b', { style: (live ? '' : 'color:var(--warning);') + 'cursor:pointer', title: 'Rename this category',
+          onclick: () => renameCategory(type, parent) }, parent),
         live ? null : el('span', { class: 'small', style: 'color:var(--warning)' }, ' · archived'),
         el('div', { class: 'spacer' }),
         el('span', { class: 'small muted' }, used + ' entries'),
@@ -481,6 +502,37 @@ function usageOf(c) {
     && (c.sub ? t.sub === c.sub : true)).length;
 }
 
+/**
+ * Rename the category itself, from its name in the list. Every sub filed
+ * under the old name, and every entry already carrying it, move together —
+ * editing one sub through editCat only ever moves that sub on its own.
+ */
+function renameCategory(type, parent) {
+  const used = DB.transactions.filter(t => !t.deleted && t.type === type && t.parent === parent).length;
+  const input = el('input', { type: 'text', value: parent, maxlength: 80, autocomplete: 'off' });
+  const m = modal('Rename category',
+    el('div', { class: 'form-grid' },
+      el('div', { class: 'field full' }, el('label', {}, 'Name'), input),
+      el('p', { class: 'hint full', style: 'margin:0' },
+        `${used.toLocaleString('en-IN')} ${used === 1 ? 'entry carries' : 'entries carry'} this name, and every sub under it moves too.`)),
+    { footer: [el('button', { class: 'btn primary', onclick: () => save() }, 'Save')] });
+  input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); save(); } };
+  setTimeout(() => { input.focus(); input.select(); }, 30);
+
+  async function save() {
+    const next = input.value.trim();
+    if (!next) return toast('Name?', 'warn');
+    if (next === parent) return m.close();
+    const rows = DB.categories.filter(c => c.type === type && c.parent === parent);
+    if (rows.length) await putMany('categories', rows.map(c => ({ ...c, parent: next })));
+    const tx = DB.transactions.filter(t => !t.deleted && t.type === type && t.parent === parent);
+    if (tx.length) await putMany('transactions', tx.map(t => ({ ...t, parent: next })));
+    toast(tx.length ? `Renamed — ${tx.length.toLocaleString('en-IN')} ${tx.length === 1 ? 'entry' : 'entries'} moved with it` : 'Renamed');
+    m.close();
+    draw();
+  }
+}
+
 function editCat(c = null) {
   const v = c || { type: 'Expense', parent: '', sub: '' };
   const type = el('select', {}, ...['Expense', 'Income', 'Lend/Borrow', 'Investment'].map(t => el('option', { value: t, selected: v.type === t }, t)));
@@ -520,8 +572,24 @@ function editCat(c = null) {
         } }, 'Delete') : null,
       el('button', { class: 'btn primary', onclick: async () => {
         if (!parent.value.trim()) return toast('Category name?', 'warn');
-        await put('categories', { ...v, type: type.value, parent: parent.value.trim(),
-          sub: sub.value.trim() || null, active: live.checked });
+        const newType = type.value, newParent = parent.value.trim(), newSub = sub.value.trim() || null;
+        let renamed = 0;
+
+        // This row is one sub (or, from "+ Category", a brand new one) — not
+        // the whole category, which is renamed from its own name in the list
+        // (see renameCategory). Moving or renaming a sub here still has to
+        // take its own entries with it, or they are orphaned under a sub that
+        // no longer exists, on their way to nothing in any picker or report.
+        if (c?.id) {
+          const oldType = c.type, oldParent = c.parent, oldSub = c.sub || null;
+          if (oldType !== newType || oldParent !== newParent || oldSub !== newSub) {
+            const rows = DB.transactions.filter(t => !t.deleted && t.type === oldType && t.parent === oldParent && (t.sub || null) === oldSub);
+            if (rows.length) { await putMany('transactions', rows.map(t => ({ ...t, type: newType, parent: newParent, sub: newSub }))); renamed = rows.length; }
+          }
+        }
+
+        await put('categories', { ...v, type: newType, parent: newParent, sub: newSub, active: live.checked });
+        if (renamed) toast(`Moved ${renamed.toLocaleString('en-IN')} ${renamed === 1 ? 'entry' : 'entries'} with it`);
         m.close();
       } }, 'Save'),
     ].filter(Boolean),

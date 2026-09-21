@@ -457,6 +457,64 @@ test('a sync that brings a real change redraws', async browser => {
   return 'redrawn';
 });
 
+test('an account from before the pinned column existed still syncs', async browser => {
+  // pinned was added to accounts after some accounts already existed. A local
+  // copy untouched since then still carries pinned: null, and sending that
+  // explicit null to a NOT NULL column is a genuine Postgres error — this is
+  // not a made-up shape, it is what actually reached production.
+  const { ctx, page } = await open(browser, 'settings');
+  const result = await page.evaluate(async () => {
+    const { S } = window.JINNYFIN;
+    await S.put('accounts', { id: 'stale-acct', user_id: 'test-user', name: 'Old Account', currency: 'SAR', pinned: null });
+    const before = S.state.pending;
+    await S.sync();
+    return {
+      before,
+      after: S.state.pending,
+      sent: window.__sb.pushed.find(p => p.table === 'accounts' && p.row.id === 'stale-acct')?.row,
+    };
+  });
+  await ctx.close();
+  if (!result.sent) throw new Error('the stale account never reached the server at all');
+  if ('pinned' in result.sent) throw new Error(`an explicit null was still sent: ${JSON.stringify(result.sent)}`);
+  if (result.after !== 0) throw new Error(`${result.after} item(s) still pending after a clean push`);
+  return 'the historical null was dropped, not sent, and the row went through';
+});
+
+test('one row the server refuses does not block its table-mates or the next table', async browser => {
+  // Before this, ANY rejected row threw out of the whole push step — every
+  // other row in its chunk, every other table queued behind it, and the pull
+  // that follows all stayed stuck, silently, for good. The pending count only
+  // ever climbed, with nothing on screen to say why.
+  const { ctx, page } = await open(browser, 'settings');
+  const result = await page.evaluate(async () => {
+    const { S } = window.JINNYFIN;
+    window.__sb.rejectUpsert = (table, row) => (table === 'accounts' && row.name === 'POISON')
+      ? 'null value in column "sort" of relation "accounts" violates not-null constraint' : null;
+    await S.put('accounts', { id: 'poison-acct', user_id: 'test-user', name: 'POISON', currency: 'SAR' });
+    await S.put('accounts', { id: 'clean-acct', user_id: 'test-user', name: 'Clean Account', currency: 'SAR' });
+    await S.put('payees', { id: 'clean-payee', user_id: 'test-user', name: 'A Payee' });
+    const pullsBefore = window.__sb.pulls?.accounts || 0;
+    await S.sync({ full: true });
+    return {
+      pending: S.state.pending,
+      cleanAcct: !!window.__sb.pushed.find(p => p.table === 'accounts' && p.row.id === 'clean-acct'),
+      cleanPayee: !!window.__sb.pushed.find(p => p.table === 'payees' && p.row.id === 'clean-payee'),
+      poisonSent: !!window.__sb.pushed.find(p => p.table === 'accounts' && p.row.id === 'poison-acct'),
+      toast: document.querySelector('.toast')?.textContent || '',
+      pulled: (window.__sb.pulls?.accounts || 0) > pullsBefore,
+    };
+  });
+  await ctx.close();
+  if (!result.cleanAcct) throw new Error('the good account in the same chunk never got through');
+  if (!result.cleanPayee) throw new Error('a different table queued behind the bad row never got through');
+  if (result.poisonSent) throw new Error('the row the server refuses somehow reached S.pushed as a success');
+  if (result.pending !== 1) throw new Error(`expected exactly the poisoned row still pending, got ${result.pending}`);
+  if (!/will not sync/i.test(result.toast)) throw new Error(`no toast named the stuck row: "${result.toast}"`);
+  if (!result.pulled) throw new Error('the pull phase never ran after the push partly failed');
+  return 'the good rows and the other table went through; only the refused row stayed queued, and named';
+});
+
 test('a background sync does not throw you out of a box you are typing in', async browser => {
   const { ctx, page } = await open(browser, 'settings');
   // Settings -> Reconcile, where a column of balances gets typed straight through.
@@ -1324,6 +1382,83 @@ test('the category list opens closed, and its search finds a name', async browse
   if (found.length > opened.length) throw new Error('the search widened the list instead of narrowing it');
   if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
   return `${heads.length} types, closed; search found ${want}`;
+});
+
+test('typing in the category search box does not lose focus mid-word', async browser => {
+  // draw() rebuilds the whole tab on every keystroke, search box included. The
+  // old input's focus — thrown to the page itself when the new one replaces it
+  // — meant the very next letter typed was read as a shortcut instead of text:
+  // "n" opens a new transaction, "/" jumps to Transactions. Typing "insurance"
+  // used to pop a blank transaction editor open right after its second letter.
+  const { ctx, page, errors } = await open(browser, 'settings');
+  await page.evaluate(() => [...document.querySelectorAll('.seg button')]
+    .find(b => b.textContent.trim() === 'Categories')?.click());
+  await page.waitForTimeout(400);
+  await page.locator('input[type=search]').pressSequentially('insurance', { delay: 200 });
+  await page.waitForTimeout(500);
+  const modalOpen = await page.evaluate(() => !!document.querySelector('.modal'));
+  const typed = await page.evaluate(() => document.querySelector('input[type=search]')?.value);
+  const focused = await page.evaluate(() => document.activeElement?.getAttribute('type') === 'search');
+  await ctx.close();
+  if (modalOpen) throw new Error('typing into the search box opened another window (a global shortcut fired)');
+  if (typed !== 'insurance') throw new Error(`the box reads "${typed}", not the full word typed`);
+  if (!focused) throw new Error('focus left the search box during typing');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'typed "insurance" letter by letter with focus held throughout, no shortcut fired';
+});
+
+test('renaming a category from its name moves every sub and entry with it', async browser => {
+  // A category is only ever a name string on a transaction, not a row those
+  // transactions point at — so a rename that touched just the category record
+  // left every entry already filed under the old name stuck there, invisible
+  // to the new one, forever.
+  const { ctx, page, errors } = await open(browser, 'settings');
+  await page.evaluate(() => [...document.querySelectorAll('.seg button')]
+    .find(b => b.textContent.trim() === 'Categories')?.click());
+  await page.waitForTimeout(400);
+  await page.evaluate(() => [...document.querySelectorAll('.card-head')].forEach(h => h.click()));
+  await page.waitForTimeout(400);
+
+  const target = await page.evaluate(() => {
+    const { DB } = window.JINNYFIN;
+    const c = DB.categories.find(x => !x.sub
+      && DB.transactions.some(t => !t.deleted && t.type === x.type && t.parent === x.parent));
+    if (!c) return null;
+    return { type: c.type, parent: c.parent,
+      count: DB.transactions.filter(t => !t.deleted && t.type === c.type && t.parent === c.parent).length,
+      catRows: DB.categories.filter(x => x.type === c.type && x.parent === c.parent).length };
+  });
+  if (!target) { await ctx.close(); throw new Error('no fixture category with existing entries to rename'); }
+
+  const newName = target.parent + ' RENAMED';
+  const clicked = await page.evaluate(name => {
+    const b = [...document.querySelectorAll('.card b')].find(x => x.textContent.trim() === name);
+    if (!b) return false;
+    b.click();
+    return true;
+  }, target.parent);
+  if (!clicked) { await ctx.close(); throw new Error(`could not find "${target.parent}" in the list to click`); }
+  await page.waitForTimeout(300);
+  await page.fill('.modal input[type=text]', newName);
+  await page.click('.modal .btn.primary');
+  await page.waitForTimeout(400);
+
+  const after = await page.evaluate(([type, oldName, newName]) => {
+    const { DB } = window.JINNYFIN;
+    return {
+      oldTx: DB.transactions.filter(t => !t.deleted && t.type === type && t.parent === oldName).length,
+      newTx: DB.transactions.filter(t => !t.deleted && t.type === type && t.parent === newName).length,
+      oldCats: DB.categories.filter(x => x.type === type && x.parent === oldName).length,
+      newCats: DB.categories.filter(x => x.type === type && x.parent === newName).length,
+    };
+  }, [target.type, target.parent, newName]);
+  await ctx.close();
+  if (after.oldTx !== 0) throw new Error(`${after.oldTx} entries are still stuck under the old name`);
+  if (after.newTx !== target.count) throw new Error(`expected ${target.count} entries under the new name, found ${after.newTx}`);
+  if (after.oldCats !== 0) throw new Error(`${after.oldCats} category row(s) still stuck under the old name`);
+  if (after.newCats !== target.catRows) throw new Error(`expected ${target.catRows} category row(s) moved, found ${after.newCats}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `${target.count} entries and ${target.catRows} category row(s) moved from "${target.parent}" to the new name`;
 });
 
 test('a loan entry opens on Lend and writes its own description', async browser => {

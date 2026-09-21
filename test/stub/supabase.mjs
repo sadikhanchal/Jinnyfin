@@ -8,7 +8,13 @@
 //  Everything the tests drive lives on `window.__sb`:
 //    __sb.fire(event, session)   — pretend Supabase raised an auth event
 //    __sb.rows                   — what the next pull will hand back, per table
-//    __sb.pushed                 — every row the app has tried to send up
+//    __sb.pushed                 — every row that actually reached the server
+//    __sb.rejectUpsert(table, row) — return an error message to make the
+//      server refuse that one row (any batch containing it fails whole,
+//      exactly like a real constraint violation), or a falsy value to let it
+//      through — same signature Postgres itself effectively has.
+//    __sb.pulls                  — how many times each table was pulled from,
+//      so a test can tell the pull phase ran even after a push partly failed.
 // ============================================================================
 
 const S = (globalThis.__sb ||= {
@@ -60,9 +66,18 @@ export function createClient() {
         // always no and the test proved nothing.
         range: async start => {
           if (S.pullDelay) await new Promise(resolve => setTimeout(resolve, S.pullDelay));
+          S.pulls = S.pulls || {}; S.pulls[table] = (S.pulls[table] || 0) + 1;
           return { data: start === 0 ? structuredClone(S.rows[table] || []) : [], error: null };
         },
-        async upsert(rows) { S.pushed.push(...[].concat(rows).map(r => ({ table, row: r }))); return { data: [], error: null }; },
+        async upsert(rows) {
+          const list = [].concat(rows);
+          if (S.rejectUpsert) {
+            const bad = list.map(r => S.rejectUpsert(table, r)).find(Boolean);
+            if (bad) return { data: null, error: { message: bad } };
+          }
+          S.pushed.push(...list.map(r => ({ table, row: r })));
+          return { data: [], error: null };
+        },
         async insert(rows) { S.pushed.push(...[].concat(rows).map(r => ({ table, row: r }))); return { data: [], error: null }; },
         async delete() { return { data: [], error: null }; },
       };
