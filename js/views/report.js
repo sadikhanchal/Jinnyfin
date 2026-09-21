@@ -3,7 +3,7 @@
 //  Same filters, same four blocks as the workbook, one code path.
 // ============================================================================
 import { el, money, num, MONTHS, MON3, fmtDate, downloadCSV, todayISO,
-  onFilter, restoreFilterFocus } from '../util.js';
+  onFilter, restoreFilterFocus, searchSelect } from '../util.js';
 import { DB } from '../store.js';
 import * as C from '../calc.js';
 import { groupedBars, barList, SERIES } from '../charts.js';
@@ -72,6 +72,20 @@ export function makeReport(kind) {
       onFilter(s, key, () => { f[key] = s.value; if (key === 'parent') f.sub = 'All'; draw(); });
       return el('div', { class: 'field' }, el('label', {}, label), s);
     };
+    // Category, Sub-category and Account can run to dozens of entries, and a
+    // plain <select> only jumps to one whose FIRST letter matches what was
+    // just typed — so finding "Cake Business" meant remembering it starts
+    // with C, not that it has "Business" in it. This is the same search combo
+    // the New Transaction sheet's Account field already uses: type any word
+    // in the name and it finds it.
+    const selSearch = (label, key, opts, all = 'All') => {
+      const list = [{ value: 'All', search: all, label: all },
+        ...opts.map(o => { const v = String(o.v ?? o), t = String(o.t ?? o); return { value: v, search: t, label: t }; })];
+      const box = searchSelect(list);
+      box.value = String(f[key]);
+      onFilter(box, key, () => { f[key] = box.value; if (key === 'parent') f.sub = 'All'; draw(); });
+      return el('div', { class: 'field' }, el('label', {}, label), box);
+    };
     const description = el('input', { type: 'search', placeholder: 'Search description…', value: f.description, 'data-fk': 'description',
       oninput: () => {
         const caret = description.selectionStart ?? description.value.length;
@@ -90,9 +104,9 @@ export function makeReport(kind) {
     host.append(el('div', { class: 'filters report-filters' },
       el('div', { class: 'field compact-filter' }, el('label', {}, 'Year'), sel('Year', 'year', C.yearsPresent(), 'All years').lastChild),
       el('div', { class: 'field compact-filter' }, el('label', {}, 'Month'), sel('Month', 'month', MONTHS.map((m, i) => ({ v: i + 1, t: m })), 'All months').lastChild),
-      sel('Category', 'parent', C.parentsFor(kind), 'All categories'),
-      sel('Sub-category', 'sub', f.parent === 'All' ? [] : C.subsFor(kind, f.parent), 'All sub-categories'),
-      sel('Account', 'account', C.accountNames(), 'All accounts'),
+      selSearch('Category', 'parent', C.parentsFor(kind), 'All categories'),
+      selSearch('Sub-category', 'sub', f.parent === 'All' ? [] : C.subsFor(kind, f.parent), 'All sub-categories'),
+      selSearch('Account', 'account', C.accountNames(), 'All accounts'),
       el('div', { class: 'field' }, el('label', {}, ' '),
         el('button', { class: 'btn sm', onclick: () => { f = { year: 'All', month: 'All', parent: 'All', sub: 'All', account: 'All', description: '' }; draw(); } }, 'Clear')),
       el('div', { class: 'field report-description' }, el('label', {}, 'Description'), description)));

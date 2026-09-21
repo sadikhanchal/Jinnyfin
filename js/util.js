@@ -361,7 +361,15 @@ export function onFilter(sel, key, fn) {
 export function restoreFilterFocus(host) {
   if (!pendingFilterFocus || !host) return;
   const key = pendingFilterFocus; pendingFilterFocus = null;
-  requestAnimationFrame(() => host.querySelector(`select[data-fk="${key}"]`)?.focus({ preventScroll: true }));
+  requestAnimationFrame(() => {
+    const hit = host.querySelector(`[data-fk="${key}"]`);
+    if (!hit) return;
+    // A plain filter is the select itself; a search combo box (see
+    // searchSelect below) carries data-fk on its wrapping div, and the actual
+    // field to focus is the text box inside it.
+    const target = hit.matches('select,input') ? hit : hit.querySelector('input,select');
+    target?.focus({ preventScroll: true });
+  });
 }
 
 // ------------------------------------------------------ search combo box --
@@ -444,7 +452,13 @@ export function searchSelect(list = []) {
     else if (e.key === 'ArrowUp') { e.preventDefault(); hi = Math.max(hi - 1, 0); render(); }
     else if (e.key === 'Enter') { if (visible[hi]) { e.preventDefault(); commit(visible[hi].value, true); close(); } }
     else if (e.key === 'Escape') { close(); input.value = labelOf(current); }
-    else if (e.key === 'Tab' && visible.length === 1) { commit(visible[0].value, true); close(); }
+    // Tab must behave like Enter, not like walking away: leaving the box
+    // without pressing Enter first used to fall through to blur, which put
+    // back whatever was committed BEFORE this search even started — so typing
+    // "Fed" and tabbing straight out silently picked the old default instead
+    // of the highlighted account. Committing here, ahead of that blur, fixes
+    // it; Tab is not prevented, so focus still moves on to the next field.
+    else if (e.key === 'Tab') { if (visible[hi]) commit(visible[hi].value, true); close(); }
   });
 
   Object.defineProperty(wrap, 'value', { get: () => current, set: v => commit(v, false) });

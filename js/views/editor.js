@@ -137,6 +137,12 @@ export function openTxEditor(existing = null, presets = {}) {
     ...presets,
   };
   let type = t.type;
+  // Lend/Borrow's Payee IS the entry; every other type shows the same box as an
+  // optional "Payee / tag". They must not share one value — typing a loan's
+  // payee and then switching to Expense used to leave that name sitting in
+  // Expense's tag field. It is remembered here instead, off to the side, and
+  // only put back in the box when the row is on Lend/Borrow again.
+  let lbPayee = t.type === 'Lend/Borrow' ? (t.payee || '') : '';
 
   const body = el('div', { class: 'grid', style: 'gap:12px' });
   const typeRow = el('div', { class: 'type-pick' });
@@ -605,6 +611,10 @@ export function openTxEditor(existing = null, presets = {}) {
     // buttons that change the whole sheet if Enter lands on one.
     const b = el('button', { class: type === ty ? 'on' : '', tabindex: type === ty ? '0' : '-1', onclick: () => {
       if (type === ty) return;
+      // The payee belongs to Lend/Borrow alone. Leaving it, remember what was
+      // typed; arriving anywhere else, the box starts blank — never carrying a
+      // loan's payee into an Expense or Income row's own "Payee / tag" field.
+      if (type === 'Lend/Borrow') lbPayee = payeeIn.value;
       type = ty;
       [...typeRow.children].forEach(c => {
         c.classList.toggle('on', c.dataset.ty === ty);
@@ -622,6 +632,7 @@ export function openTxEditor(existing = null, presets = {}) {
       const home = existing && existing.type === ty;
       parentIn.value = home ? (t.parent || '') : '';
       subIn.value = home ? (t.sub || '') : '';
+      payeeIn.value = ty === 'Lend/Borrow' ? lbPayee : '';
       layout();
     }, dataset: { ty } },
       el('span', { class: 'ti' }, typeIcon(ty, 19)),
