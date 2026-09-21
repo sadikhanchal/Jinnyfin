@@ -3,7 +3,7 @@
 //  Same filters, same four blocks as the workbook, one code path.
 // ============================================================================
 import { el, money, num, MONTHS, MON3, fmtDate, downloadCSV, todayISO,
-  onFilter, restoreFilterFocus, searchSelect } from '../util.js';
+  debounce, searchSelect } from '../util.js';
 import { DB } from '../store.js';
 import * as C from '../calc.js';
 import { groupedBars, barList, SERIES } from '../charts.js';
@@ -12,8 +12,12 @@ import { openTxEditor } from './editor.js';
 
 export function makeReport(kind) {
   const isIncome = kind === 'Income';
-  let f = { year: String(new Date().getFullYear()), month: 'All', parent: 'All', sub: 'All', account: 'All', description: '' };
+  const blank = () => ({ year: 'All', month: 'All', parent: 'All', sub: 'All', account: 'All', description: '' });
+  let f = { ...blank(), year: String(new Date().getFullYear()) };
   let host = null;
+  let body = null;                          // everything below the filter bar — the only part redrawn
+  let ctl = null;                           // the filter bar's controls, built once per visit
+  let rows = [];                            // what is on screen, for the CSV button
   let escapeOut = null;                     // set while a drill-down is open
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape' || !escapeOut) return;
@@ -52,64 +56,150 @@ export function makeReport(kind) {
     requestAnimationFrame(() => { settle(); requestAnimationFrame(settle); });
   }
 
-  function draw() {
-    const S = SERIES();
-    const color = isIncome ? S.income : S.expense;
+  /**
+   * The filter bar is built ONCE and then left alone — the Transactions screen
+   * has worked this way for a long time, and this is why.
+   *
+   * It used to be thrown away and rebuilt with everything else on every change.
+   * Picking a category with Tab then destroyed the very box Tab was leaving,
+   * the cursor was put back into it, the box opened its list on "All
+   * categories" — and the next Tab picked that, wiping out what had just been
+   * chosen. A box that is never replaced has none of that: Tab simply goes on
+   * to the next field. Only the figures below are redrawn.
+   */
+  function mount() {
     host.innerHTML = '';
-    const flt = { ...f, type: kind };
-    const rows = C.filterTx(flt);
-    const totSAR = rows.reduce((s, t) => s + (t.currency === 'SAR' ? (isIncome ? +t.income : +t.expense) || 0 : 0), 0);
-    const totINR = rows.reduce((s, t) => s + (t.currency !== 'SAR' ? (isIncome ? +t.income : +t.expense) || 0 : 0), 0);
-    const totEq = rows.reduce((s, t) => s + (isIncome ? C.inrOf(t) : C.inrOut(t)), 0);
-
+    ctl = buildControls();
+    body = el('div', { class: 'report-body' });
     host.append(topbar(isIncome ? 'Income Report' : 'Expense Report',
-      el('button', { class: 'btn sm', onclick: () => exportCSV(rows) }, '⬇ CSV')));
+      el('button', { class: 'btn sm', onclick: () => exportCSV(rows) }, '⬇ CSV')), ctl.bar, body);
+    draw();
+  }
 
-    // ------------------------------------------------------------ filters -
-    const sel = (label, key, opts, all = 'All') => {
-      const s = el('select', {}, el('option', { value: 'All' }, all),
-        ...opts.map(o => el('option', { value: o.v ?? o, selected: String(f[key]) === String(o.v ?? o) }, o.t ?? o)));
-      onFilter(s, key, () => { f[key] = s.value; if (key === 'parent') f.sub = 'All'; draw(); });
-      return el('div', { class: 'field' }, el('label', {}, label), s);
+  /** "Sub · Category" pairs travel as one value, so a sub knows whose it is. */
+  const subKey = (parent, sub) => JSON.stringify([parent, sub]);
+  const all = label => ({ value: 'All', search: label, label });
+  /** A value that is in force must always be in its own list, or the box shows blank. */
+  const keep = (list, value, label = value) =>
+    (value === 'All' || list.some(o => o.value === value)) ? list : [...list, { value, search: label, label }];
+
+  function subOptions() {
+    const rowsOf = parent => DB.categories.filter(c => c.type === kind && c.sub && c.active !== false
+      && (!parent || c.parent === parent));
+    let list;
+    if (f.parent !== 'All') {
+      list = C.subsFor(kind, f.parent).map(s => ({ value: subKey(f.parent, s), search: s, label: s }));
+    } else {
+      // No category chosen: every sub of this type is on offer, the same as the
+      // New Transaction sheet — naming "Diesel" is enough, and picking it fills
+      // in the category it belongs to. The category is shown beside each one,
+      // because the same sub can sit under two of them.
+      const seen = new Set();
+      list = [];
+      for (const c of rowsOf(null)) {
+        const k = subKey(c.parent, c.sub);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        list.push({ value: k, search: c.sub, label: `${c.sub} · ${c.parent}` });
+      }
+      list.sort((a, b) => a.label.localeCompare(b.label));
+    }
+    list = [all('All sub-categories'), ...list];
+    return f.sub === 'All' ? list : keep(list, subKey(f.parent, f.sub), f.sub);
+  }
+
+  function buildControls() {
+    // Year and month stay plain lists: a dozen entries, walked with the arrows.
+    const plain = (key, opts, allLabel) => {
+      const s = el('select', { 'data-fk': key }, el('option', { value: 'All' }, allLabel),
+        ...opts.map(o => el('option', { value: o.v ?? o }, o.t ?? o)));
+      s.addEventListener('change', () => { f[key] = s.value; draw(); });
+      return s;
     };
+    const year = plain('year', C.yearsPresent(), 'All years');
+    const month = plain('month', MONTHS.map((m, i) => ({ v: i + 1, t: m })), 'All months');
+
     // Category, Sub-category and Account can run to dozens of entries, and a
     // plain <select> only jumps to one whose FIRST letter matches what was
     // just typed — so finding "Cake Business" meant remembering it starts
-    // with C, not that it has "Business" in it. This is the same search combo
-    // the New Transaction sheet's Account field already uses: type any word
-    // in the name and it finds it.
-    const selSearch = (label, key, opts, all = 'All') => {
-      const list = [{ value: 'All', search: all, label: all },
-        ...opts.map(o => { const v = String(o.v ?? o), t = String(o.t ?? o); return { value: v, search: t, label: t }; })];
-      const box = searchSelect(list);
-      box.value = String(f[key]);
-      onFilter(box, key, () => { f[key] = box.value; if (key === 'parent') f.sub = 'All'; draw(); });
-      return el('div', { class: 'field' }, el('label', {}, label), box);
-    };
-    const description = el('input', { type: 'search', placeholder: 'Search description…', value: f.description, 'data-fk': 'description',
-      oninput: () => {
-        const caret = description.selectionStart ?? description.value.length;
-        f.description = description.value;
-        clearTimeout(description._timer);
-        description._timer = setTimeout(() => {
-          redraw(host.querySelector('.jf-bd'));
-          requestAnimationFrame(() => {
-            const next = host.querySelector('input[data-fk="description"]');
-            if (!next) return;
-            next.focus({ preventScroll: true });
-            next.setSelectionRange(caret, caret);
-          });
-        }, 120);
-      } });
-    host.append(el('div', { class: 'filters report-filters' },
-      el('div', { class: 'field compact-filter' }, el('label', {}, 'Year'), sel('Year', 'year', C.yearsPresent(), 'All years').lastChild),
-      el('div', { class: 'field compact-filter' }, el('label', {}, 'Month'), sel('Month', 'month', MONTHS.map((m, i) => ({ v: i + 1, t: m })), 'All months').lastChild),
-      selSearch('Category', 'parent', C.parentsFor(kind), 'All categories'),
-      selSearch('Sub-category', 'sub', f.parent === 'All' ? [] : C.subsFor(kind, f.parent), 'All sub-categories'),
-      selSearch('Account', 'account', C.accountNames(), 'All accounts'),
-      el('div', { class: 'field' }, el('label', {}, ' '),
-        el('button', { class: 'btn sm', onclick: () => { f = { year: 'All', month: 'All', parent: 'All', sub: 'All', account: 'All', description: '' }; draw(); } }, 'Clear')),
-      el('div', { class: 'field report-description' }, el('label', {}, 'Description'), description)));
+    // with C, not that it has "Business" in it. The search box matches any
+    // word in the name, and behaves the same on every key (see searchSelect).
+    const cat = searchSelect([], { placeholder: 'All categories' });
+    cat.dataset.fk = 'parent';
+    cat.addEventListener('change', () => { f.parent = cat.value; f.sub = 'All'; draw(); });
+
+    const sub = searchSelect([], { placeholder: 'All sub-categories' });
+    sub.dataset.fk = 'sub';
+    sub.addEventListener('change', () => {
+      if (sub.value === 'All') f.sub = 'All';
+      else { const [p, s] = JSON.parse(sub.value); f.parent = p; f.sub = s; }
+      draw();
+    });
+
+    const acct = searchSelect([], { placeholder: 'All accounts' });
+    acct.dataset.fk = 'account';
+    acct.addEventListener('change', () => { f.account = acct.value; draw(); });
+
+    const description = el('input', { type: 'search', placeholder: 'Search description…', value: f.description,
+      'data-fk': 'description' });
+    // The box survives the redraw now, so there is no cursor to hand back —
+    // the figures simply follow the typing, a beat behind it.
+    description.addEventListener('input', debounce(() => {
+      f.description = description.value;
+      redraw(host.querySelector('.jf-bd'));
+    }, 150));
+
+    const clear = el('button', { class: 'btn sm', onclick: () => { f = blank(); description.value = ''; draw(); } }, 'Clear');
+
+    const bar = el('div', { class: 'filters report-filters' },
+      el('div', { class: 'field compact-filter' }, el('label', {}, 'Year'), year),
+      el('div', { class: 'field compact-filter' }, el('label', {}, 'Month'), month),
+      el('div', { class: 'field' }, el('label', {}, 'Category'), cat),
+      el('div', { class: 'field' }, el('label', {}, 'Sub-category'), sub),
+      el('div', { class: 'field' }, el('label', {}, 'Account'), acct),
+      el('div', { class: 'field' }, el('label', {}, ' '), clear),
+      el('div', { class: 'field report-description' }, el('label', {}, 'Description'), description));
+    return { bar, year, month, cat, sub, acct, description };
+  }
+
+  /**
+   * Make every control say what the filters actually are. A tap in the
+   * breakdown, a crumb, Clear, a deep link or a sync can all change the filters
+   * without anybody touching the bar, and the bar has to keep up.
+   */
+  function syncControls() {
+    const { year, month, cat, sub, acct, description } = ctl;
+    const years = C.yearsPresent().map(String);
+    const listed = [...year.options].slice(1).map(o => o.value);
+    if (years.join() !== listed.join() && document.activeElement !== year) {
+      year.replaceChildren(el('option', { value: 'All' }, 'All years'),
+        ...years.map(y => el('option', { value: y }, y)));
+    }
+    for (const [s, v] of [[year, f.year], [month, f.month]]) {
+      s.value = String(v);
+      if (s.selectedIndex < 0) s.selectedIndex = 0;
+    }
+    cat.setOptions(keep([all('All categories'), ...C.parentsFor(kind).map(p => ({ value: p, search: p, label: p }))], f.parent));
+    cat.value = f.parent;
+    sub.setOptions(subOptions());
+    sub.value = f.sub === 'All' ? 'All' : subKey(f.parent, f.sub);
+    acct.setOptions(keep([all('All accounts'), ...C.accountNames().map(a => ({ value: a, search: a, label: a }))], f.account));
+    acct.value = f.account;
+    if (document.activeElement !== description && description.value !== f.description) description.value = f.description;
+  }
+
+  function draw() {
+    if (!body) return;
+    syncControls();
+    const S = SERIES();
+    const color = isIncome ? S.income : S.expense;
+    body.innerHTML = '';
+    const host = body;                      // everything below lands in the body, under the bar
+    const flt = { ...f, type: kind };
+    rows = C.filterTx(flt);
+    const totSAR = rows.reduce((s, t) => s + (t.currency === 'SAR' ? (isIncome ? +t.income : +t.expense) || 0 : 0), 0);
+    const totINR = rows.reduce((s, t) => s + (t.currency !== 'SAR' ? (isIncome ? +t.income : +t.expense) || 0 : 0), 0);
+    const totEq = rows.reduce((s, t) => s + (isIncome ? C.inrOf(t) : C.inrOut(t)), 0);
 
     // --------------------------------------------------------------- KPIs -
     host.append(el('div', { class: 'grid g4 keep2' },
@@ -216,7 +306,6 @@ export function makeReport(kind) {
     if (rows.length > 400) detCard.append(el('p', { class: 'small muted', style: 'margin:8px 0 0' },
       'Showing the latest 400 — narrow the filters or download the CSV for everything.'));
     host.append(detCard);
-  restoreFilterFocus(host);   // the cursor stays in the filter you were arrowing through
   }
 
   function exportCSV(rows) {
@@ -239,12 +328,13 @@ export function makeReport(kind) {
         f = { ...f, parent: wanted, sub: 'All',
           year: q.get('year') || f.year, month: q.get('month') || f.month, account: 'All' };
       }
-      draw();
+      mount();
       if (wanted) requestAnimationFrame(() =>
         host.querySelector('.jf-bd')?.scrollIntoView({ block: 'start', behavior: 'instant' }));
     },
-    // A sync landing while you are reading must not move the page either.
-    refresh: () => { if (host) redraw(host.querySelector('.jf-bd')); },
+    // A sync landing while you are reading must not move the page either —
+    // nor touch the filter bar he may be typing in: only the body is redrawn.
+    refresh: () => { if (host && body?.isConnected) redraw(host.querySelector('.jf-bd')); },
   };
 }
 

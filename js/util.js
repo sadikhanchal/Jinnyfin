@@ -301,15 +301,25 @@ export function dateGuard(input, commit, key = null) {
    * the date actually filtering — because a box reading 2323 over a list that
    * ignores 2323 is worse than one that plainly refuses it.
    */
-  const fire = (leaving = false) => {
+  const fire = (leaving = false, next = null) => {
     clearTimeout(timer);
     const v = input.value;
     if (badYear(v)) { if (leaving) input.value = good; return; }
     if (v === good) return;        // nothing changed — do not redraw, and do
     good = v;                      // not leave a focus request behind either
-    if (key) pendingDateFocus = key;
+    // Walking out with Tab is a request to be in the NEXT field. The redraw
+    // throws that field away too, so remember which one it was (when it can be
+    // named) and hand the cursor to its replacement — not back to this box.
+    if (key) pendingDateFocus = { key, next: focusKeyOf(next), from: input, at: Date.now() };
     commit(v);
   };
+  /**
+   * Put a value in the box from outside — Clear, or a Year pick that empties
+   * From and To — and let the guard know it is the value in force. Writing
+   * `.value` alone left the guard remembering the old date, so typing that
+   * same date back in afterwards was taken for "nothing changed".
+   */
+  input.setGuarded = v => { clearTimeout(timer); input.value = v || ''; good = input.value; };
   // Results follow the typing, a beat behind it. That is only safe because
   // the screens that use this no longer rebuild the box underneath the
   // caret — see the note on mount() in transactions.js. If a screen ever goes
@@ -318,7 +328,7 @@ export function dateGuard(input, commit, key = null) {
   input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => fire(false), 350); });
   input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); fire(true); } });
   input.onchange = () => fire(false);
-  input.onblur = () => fire(true);
+  input.onblur = e => fire(true, e.relatedTarget);
   return input;
 }
 
@@ -326,11 +336,29 @@ let pendingDateFocus = null;
 
 /** Put the cursor back in the date box the redraw threw away. */
 export function restoreDateFocus(host) {
-  if (!pendingDateFocus || !host) return;
-  const key = pendingDateFocus; pendingDateFocus = null;
+  const want = pendingDateFocus;
+  pendingDateFocus = null;
+  if (!want || !host) return;
+  // Only a box the redraw actually replaced. A screen whose date boxes survive
+  // (Transactions) never consumed its request, and the next screen to open
+  // used to pull the cursor into its own From box.
+  if (want.from.isConnected || Date.now() - want.at > 1500) return;
   // preventScroll — focusing a box the browser thinks is out of view drags the
   // whole page to it, which is not what "put the cursor back" should mean.
-  requestAnimationFrame(() => host.querySelector(`input[data-dk="${key}"]`)?.focus({ preventScroll: true }));
+  requestAnimationFrame(() => {
+    const next = want.next && host.querySelector(`[data-${want.next.attr}="${want.next.key}"]`);
+    const target = next ? (next.matches('input,select,button') ? next : next.querySelector('input,select'))
+      : host.querySelector(`input[data-dk="${want.key}"]`);
+    target?.focus({ preventScroll: true });
+  });
+}
+
+/** A name for the field focus is moving to, that survives the redraw. */
+function focusKeyOf(n) {
+  if (!n?.dataset) return null;
+  if (n.dataset.dk) return { attr: 'dk', key: n.dataset.dk };
+  const fk = n.closest?.('[data-fk]');
+  return fk ? { attr: 'fk', key: fk.dataset.fk } : null;
 }
 
 // ------------------------------------------------------- filter dropdowns --
@@ -353,16 +381,26 @@ let pendingFilterFocus = null;
  */
 export function onFilter(sel, key, fn) {
   sel.dataset.fk = key;
-  sel.onchange = () => { pendingFilterFocus = key; fn(); };
+  sel.onchange = () => { pendingFilterFocus = { key, from: sel, at: Date.now() }; fn(); };
   return sel;
 }
 
-/** Call at the end of a draw() that filters may have triggered. */
+/**
+ * Call at the end of a draw() that filters may have triggered.
+ *
+ * Only a field the redraw actually threw away gets the cursor handed back.
+ * The request used to be a bare key that lived until somebody consumed it —
+ * so a filter changed on a screen that never redraws its bar (Transactions)
+ * left "year" pending, and the next screen that opened stole the cursor into
+ * its own Year box for no reason at all.
+ */
 export function restoreFilterFocus(host) {
-  if (!pendingFilterFocus || !host) return;
-  const key = pendingFilterFocus; pendingFilterFocus = null;
+  const want = pendingFilterFocus;
+  pendingFilterFocus = null;
+  if (!want || !host) return;
+  if (want.from.isConnected || Date.now() - want.at > 1500) return;   // not replaced, or stale
   requestAnimationFrame(() => {
-    const hit = host.querySelector(`[data-fk="${key}"]`);
+    const hit = host.querySelector(`[data-fk="${want.key}"]`);
     if (!hit) return;
     // A plain filter is the select itself; a search combo box (see
     // searchSelect below) carries data-fk on its wrapping div, and the actual
@@ -391,10 +429,26 @@ export function restoreFilterFocus(host) {
  * `list` entries are `{ value, label, search }` — `search` is what typing is
  * matched against (the plain account name); `label` is what the closed list
  * shows (name plus currency, "(idle)", and so on).
+ *
+ * How the keys behave, because every one of these was once wrong:
+ *
+ *   Tab / Shift+Tab / clicking away — if he typed or arrowed, the highlighted
+ *       entry is picked, exactly as Enter would; then focus moves on as usual.
+ *       If he only passed THROUGH the box, nothing changes. (Picking on every
+ *       Tab put the first account in the list on any entry he merely tabbed
+ *       across; picking on none threw away "Fed" the moment he tabbed out.)
+ *   Enter — picks the highlighted entry and stays in the box.
+ *   Escape — with the list open, closes the list and puts back what was
+ *       chosen, and goes no further: the sheet or the drill-down behind it
+ *       must not close on the same key.
+ *   ↑ ↓ — walk the list; on opening, the entry already chosen is the one lit.
+ *
+ * `change` fires only when the chosen value actually changes.
  */
-export function searchSelect(list = []) {
+export function searchSelect(list = [], { placeholder = '' } = {}) {
   const wrap = el('div', { class: 'combo' });
-  const input = el('input', { type: 'text', autocomplete: 'off', style: 'width:100%' });
+  const input = el('input', { type: 'text', autocomplete: 'off', style: 'width:100%',
+    placeholder: placeholder || null });
   const menu = el('div', { class: 'combo-list', hidden: true });
   wrap.append(input, menu);
 
@@ -402,11 +456,13 @@ export function searchSelect(list = []) {
   let current = '';                 // the committed value
   let hi = -1;                      // index into `visible`, while the list is open
   let visible = [];
+  let dirty = false;                // he typed or arrowed since the box took focus
 
   const labelOf = v => options.find(o => o.value === v)?.label ?? '';
   const commit = (v, fire) => {
-    current = v; input.value = labelOf(v);
-    if (fire) wrap.dispatchEvent(new Event('change'));
+    const changed = v !== current;
+    current = v; input.value = labelOf(v); dirty = false;
+    if (fire && changed) wrap.dispatchEvent(new Event('change'));
   };
 
   const render = () => {
@@ -418,6 +474,8 @@ export function searchSelect(list = []) {
       onmousedown: e => e.preventDefault(),
       onclick: () => { commit(o.value, true); close(); },
     }, o.label)));
+    // A long list scrolls; the lit row must stay in sight as the arrows move.
+    menu.children[hi]?.scrollIntoView?.({ block: 'nearest' });
   };
 
   const place = () => {
@@ -429,7 +487,10 @@ export function searchSelect(list = []) {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     visible = !words.length ? options
       : options.filter(o => words.every(w => o.search.toLowerCase().split(/\s+/).some(part => part.startsWith(w))));
-    hi = visible.length ? 0 : -1;
+    // Nothing typed: light the entry already chosen, so ↓ moves on from it
+    // and passing through with Tab has nothing new to pick.
+    const at = words.length ? 0 : visible.findIndex(o => o.value === current);
+    hi = visible.length ? Math.max(at, 0) : -1;
     if (menu.hidden) window.addEventListener('scroll', place, true);
     place(); menu.hidden = false; render();
   };
@@ -438,31 +499,36 @@ export function searchSelect(list = []) {
     menu.hidden = true; visible = []; hi = -1;
   };
 
-  input.addEventListener('focus', () => { input.select(); open(''); });
-  input.addEventListener('input', () => open(input.value));
+  input.addEventListener('focus', () => { dirty = false; input.select(); open(''); });
+  input.addEventListener('input', () => { dirty = true; open(input.value); });
   input.addEventListener('blur', () => {
-    // Leaving without finishing a pick — put back what was actually chosen,
-    // so a half-typed search never sits in the field as if it meant something.
+    // Leaving after a search picks what the search lit up — Tab, Shift+Tab and
+    // a click somewhere else all come through here. Leaving without having
+    // searched changes nothing, and a half-typed word never stays in the box.
+    if (dirty && !menu.hidden && visible[hi]) commit(visible[hi].value, true);
+    dirty = false;
     close(); input.value = labelOf(current);
   });
   input.addEventListener('keydown', e => {
-    if (menu.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { open(input.value); return; }
+    if (menu.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault(); open(dirty ? input.value : ''); return;
+    }
     if (menu.hidden) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); hi = Math.min(hi + 1, visible.length - 1); render(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); hi = Math.max(hi - 1, 0); render(); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); dirty = true; hi = Math.min(hi + 1, visible.length - 1); render(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); dirty = true; hi = Math.max(hi - 1, 0); render(); }
     else if (e.key === 'Enter') { if (visible[hi]) { e.preventDefault(); commit(visible[hi].value, true); close(); } }
-    else if (e.key === 'Escape') { close(); input.value = labelOf(current); }
-    // Tab must behave like Enter, not like walking away: leaving the box
-    // without pressing Enter first used to fall through to blur, which put
-    // back whatever was committed BEFORE this search even started — so typing
-    // "Fed" and tabbing straight out silently picked the old default instead
-    // of the highlighted account. Committing here, ahead of that blur, fixes
-    // it; Tab is not prevented, so focus still moves on to the next field.
-    else if (e.key === 'Tab') { if (visible[hi]) commit(visible[hi].value, true); close(); }
+    else if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      dirty = false; close(); input.value = labelOf(current); input.select();
+    }
   });
 
-  Object.defineProperty(wrap, 'value', { get: () => current, set: v => commit(v, false) });
-  wrap.setOptions = newList => { options = newList; if (!menu.hidden) open(input.value); else input.value = labelOf(current); };
+  // Setting the same value again is not a change — and must not overwrite
+  // whatever is being typed in the box at that moment (a background sync
+  // re-applying the filters, say).
+  Object.defineProperty(wrap, 'value', { get: () => current, set: v => { if (v !== current) commit(v, false); } });
+  wrap.setOptions = newList => { options = newList; if (!menu.hidden) open(dirty ? input.value : ''); else input.value = labelOf(current); };
+  wrap.focus = () => input.focus();
   return wrap;
 }
 

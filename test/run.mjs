@@ -750,9 +750,11 @@ test('Income and Expense reports render all filter controls', async browser => {
     reports.push(await page.evaluate(() => ({
       year: !!document.querySelector('select[data-fk="year"]'),
       month: !!document.querySelector('select[data-fk="month"]'),
-      category: !!document.querySelector('select[data-fk="parent"]'),
-      subcategory: !!document.querySelector('select[data-fk="sub"]'),
-      account: !!document.querySelector('select[data-fk="account"]'),
+      // Category / Sub-category / Account are the word-search combo box, not
+      // a plain select — data-fk sits on its wrapping div.
+      category: !!document.querySelector('[data-fk="parent"] input'),
+      subcategory: !!document.querySelector('[data-fk="sub"] input'),
+      account: !!document.querySelector('[data-fk="account"] input'),
       description: !!document.querySelector('input[data-fk="description"]'),
     })));
     await ctx.close();
@@ -760,6 +762,370 @@ test('Income and Expense reports render all filter controls', async browser => {
   const missing = reports.flatMap((r, i) => Object.entries(r).filter(([, present]) => !present).map(([key]) => `${['income', 'expense'][i]}:${key}`));
   if (missing.length) throw new Error(`missing report controls: ${missing.join(', ')}`);
   return 'all Income and Expense filters render';
+});
+
+test('the report Category filter finds a category by any word in its name', async browser => {
+  // A plain <select> only jumps to an option starting with the letter just
+  // typed — "Business" did nothing for "Cake Business" because the B is not
+  // the first letter. The search combo matches on the start of ANY word.
+  const { ctx, page, errors } = await open(browser, 'expense');
+  const box = page.locator('[data-fk="parent"] input');
+  await box.click();
+  await box.fill('Business');
+  await page.waitForTimeout(200);
+  const options = await page.evaluate(() => [...document.querySelectorAll('.combo-opt')].map(o => o.textContent));
+  if (!options.some(o => o.includes('Cake Business'))) {
+    await ctx.close(); throw new Error(`typing "Business" did not offer Cake Business: ${options.join(', ')}`); }
+  await page.evaluate(() => document.querySelector('.combo-opt')?.click());
+  await page.waitForTimeout(300);
+  const heading = await page.evaluate(() => document.querySelector('.jf-bd h3')?.textContent || '');
+  await ctx.close();
+  if (heading !== 'Breakdown inside Cake Business') throw new Error(`picking the match did not filter: "${heading}"`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'typing "Business" finds and selects "Cake Business"';
+});
+
+test('Tab picks the highlighted account, the same as Enter', async browser => {
+  // Typing "Fed" narrowed the Account field to the Fed accounts and highlighted
+  // one — but tabbing on to the next field without pressing Enter first threw
+  // that away and silently filled in whatever account was there before.
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  await page.evaluate(() => window.JINNYFIN.openTxEditor());
+  await page.waitForTimeout(500);
+  const acctInput = page.locator('.modal-body .field .combo input').first();
+  await acctInput.click();
+  await acctInput.fill('Fed');
+  await page.waitForTimeout(200);
+  const highlighted = await page.evaluate(() => document.querySelector('.combo-opt.hi')?.textContent || '');
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(200);
+  const value = await acctInput.inputValue();
+  await ctx.close();
+  if (!highlighted.startsWith('Fed')) throw new Error(`nothing was highlighted to Tab onto: "${highlighted}"`);
+  if (value !== highlighted) throw new Error(`Tab left "${value}", expected the highlighted "${highlighted}"`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `Tab picked "${value}"`;
+});
+
+test('switching off Lend/Borrow clears the payee, and coming back restores it', async browser => {
+  // The Payee box is shared with every other type's "Payee / tag" field.
+  // Typing a loan's payee and switching to Expense used to leave that name
+  // sitting there — and it belongs to neither the Expense row nor, once you
+  // switch on, whichever type comes after it.
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  await page.evaluate(() => window.JINNYFIN.openTxEditor(null, { type: 'Lend/Borrow' }));
+  await page.waitForTimeout(500);
+  const payeeVal = () => page.evaluate(() =>
+    [...document.querySelectorAll('.modal-body input')].find(i => i.placeholder === 'Who?')?.value || '');
+  await page.evaluate(() => {
+    const p = [...document.querySelectorAll('.modal-body input')].find(i => i.placeholder === 'Who?');
+    p.focus(); p.value = 'Sadiq';
+  });
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(300);
+  if (await payeeVal() !== 'Sadiq') { await ctx.close(); throw new Error('payee did not take the typed name'); }
+
+  await page.click('.type-pick button[data-ty="Expense"]');
+  await page.waitForTimeout(300);
+  const onExpense = await payeeVal();
+
+  await page.click('.type-pick button[data-ty="Lend/Borrow"]');
+  await page.waitForTimeout(300);
+  const backOnLB = await payeeVal();
+  await ctx.close();
+  if (onExpense) throw new Error(`switching to Expense still showed the Lend/Borrow payee: "${onExpense}"`);
+  if (backOnLB !== 'Sadiq') throw new Error(`coming back to Lend/Borrow lost the payee: "${backOnLB}"`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'payee stays out of other types, and comes back on Lend/Borrow';
+});
+
+// ---- search boxes: every key, every screen (1.60) --------------------------
+/** Where the keyboard is: the field's label (or a button's text). */
+const focusLabel = page => page.evaluate(() => {
+  const a = document.activeElement;
+  const lab = a?.closest('.field')?.querySelector('label')?.textContent?.trim();
+  return lab || a?.textContent?.trim() || a?.tagName || '';
+});
+/** What a search box reads, and what it holds, by its data-fk. */
+const boxShows = (page, fk) => page.evaluate(k => document.querySelector(`[data-fk="${k}"] input`)?.value ?? null, fk);
+const listOpen = page => page.evaluate(() => [...document.querySelectorAll('.combo-list')].some(m => !m.hidden));
+const bdHeading = page => page.evaluate(() => document.querySelector('.jf-bd h3')?.textContent || '');
+const tab = async (page, keys = 'Tab') => { await page.keyboard.press(keys); await page.waitForTimeout(250); };
+
+test('report search box: type, Tab — the pick stays and the cursor moves on; more Tabs change nothing', async browser => {
+  // Typing in Category and pressing Tab kept the cursor in the same box, and
+  // every further Tab put "All categories" back — the page rebuilt the box Tab
+  // was leaving, and the rebuilt box opened on "All" and picked it.
+  const { ctx, page, errors } = await open(browser, 'expense');
+  await page.locator('[data-fk="parent"] input').click();
+  await page.keyboard.type('Business');
+  await page.waitForTimeout(150);
+  await tab(page);
+  const at1 = await focusLabel(page);
+  const shows1 = await boxShows(page, 'parent');
+  const head1 = await bdHeading(page);
+  await tab(page);                                        // Sub-category → Account
+  const at2 = await focusLabel(page);
+  await tab(page);                                        // → Clear
+  await tab(page, 'Shift+Tab'); await tab(page, 'Shift+Tab'); await tab(page, 'Shift+Tab');
+  const back = await focusLabel(page);
+  await tab(page); await tab(page);
+  const shows2 = await boxShows(page, 'parent');
+  const head2 = await bdHeading(page);
+  // Only the box the cursor is in may have its list open (it opens on focus).
+  const strays = await page.evaluate(() => [...document.querySelectorAll('.combo')]
+    .filter(c => !c.querySelector('.combo-list').hidden && !c.contains(document.activeElement)).length);
+  await ctx.close();
+  if (shows1 !== 'Cake Business') throw new Error(`after Tab the box reads "${shows1}"`);
+  if (head1 !== 'Breakdown inside Cake Business') throw new Error(`the pick did not filter: "${head1}"`);
+  if (at1 !== 'Sub-category') throw new Error(`Tab left the cursor on "${at1}", not the next box`);
+  if (at2 !== 'Account') throw new Error(`the second Tab went to "${at2}"`);
+  if (back !== 'Category') throw new Error(`Shift+Tab ×3 came back to "${back}"`);
+  if (shows2 !== 'Cake Business' || head2 !== head1) throw new Error(`passing through with Tab changed it to "${shows2}" / "${head2}"`);
+  if (strays) throw new Error(`${strays} list(s) left hanging open on boxes the cursor has left`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'Category → Sub → Account → Clear and back: "Cake Business" held throughout';
+});
+
+test('report search box: Enter picks and closes; Escape shuts only the list, then steps out', async browser => {
+  const { ctx, page, errors } = await open(browser, 'expense');
+  await page.locator('[data-fk="parent"] input').click();
+  await page.keyboard.type('Business');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+  const e = { open: await listOpen(page), shows: await boxShows(page, 'parent'), at: await focusLabel(page), head: await bdHeading(page) };
+  await tab(page);                                        // nothing typed since Enter: moves on, changes nothing
+  const afterTab = { at: await focusLabel(page), shows: await boxShows(page, 'parent') };
+  await page.locator('[data-fk="account"] input').click();
+  await page.waitForTimeout(150);
+  const opened = await listOpen(page);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  const esc1 = { open: await listOpen(page), head: await bdHeading(page), at: await focusLabel(page) };
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  const esc2 = { head: await bdHeading(page), shows: await boxShows(page, 'parent') };
+  await ctx.close();
+  if (e.open || e.shows !== 'Cake Business' || e.at !== 'Category' || e.head !== 'Breakdown inside Cake Business')
+    throw new Error(`Enter: ${JSON.stringify(e)}`);
+  if (afterTab.at !== 'Sub-category' || afterTab.shows !== 'Cake Business') throw new Error(`Tab after Enter: ${JSON.stringify(afterTab)}`);
+  if (!opened) throw new Error('the Account list did not open on focus');
+  if (esc1.open || esc1.head !== 'Breakdown inside Cake Business' || esc1.at !== 'Account')
+    throw new Error(`Escape with the list open did more than close it: ${JSON.stringify(esc1)}`);
+  if (esc2.head !== 'Breakdown by category' || esc2.shows !== 'All categories')
+    throw new Error(`the second Escape did not step out, or the box did not follow: ${JSON.stringify(esc2)}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'Enter keeps it; Tab moves on; Esc #1 closes the list, Esc #2 steps out and the box follows';
+});
+
+test('report Sub-category box finds a sub under any category and fills in the category', async browser => {
+  const { ctx, page, errors } = await open(browser, 'expense');
+  const pick = await page.evaluate(() => {
+    const C = window.JINNYFIN.DB.categories.filter(c => c.type === 'Expense' && c.sub && c.active !== false);
+    const words = s => s.toLowerCase().split(/\s+/).filter(Boolean);
+    // a sub no other sub could be mistaken for when typed in full
+    for (const c of C) {
+      const w = words(c.sub);
+      const rivals = C.filter(o => o !== c && w.every(x => words(o.sub).some(p => p.startsWith(x))));
+      if (!rivals.length && C.filter(o => o.sub === c.sub).length === 1) return { parent: c.parent, sub: c.sub };
+    }
+    return null;
+  });
+  if (!pick) { await ctx.close(); throw new Error('fixture has no unambiguous sub-category'); }
+  await page.selectOption('[data-fk="year"]', 'All');
+  await page.waitForTimeout(200);
+  await page.locator('[data-fk="sub"] input').click();
+  await page.keyboard.type(pick.sub);
+  await page.waitForTimeout(150);
+  const lit = await page.evaluate(() => document.querySelector('.combo-opt.hi')?.textContent || '');
+  await tab(page);
+  const got = { cat: await boxShows(page, 'parent'), sub: await boxShows(page, 'sub'), head: await bdHeading(page), at: await focusLabel(page) };
+  await ctx.close();
+  if (lit !== `${pick.sub} · ${pick.parent}`) throw new Error(`typing "${pick.sub}" lit "${lit}"`);
+  if (got.cat !== pick.parent) throw new Error(`the category box reads "${got.cat}", expected "${pick.parent}"`);
+  if (got.sub !== pick.sub) throw new Error(`the sub box reads "${got.sub}"`);
+  if (got.head !== `Inside ${pick.sub}`) throw new Error(`not filtered to the sub: "${got.head}"`);
+  if (got.at !== 'Account') throw new Error(`Tab went to "${got.at}"`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `"${pick.sub}" → ${pick.parent} filled in`;
+});
+
+test('report boxes follow a tap in the breakdown, and Clear empties every one', async browser => {
+  const { ctx, page, errors } = await open(browser, 'expense');
+  await page.selectOption('[data-fk="year"]', 'All');
+  await page.waitForTimeout(250);
+  const tapped = await page.evaluate(() => {
+    const row = document.querySelector('.jf-bd .bar-row');
+    const name = row?.querySelector('.lab span')?.firstChild?.textContent?.trim();
+    row?.click();
+    return name;
+  });
+  await page.waitForTimeout(300);
+  const followed = await boxShows(page, 'parent');
+  await page.locator('[data-fk="account"] input').click();
+  await page.keyboard.type('Rajhi');
+  await tab(page);
+  const acct = await boxShows(page, 'account');
+  await page.evaluate(() => [...document.querySelectorAll('#main button')].find(b => b.textContent.trim() === 'Clear')?.click());
+  await page.waitForTimeout(300);
+  const cleared = { cat: await boxShows(page, 'parent'), sub: await boxShows(page, 'sub'), acct: await boxShows(page, 'account'),
+    year: await page.locator('[data-fk="year"]').inputValue(), head: await bdHeading(page) };
+  await ctx.close();
+  if (!tapped || followed !== tapped) throw new Error(`tapped "${tapped}", the box reads "${followed}"`);
+  if (acct !== 'Al Rajhi') throw new Error(`Account box reads "${acct}"`);
+  if (cleared.cat !== 'All categories' || cleared.sub !== 'All sub-categories' || cleared.acct !== 'All accounts'
+    || cleared.year !== 'All' || cleared.head !== 'Breakdown by category') throw new Error(`Clear left: ${JSON.stringify(cleared)}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `tap "${tapped}" → box follows; Clear resets all`;
+});
+
+test('Transactions filters: type a word, Tab — kept, filtered, and the cursor moves on', async browser => {
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  await page.locator('[data-fk="account"] input').click();
+  await page.keyboard.type('NRO');
+  await tab(page);
+  const r = { at: await focusLabel(page), shows: await boxShows(page, 'account'),
+    count: await page.evaluate(() => document.querySelector('.tx-results .stat .value')?.textContent.trim()),
+    want: await page.evaluate(() => window.JINNYFIN.DB.transactions.filter(t => !t.deleted && t.account === 'Fed Bank NRO').length) };
+  await tab(page);                                        // through Category untouched
+  const again = await boxShows(page, 'account');
+  const cat = await boxShows(page, 'parent');
+  await ctx.close();
+  if (r.shows !== 'Fed Bank NRO') throw new Error(`the Account box reads "${r.shows}"`);
+  if (r.at !== 'Category') throw new Error(`Tab went to "${r.at}"`);
+  if (r.count !== r.want.toLocaleString('en-IN')) throw new Error(`${r.count} entries shown, ${r.want} on Fed Bank NRO`);
+  if (again !== 'Fed Bank NRO' || cat !== 'All categories') throw new Error(`passing through changed things: ${again} / ${cat}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `"NRO" → Fed Bank NRO, ${r.count} entries, cursor on Category`;
+});
+
+test('Income vs Expense: the Account box keeps a From–To range, and Tab moves on', async browser => {
+  const { ctx, page, errors } = await open(browser, 'incexp');
+  const from = page.locator('input[data-dk="from"]');
+  await from.fill('2024-01-01');
+  await page.locator('[data-fk="account"] input').click();          // leaving the date box commits it
+  await page.waitForTimeout(300);
+  await page.keyboard.type('Rajhi');
+  await tab(page);
+  const r = { from: await from.inputValue(), shows: await boxShows(page, 'account'), at: await focusLabel(page),
+    label: await page.evaluate(() => document.querySelector('#main .small.muted')?.textContent || '') };
+  await ctx.close();
+  if (r.shows !== 'Al Rajhi') throw new Error(`the Account box reads "${r.shows}"`);
+  if (r.from !== '2024-01-01' || !r.label.startsWith('01-01-2024')) throw new Error(`picking an account wiped the range: ${JSON.stringify(r)}`);
+  if (r.at !== 'Group by') throw new Error(`Tab went to "${r.at}"`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'range kept, Al Rajhi picked, cursor on Group by';
+});
+
+test('New Transaction: tabbing THROUGH the Account box leaves the account alone', async browser => {
+  // 1.59 made Tab pick the lit entry — and on focus the lit entry was simply
+  // the first in the list, so merely tabbing across put that account on the row.
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  await page.evaluate(() => window.JINNYFIN.openTxEditor(null, { account: 'Fed Bank NRO' }));
+  await page.waitForTimeout(500);
+  const acct = page.locator('.modal-body .field .combo input').first();
+  const before = await acct.inputValue();
+  await tab(page); await tab(page);                       // Amount → Account → Date
+  const after = await acct.inputValue();
+  const at = await focusLabel(page);
+  await ctx.close();
+  if (!before.startsWith('Fed Bank NRO')) throw new Error(`the preset did not apply: "${before}"`);
+  if (after !== before) throw new Error(`tabbing through changed the account to "${after}"`);
+  if (at !== 'Date') throw new Error(`two Tabs from Amount landed on "${at}"`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `"${after}" untouched`;
+});
+
+test('New Transaction Account box: arrow + Tab picks, typing + clicking away picks, Escape shuts only the list', async browser => {
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  await page.evaluate(() => window.JINNYFIN.openTxEditor(null, { account: 'Al Rajhi' }));
+  await page.waitForTimeout(500);
+  const acct = page.locator('.modal-body .field .combo input').first();
+  await acct.click();
+  await page.keyboard.press('ArrowDown');
+  const lit = await page.evaluate(() => document.querySelector('.combo-opt.hi')?.textContent || '');
+  await tab(page);
+  const arrowed = await acct.inputValue();
+
+  await acct.click();
+  await page.keyboard.type('NRO');
+  await page.locator('.modal-body input[placeholder="Description"]').click();
+  await page.waitForTimeout(250);
+  const clicked = await acct.inputValue();
+
+  await acct.click();
+  await page.waitForTimeout(150);
+  const opened = await listOpen(page);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+  const sheetAfterEsc = await page.evaluate(() => !!document.querySelector('.modal-wrap'));
+  const listAfterEsc = await listOpen(page);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+  const sheetAfter2 = await page.evaluate(() => !!document.querySelector('.modal-wrap'));
+  await ctx.close();
+  if (!lit || lit.startsWith('Al Rajhi')) throw new Error(`↓ from Al Rajhi lit "${lit}" — the list should open on the current one`);
+  if (arrowed !== lit) throw new Error(`↓ then Tab left "${arrowed}", expected "${lit}"`);
+  if (clicked !== 'Fed Bank NRO · INR') throw new Error(`typing "NRO" and clicking away left "${clicked}"`);
+  if (!opened) throw new Error('the list did not open on focus');
+  if (!sheetAfterEsc || listAfterEsc) throw new Error(`Escape with the list open: sheet ${sheetAfterEsc}, list ${listAfterEsc}`);
+  if (sheetAfter2) throw new Error('with the list closed, Escape should close the sheet as before');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `↓+Tab → ${arrowed}; "NRO"+click → ${clicked}; Esc closes list, then sheet`;
+});
+
+test('the budget Category box finds a category by any word, and Tab moves on', async browser => {
+  const { ctx, page, errors } = await open(browser, 'budgets');
+  await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /\+ Budget/.test(b.textContent))?.click());
+  await page.waitForTimeout(400);
+  const box = page.locator('.modal-body .combo input').first();
+  await box.click();
+  await page.keyboard.type('Transport');
+  await tab(page);
+  const r = { shows: await box.inputValue(), value: await page.evaluate(() => document.querySelector('.modal-body .combo')?.value),
+    at: await focusLabel(page) };
+  await ctx.close();
+  if (r.value !== 'Auto & Transport' || r.shows !== 'Auto & Transport') throw new Error(`"Transport" gave ${JSON.stringify(r)}`);
+  if (r.at !== 'Sub-category') throw new Error(`Tab went to "${r.at}"`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return '"Transport" → Auto & Transport, cursor on Sub-category';
+});
+
+test('a filter changed on one screen does not pull the cursor into the next screen', async browser => {
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  const years = await page.evaluate(() => [...document.querySelector('select[data-fk="year"]').options].map(o => o.value));
+  await page.selectOption('select[data-fk="year"]', years[1]);
+  await page.waitForTimeout(250);
+  await page.evaluate(() => window.JINNYFIN.go('dashboard'));
+  await page.waitForTimeout(700);
+  const where = await page.evaluate(() => ({ tag: document.activeElement?.tagName, fk: document.activeElement?.dataset?.fk || '' }));
+  await ctx.close();
+  if (where.tag === 'SELECT' || where.tag === 'INPUT') throw new Error(`the dashboard opened with the cursor in its ${where.fk || where.tag} box`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'dashboard opened with nothing focused';
+});
+
+test('leaving a changed date box for the next one lands there, not back in the same one', async browser => {
+  // Statement rebuilds its bar on every change; the cursor used to be handed
+  // back to the box Tab had just left.
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  await page.evaluate(() => window.JINNYFIN.go('statement?account=' + encodeURIComponent('Al Rajhi')));
+  await page.waitForTimeout(700);
+  // As Safari and the iPhone do it: the date box says nothing until it is
+  // left, so the change lands on leaving it — and redraws the bar.
+  await page.locator('input[data-dk="from"]').focus();
+  await page.evaluate(() => { document.querySelector('input[data-dk="from"]').value = '2024-01-01'; });
+  // Tab inside a date box walks its day/month/year parts first, so move on
+  // the way the last Tab does: straight to the To box.
+  await page.locator('input[data-dk="to"]').focus();
+  await page.waitForTimeout(400);
+  const where = await page.evaluate(() => ({ dk: document.activeElement?.dataset?.dk || '', tag: document.activeElement?.tagName,
+    from: document.querySelector('input[data-dk="from"]')?.value }));
+  await ctx.close();
+  if (where.from !== '2024-01-01') throw new Error(`the date did not take: ${where.from}`);
+  if (where.dk !== 'to') throw new Error(`moving from From to To landed on ${where.dk || where.tag}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'From → To, after the redraw';
 });
 
 test('Investments & savings totals show deposits, returns, and value', async browser => {
@@ -1300,7 +1666,11 @@ test('one category cannot hold two budgets for the same period', async browser =
   await page.evaluate(() => [...document.querySelectorAll('button')]
     .find(b => /\+ Budget/.test(b.textContent))?.click());
   await page.waitForTimeout(350);
-  await page.selectOption('.modal-body select', cat);
+  // The Category box is a search box now: type the name, Enter picks it.
+  const catBox = page.locator('.modal-body .combo input').first();
+  await catBox.click();
+  await catBox.fill(cat);
+  await page.keyboard.press('Enter');
   await page.waitForTimeout(200);
   await page.fill('.modal-body input[type=number]', '999');
   await topClick(page, ['Save']);
@@ -1570,7 +1940,7 @@ test('a budget sub-category fills in its own category', async browser => {
   await page.evaluate(() => [...document.querySelectorAll('button')]
     .find(b => /\+ Budget/.test(b.textContent))?.click());
   await page.waitForTimeout(400);
-  const parentNow = () => page.evaluate(() => document.querySelector('.modal-body select')?.value || '');
+  const parentNow = () => page.evaluate(() => document.querySelector('.modal-body .combo')?.value || '');
   if (await parentNow()) { await ctx.close(); throw new Error('the new-budget sheet did not open empty'); }
 
   await page.evaluate(sub => {

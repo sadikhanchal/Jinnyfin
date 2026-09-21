@@ -3,7 +3,7 @@
 //  (Not in the workbook — the "additional enthelum" part.)
 // ============================================================================
 import { el, money, num, MONTHS, modal, toast, confirmBox,
-  onFilter, restoreFilterFocus } from '../util.js';
+  onFilter, restoreFilterFocus, searchSelect } from '../util.js';
 import { DB, put, remove } from '../store.js';
 import * as C from '../calc.js';
 import { SERIES } from '../charts.js';
@@ -122,12 +122,15 @@ function edit(b = null) {
   // only ever a suggestion — "adasdasdas" was accepted and then matched nothing,
   // so the budget silently watched no spending at all. Both are lists now.
   const cats = C.parentsFor('Expense');
-  const parent = el('select', {},
-    el('option', { value: '' }, '— pick a category —'),
+  // A search box rather than a plain list: any word of the name finds it, the
+  // same as every other Category box in the app (see searchSelect).
+  const parent = searchSelect(
     // keep a category that has since been renamed away, so editing an old
     // budget cannot quietly repoint it at something else
-    ...(v.parent && !cats.includes(v.parent) ? [v.parent] : []).concat(cats)
-      .map(p => el('option', { value: p, selected: v.parent === p }, p)));
+    (v.parent && !cats.includes(v.parent) ? [v.parent] : []).concat(cats)
+      .map(p => ({ value: p, search: p, label: p })),
+    { placeholder: 'Pick a category' });
+  parent.value = v.parent || '';
   // A sub-category is the thing he remembers; which parent it hangs under is
   // the app's business. So this is a box you type into, and naming a sub that
   // belongs to exactly one category fills that category in above it — the same
@@ -156,7 +159,7 @@ function edit(b = null) {
   sub.addEventListener('change', linkParent);
   sub.addEventListener('blur', linkParent);
   fillSubs();
-  parent.onchange = () => { v.sub = ''; sub.value = ''; fillSubs(); };
+  parent.addEventListener('change', () => { v.sub = ''; sub.value = ''; fillSubs(); });
   const amount = el('input', { type: 'number', step: 'any', value: v.amount || '' });
   const cur = el('select', {}, ...['INR', 'SAR'].map(c => el('option', { value: c, selected: v.currency === c }, c)));
   const period = el('select', {}, el('option', { value: 'monthly', selected: v.period !== 'yearly' }, 'Per month'),

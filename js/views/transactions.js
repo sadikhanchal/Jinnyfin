@@ -2,7 +2,7 @@
 //  transactions.js — the full ledger: search, filter, duplicate, edit, export.
 // ============================================================================
 import { el, money, fmtDate, MONTHS, debounce, downloadCSV, todayISO, toast, confirmBox, uuid,
-  onFilter, restoreFilterFocus, dateGuard, restoreDateFocus, dateBox} from '../util.js';
+  dateGuard, dateBox, searchSelect } from '../util.js';
 import { DB, putMany, remove } from '../store.js';
 import * as C from '../calc.js';
 import { topbar } from '../app.js';
@@ -174,7 +174,10 @@ function buildChrome() {
   const sel = (label, key, options) => {
     const s = el('select', {}, el('option', { value: 'All' }, 'All'),
       ...options.map(o => el('option', { value: o.v ?? o, selected: String(f[key]) === String(o.v ?? o) }, o.t ?? o)));
-    onFilter(s, key, () => { f[key] = s.value; shown = PAGE; draw(); });
+    // The bar is never rebuilt, so there is no cursor to hand back afterwards —
+    // and a hand-back request left lying here used to fire on the NEXT screen.
+    s.dataset.fk = key;
+    s.addEventListener('change', () => { f[key] = s.value; shown = PAGE; draw(); });
     return el('div', { class: 'field' }, el('label', {}, label), s);
   };
   /**
@@ -189,11 +192,28 @@ function buildChrome() {
     }, key);
     return el('div', { class: 'field' }, el('label', {}, label), i);
   };
+  /**
+   * Account, Category and Payee run to dozens of names, and a plain select
+   * only jumps on the FIRST letter typed. These are the same search box as the
+   * reports and the transaction sheet: any word in the name finds it, and Tab,
+   * Enter and Escape behave the same everywhere (see searchSelect).
+   */
+  const pick = (label, key, names, allLabel) => {
+    const list = [{ value: 'All', search: allLabel, label: allLabel },
+      ...names.map(n => ({ value: n, search: n, label: n }))];
+    // A filter in force stays in its own list, or the box would read blank.
+    if (f[key] !== 'All' && !names.includes(f[key])) list.push({ value: f[key], search: f[key], label: f[key] });
+    const box = searchSelect(list, { placeholder: allLabel });
+    box.dataset.fk = key;
+    box.value = f[key];
+    box.addEventListener('change', () => { f[key] = box.value; shown = PAGE; draw(); });
+    return el('div', { class: 'field' }, el('label', {}, label), box);
+  };
   const filters = el('div', { class: 'filters' },
     sel('Type', 'type', C.TYPES),
-    sel('Account', 'account', C.accountNames()),
-    sel('Category', 'parent', C.parentsFor(null)),
-    sel('Payee', 'payee', C.payeeNames()),
+    pick('Account', 'account', C.accountNames(), 'All accounts'),
+    pick('Category', 'parent', C.parentsFor(null), 'All categories'),
+    pick('Payee', 'payee', C.payeeNames(), 'All payees'),
     sel('Year', 'year', C.yearsPresent()),
     sel('Month', 'month', MONTHS.map((m, i) => ({ v: i + 1, t: m }))),
     dateIn('From', 'from'), dateIn('To', 'to'),

@@ -2,7 +2,7 @@
 //  incexp.js — Income vs Expense for any period, grouped and sorted.
 // ============================================================================
 import { el, money, num, MONTHS, endOfMonth, downloadCSV, todayISO, fmtDate,
-  dateGuard, restoreDateFocus, onFilter, restoreFilterFocus, dateBox} from '../util.js';
+  dateGuard, dateBox, searchSelect } from '../util.js';
 import { DB } from '../store.js';
 import * as C from '../calc.js';
 import { groupedBars, SERIES } from '../charts.js';
@@ -12,9 +12,12 @@ import { kpi } from './report.js';
 let f = { year: String(new Date().getFullYear()), month: 'All', from: '', to: '', account: 'All' };
 let groupBy = 'parent', sortBy = 'total';
 let host = null;
+let ctl = null;          // the filter bar — built once per visit, never rebuilt under the cursor
+let body = null;         // everything below it, redrawn on every change
+let res = null;          // what is on screen, for the CSV button
 
-export async function render(root) { host = root; draw(); }
-export function refresh() { if (host) draw(); }
+export async function render(root) { host = root; mount(); }
+export function refresh() { if (host && body?.isConnected) draw(); }
 
 function period() {
   if (f.from || f.to) return { from: f.from || undefined, to: f.to || undefined };
@@ -24,42 +27,85 @@ function period() {
   return { from: `${y}-${String(f.month).padStart(2, '0')}-01`, to: endOfMonth(y, +f.month) };
 }
 
-function draw() {
-  const S = SERIES();
+/**
+ * The bar is built once, like Transactions and the two Reports. Rebuilding it
+ * on every change threw away the Account search box in the middle of a Tab,
+ * and the date boxes in the middle of being typed into.
+ */
+function mount() {
   host.innerHTML = '';
+  ctl = buildControls();
+  body = el('div', {});
+  host.append(topbar('Income vs Expense',
+    el('button', { class: 'btn sm', onclick: () => res && exportCSV(res) }, '⬇ CSV')), ctl.bar, body);
+  draw();
+}
+
+function buildControls() {
+  const plain = (key, opts, all) => {
+    const s = el('select', { 'data-fk': key }, el('option', { value: 'All' }, all),
+      ...opts.map(o => el('option', { value: o.v ?? o }, o.t ?? o)));
+    s.addEventListener('change', () => { f[key] = s.value; f.from = f.to = ''; draw(); });
+    return s;
+  };
+  const year = plain('year', C.yearsPresent(), 'All years');
+  const month = plain('month', MONTHS.map((m, i) => ({ v: i + 1, t: m })), 'All months');
+  const dateIn = key => dateGuard(dateBox({ value: f[key] || '' }), v => {
+    if (v === (f[key] || '')) return;
+    f[key] = v; f.year = 'All'; f.month = 'All'; draw();
+  }, key);
+  const from = dateIn('from'), to = dateIn('to');
+  // Accounts run long; the same search box as everywhere else (see searchSelect).
+  const account = searchSelect([], { placeholder: 'All accounts' });
+  account.dataset.fk = 'account';
+  // Picking an account narrows the period already set — it used to share the
+  // Year box's handler and quietly wipe a From–To range along with it.
+  account.addEventListener('change', () => { f.account = account.value; draw(); });
+  const segment = (opts, get, set) => {
+    const wrap = el('div', { class: 'seg' });
+    const paint = () => [...wrap.children].forEach(b => b.classList.toggle('on', b.dataset.v === get()));
+    wrap.append(...opts.map(o => el('button', { dataset: { v: o.v }, onclick: () => { set(o.v); paint(); draw(); } }, o.t)));
+    paint();
+    return wrap;
+  };
+  const field = (label, node) => el('div', { class: 'field' }, el('label', {}, label), node);
+  const bar = el('div', { class: 'filters' },
+    field('Year', year), field('Month', month), field('From', from), field('To', to),
+    field('Account', account),
+    field('Group by', segment([{ v: 'parent', t: 'Category' }, { v: 'sub', t: 'Sub' }, { v: 'account', t: 'Account' }],
+      () => groupBy, v => { groupBy = v; })),
+    field('Sort', segment([{ v: 'total', t: 'Biggest' }, { v: 'name', t: 'A–Z' }], () => sortBy, v => { sortBy = v; })));
+  return { bar, year, month, from, to, account };
+}
+
+/** Keep every control saying what the filters are — a Year pick empties the dates, and so on. */
+function syncControls() {
+  const { year, month, from, to, account } = ctl;
+  for (const [s, v] of [[year, f.year], [month, f.month]]) {
+    if (document.activeElement === s && s.value === String(v)) continue;
+    s.value = String(v);
+    if (s.selectedIndex < 0) s.selectedIndex = 0;
+  }
+  for (const [d, v] of [[from, f.from], [to, f.to]]) {
+    if (document.activeElement !== d && d.value !== (v || '')) d.setGuarded(v);
+  }
+  const names = C.accountNames();
+  const list = [{ value: 'All', search: 'All accounts', label: 'All accounts' },
+    ...names.map(a => ({ value: a, search: a, label: a }))];
+  if (f.account !== 'All' && !names.includes(f.account)) list.push({ value: f.account, search: f.account, label: f.account });
+  account.setOptions(list);
+  account.value = f.account;
+}
+
+function draw() {
+  if (!body) return;
+  syncControls();
+  const S = SERIES();
+  body.innerHTML = '';
+  const host = body;                 // everything below the bar lands in the body
   const p = period();
   const flt = { ...p, account: f.account };
-  const res = C.incomeVsExpense(flt, groupBy);
-
-  host.append(topbar('Income vs Expense',
-    el('button', { class: 'btn sm', onclick: () => exportCSV(res) }, '⬇ CSV')));
-
-  const sel = (label, key, opts, all) => {
-    const s = el('select', {}, all ? el('option', { value: 'All' }, all) : null,
-      ...opts.map(o => el('option', { value: o.v ?? o, selected: String(f[key]) === String(o.v ?? o) }, o.t ?? o)));
-    onFilter(s, key, () => { f[key] = s.value; f.from = f.to = ''; draw(); });
-    return el('div', { class: 'field' }, el('label', {}, label), s);
-  };
-  const dateIn = (label, key) => {
-    const i = dateBox({ value: f[key] || '' });
-    dateGuard(i, v => {
-      if (v === (f[key] || '')) return;
-      f[key] = v; f.year = 'All'; f.month = 'All'; draw();
-    }, key);
-    return el('div', { class: 'field' }, el('label', {}, label), i);
-  };
-  const segment = (opts, cur, on) => el('div', { class: 'seg' },
-    opts.map(o => el('button', { class: cur === o.v ? 'on' : '', onclick: () => on(o.v) }, o.t)));
-
-  host.append(el('div', { class: 'filters' },
-    sel('Year', 'year', C.yearsPresent(), 'All years'),
-    sel('Month', 'month', MONTHS.map((m, i) => ({ v: i + 1, t: m })), 'All months'),
-    dateIn('From', 'from'), dateIn('To', 'to'),
-    sel('Account', 'account', C.accountNames(), 'All accounts'),
-    el('div', { class: 'field' }, el('label', {}, 'Group by'),
-      segment([{ v: 'parent', t: 'Category' }, { v: 'sub', t: 'Sub' }, { v: 'account', t: 'Account' }], groupBy, v => { groupBy = v; draw(); })),
-    el('div', { class: 'field' }, el('label', {}, 'Sort'),
-      segment([{ v: 'total', t: 'Biggest' }, { v: 'name', t: 'A–Z' }], sortBy, v => { sortBy = v; draw(); }))));
+  res = C.incomeVsExpense(flt, groupBy);
 
   const periodLabel = p.from ? `${fmtDate(p.from)} → ${fmtDate(p.to || todayISO())}` : 'All periods';
   host.append(el('p', { class: 'small muted', style: 'margin:-4px 0 10px' }, periodLabel));
@@ -105,8 +151,6 @@ function draw() {
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Breakdown')),
     el('div', { class: 'table-wrap', style: 'max-height:65vh;overflow:auto' }, t)));
-  restoreDateFocus(host);
-  restoreFilterFocus(host);        // and in the filter you were arrowing through
 }
 
 function exportCSV(res) {

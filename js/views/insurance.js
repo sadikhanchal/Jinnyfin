@@ -2,7 +2,7 @@
 //  insurance.js — policies and documents that expire, with reminders.
 // ============================================================================
 import { el, money, fmtDate, todayISO, modal, toast, confirmBox, addDays, downloadCSV, daysBetween,
-  uuid, badYear, dateBox} from '../util.js';
+  uuid, badYear, dateBox, searchSelect } from '../util.js';
 import { DB, put, remove, getSettings, setSettings } from '../store.js';
 import * as F from '../files.js';
 import * as C from '../calc.js';
@@ -298,9 +298,18 @@ function edit(p = null, startKind = 'insurance') {
     el('option', { value: 'document', selected: v.kind === 'document' }, 'Document (Iqama, passport, licence…)'));
   const note = el('input', { value: v.note || '' });
   // Renewing is a payment. It should leave an account, like every other payment.
-  const payFrom = el('select', {}, ...C.activeAccounts()
-    .map(a => el('option', { value: a.name, selected: v.pay_account === a.name }, `${a.name} · ${a.currency}`)));
-  if (!v.pay_account) payFrom.value = C.cashAccounts()[0]?.name || payFrom.value;
+  // The same search box as every other Account field (see searchSelect). An
+  // account that has since gone idle stays in the list for the policy that
+  // names it — a plain list of active accounts silently showed the first one
+  // instead, and renewing would have paid from there.
+  const payList = C.activeAccounts().map(a => ({ value: a.name, search: a.name, label: `${a.name} · ${a.currency}` }));
+  if (v.pay_account && !payList.some(o => o.value === v.pay_account)) {
+    const a = DB.accounts.find(x => x.name === v.pay_account);
+    payList.unshift({ value: v.pay_account, search: v.pay_account,
+      label: `${v.pay_account}${a ? ' · ' + a.currency : ''} (idle)` });
+  }
+  const payFrom = searchSelect(payList, { placeholder: 'Pick an account' });
+  payFrom.value = v.pay_account || C.cashAccounts()[0]?.name || payList[0]?.value || '';
   const followAccount = () => { cur.value = C.currencyOf(payFrom.value) || cur.value; };
   payFrom.addEventListener('change', followAccount);
   followAccount();
