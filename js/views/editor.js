@@ -4,7 +4,6 @@
 import { el, modal, toast, todayISO, uuid, evalAmount, confirmBox, money, round2, closeThen,
   badYear, searchSelect, dateBox} from '../util.js';
 import { DB, put, remove } from '../store.js';
-import { CONFIG } from '../../config.js';
 import { icon } from '../icons.js';
 import { fxFor, currencyOf, convertAmount, parentsFor, subsFor, parentsOfSub, payeeNames, eventNames,
   activeAccounts as liveAccounts } from '../calc.js';
@@ -594,11 +593,7 @@ export function openTxEditor(existing = null, presets = {}) {
     add('Description', noteIn, 'full');
     if (type === 'Transfer' && !linked && !isNew) {
       form.append(el('div', { class: 'full alert soon' }, el('span', { class: 'ico' }, icon('link', 16)),
-        el('div', {}, (CONFIG.DEMO
-          ? 'This sample transfer is not tied to its other half. '
-          : 'This transfer was brought in from the workbook and is not tied to its other half. ')
-          + `Pick the ${rowIsIn ? 'account it came from' : 'account it went to'} and Jinnyfin will find that entry and link the two. `
-          + 'Leave it as “not known” and only this row is saved.')));
+        el('div', {}, `Other half not linked — pick the ${rowIsIn ? 'account it came from' : 'account it went to'}.`)));
     }
     refreshLists();
     syncCurrency();
@@ -699,6 +694,11 @@ export function openTxEditor(existing = null, presets = {}) {
       if (owners.length > 1) toast(`“${s}” is under ${owners.join(' or ')} — pick which one`, 'warn', 6000);
       else toast('Pick a category', 'warn');
       parentIn.focus(); return;
+    }
+    // A loan with nobody on the other end is in nobody's balance — which is how
+    // the unnamed ones in the Lend/Borrow page came about.
+    if (type === 'Lend/Borrow' && !payeeIn.value.trim()) {
+      toast('Pick the payee', 'warn'); payeeIn.focus(); return;
     }
     const fx = fxFor(dateIn.value);
     const base = {

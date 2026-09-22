@@ -249,12 +249,6 @@ function draw() {
     mini('▼ Out', money(eqOut, 'INR', false), 'expense'),
     mini('Net', money(eqIn - eqOut, 'INR', false), eqIn - eqOut >= 0 ? '' : 'expense')));
 
-  // The gesture differs by device, so name only the one this device has.
-  const canHover = window.matchMedia?.('(hover: hover)').matches;
-  if (!picking) host.append(el('p', { class: 'hint', style: 'margin:-6px 0 8px' },
-    (canHover ? 'Point at a row to duplicate it' : 'Swipe a row left to duplicate it')
-    + ' · long-press or “Select” for several at once'));
-
   // -------------------------------------------------------------- list ----
   const list = el('div', {});
   let lastDay = null;

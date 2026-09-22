@@ -33,7 +33,7 @@ function draw() {
   const rows = C.budgetStatus(year, month);
   if (!rows.length) {
     host.append(el('div', { class: 'empty' }, el('div', { class: 'big' }, icon('target', 40)),
-      el('p', {}, 'No budgets yet. Set a monthly ceiling on the categories that run away from you.'),
+      el('p', {}, 'No budgets yet.'),
       el('button', { class: 'btn primary', onclick: () => edit() }, 'Set the first budget')));
     return;
   }

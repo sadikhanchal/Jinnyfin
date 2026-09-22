@@ -304,7 +304,7 @@ export function makeReport(kind) {
     t.append(tb);
     detCard.append(el('div', { class: 'table-wrap', style: 'max-height:520px;overflow:auto' }, t));
     if (rows.length > 400) detCard.append(el('p', { class: 'small muted', style: 'margin:8px 0 0' },
-      'Showing the latest 400 — narrow the filters or download the CSV for everything.'));
+      'Latest 400 shown · CSV has all.'));
     host.append(detCard);
   }
 

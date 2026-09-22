@@ -49,6 +49,13 @@ export function fmtDate(d) {
   const [y, m, dd] = iso(d).split('-');
   return `${dd}-${m}-${y}`;
 }
+/** "14:05" → "2:05 PM", the way the transaction sheet shows it. */
+export function fmtTime(t) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(t || ''));
+  if (!m) return '';
+  const h = +m[1];
+  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+}
 export function fmtDateShort(d) {
   if (!d) return '';
   const [, m, dd] = iso(d).split('-');

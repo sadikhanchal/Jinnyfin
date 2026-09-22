@@ -52,7 +52,7 @@ function draw() {
   const trendCard = el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Month-end net worth'), el('div', { class: 'spacer' }),
       el('label', { class: 'chip', style: 'cursor:pointer' },
-        el('input', { type: 'checkbox', checked: showAll, onchange: e => { showAll = e.target.checked; draw(); } }), ' since 2017')));
+        el('input', { type: 'checkbox', checked: showAll, onchange: e => { showAll = e.target.checked; draw(); } }), ' All years')));
   const th = el('div', {}); trendCard.append(th); host.append(trendCard);
   requestAnimationFrame(() => {
     let series = C.netWorthSeries(showAll ? null : new Date().getFullYear() - 2);
@@ -102,8 +102,7 @@ function draw() {
     el('td', { class: 'n' }, num(fa.total, 0))));
   at.append(atb);
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
-    el('div', { class: 'card-head' }, el('h3', {}, 'Fixed assets'), el('div', { class: 'spacer' }),
-      el('span', { class: 'small muted' }, 'tap a row for its full statement · ⋮ to edit the asset')),
+    el('div', { class: 'card-head' }, el('h3', {}, 'Fixed assets')),
     el('div', { class: 'table-wrap' }, at)));
 
   // -------------------------------------------------------- investments ---
@@ -135,9 +134,7 @@ function draw() {
     el('td', { class: 'n' }, num(inv.total, 0))));
   it.append(itb);
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
-    el('div', { class: 'card-head' }, el('h3', {}, 'Investments & savings'),
-      el('div', { class: 'spacer' }),
-      el('span', { class: 'small muted' }, 'tap a row for its full statement')),
+    el('div', { class: 'card-head' }, el('h3', {}, 'Investments & savings')),
     el('div', { class: 'table-wrap' }, it)));
 
   host.append(el('p', { class: 'small muted', style: 'margin-top:10px' },

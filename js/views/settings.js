@@ -24,7 +24,13 @@ const TABS = [['general', 'General'], ['accounts', 'Accounts'], ['categories', '
   ['fx', 'Exchange rates'], ['reconcile', 'Reconcile'], ['check', 'Data check'],
   ['data', 'Backup & import']];
 
-export async function render(root) { host = root; draw(); }
+export async function render(root) {
+  host = root;
+  // #/settings?tab=check opens straight on a tab (the Lend/Borrow page links here).
+  const want = new URLSearchParams(location.hash.split('?')[1] || '').get('tab');
+  if (want && TABS.some(([k]) => k === want)) tab = want;
+  draw();
+}
 export function refresh() { if (host) draw(); }
 
 function draw() {
@@ -46,7 +52,7 @@ function general() {
   host.append(el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, 'App lock')),
     el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-      s.lock_hash ? 'A PIN is set — the app asks for it each time it is opened fresh.' : 'No PIN. Anyone holding your unlocked phone can read the ledger.'),
+      s.lock_hash ? 'PIN set.' : 'No PIN set.'),
     el('div', { class: 'row' }, pin,
       el('button', { class: 'btn primary', onclick: async () => {
         if (pin.value.length < 4) return toast('At least 4 characters', 'warn');
@@ -63,8 +69,6 @@ function general() {
   const owner = el('input', { value: s.owner_name || '', placeholder: 'Name shown on statements' });
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Your name')),
-    el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-      'Printed at the top of the statements you hand to people you lend to or borrow from.'),
     el('div', { class: 'row' }, owner,
       el('button', { class: 'btn primary', onclick: async () => {
         await setSettings({ owner_name: owner.value.trim() }); toast('Saved');
@@ -101,14 +105,15 @@ function general() {
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'App version')),
     el('p', { class: 'small', style: 'margin:0 0 8px' },
-      el('b', {}, `${BUILD.version} \u00b7 ${BUILD.date}`),
-      el('span', { class: 'muted' }, '  \u2014 compare this with the version I sent you.')),
+      el('b', {}, `${BUILD.version} \u00b7 ${BUILD.date}`)),
     // The stylesheet carries its own stamp, because a stale CSS file is
     // invisible otherwise: the app looks almost right and you cannot tell.
     (() => {
       const css = (getComputedStyle(document.documentElement)
         .getPropertyValue('--jf-css') || '').replace(/["'\s]/g, '');
       const ok = css === BUILD.version;
+      // Only worth a line when it is wrong.
+      if (ok) return null;
       return el('p', { class: 'small', style: 'margin:0 0 8px' },
         el('b', {}, 'Stylesheet: '),
         el('span', { class: ok ? 'pos' : 'neg' }, css || 'not stamped'),
@@ -116,9 +121,6 @@ function general() {
           : css ? '  \u2014 OLDER THAN THE APP. css/app.css did not land; upload it again.'
             : '  \u2014 this stylesheet is older than 1.24, so it has no stamp yet.'));
     })(),
-    el('p', { class: 'small muted', style: 'margin:0 0 10px' },
-      'If it is behind, this device is holding an old copy. The button below throws that copy '
-      + 'away and re-downloads everything. Your data is untouched \u2014 it lives on the server and in the ledger.'),
     el('button', { class: 'btn primary', onclick: forceUpdate }, '\u21bb Force update')));
 
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
@@ -161,7 +163,7 @@ function passwordBlock() {
   const fld = (l, n) => el('div', { class: 'field' }, el('label', {}, l), n);
   return el('div', {},
     el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-      'This is the password you sign in with on every device — not the app PIN above.'),
+      'Your sign-in password on every device — not the app PIN.'),
     el('div', { class: 'form-grid' },
       fld('Current password', cur), fld('New password', nw), fld('Repeat new password', rep)),
     el('div', { class: 'row', style: 'margin-top:10px' }, btn,
@@ -283,18 +285,13 @@ function editAccount(a = null) {
   const grp = el('select', {}, ...[['primary', 'Cash & bank'], ['investment', 'Investment'], ['other', 'Closed / other']]
     .map(([k, t]) => el('option', { value: k, selected: v.grp === k }, t)));
   const ob = el('input', { type: 'number', step: 'any', value: v.opening_bal || 0 });
-  const stated = el('input', { type: 'number', step: 'any', value: v.stated_balance ?? '' , placeholder: 'from your bank app' });
   const act = el('input', { type: 'checkbox', checked: !!v.pinned });
   const fld = (l, n, cls = '', h) => el('div', { class: 'field ' + cls }, el('label', {}, l), n, h ? el('span', { class: 'hint' }, h) : null);
   const body = el('div', { class: 'form-grid' },
     fld('Name', name, 'full'), fld('Currency', cur), fld('Group', grp),
-    fld('Opening balance', ob, '', 'Only if the ledger does not already carry it.'),
-    fld('Bank says', stated, '', 'Used by the Reconcile tab to spot differences.'),
+    fld('Opening balance', ob),
     el('label', { class: 'field full row', style: 'flex-direction:row;gap:8px;align-items:center' }, act,
-      ' Always show \u2014 keep this account in the pickers even if it goes quiet'),
-    el('p', { class: 'hint full', style: 'margin:0' },
-      'Left off, an account shows while it has been used in the last 60 days. '
-      + 'A new account is always shown for its first 60 days.'));
+      ' Always show \u2014 keep this account in the pickers even if it goes quiet'));
   const m = modal(a ? 'Edit account' : 'New account', body, {
     footer: [
       a ? el('button', { class: 'btn ghost', style: 'margin-right:auto;color:var(--critical)',
@@ -311,7 +308,7 @@ function editAccount(a = null) {
           // keeps the default 0 and jumps to the top of every list.
           sort: v.sort ?? (Math.max(-1, ...DB.accounts.map(x => x.sort || 0)) + 1),
           name: name.value.trim(), currency: cur.value, grp: grp.value,
-          opening_bal: +ob.value || 0, stated_balance: stated.value === '' ? null : +stated.value, pinned: act.checked });
+          opening_bal: +ob.value || 0, pinned: act.checked });
         if (oldName && oldName !== name.value.trim()) {
           const affected = DB.transactions.filter(t => t.account === oldName);
           if (affected.length && await confirmBox(`Rename this account on ${affected.length} existing transactions too?`))
@@ -416,10 +413,6 @@ function categories() {
       if (all.every(t => catOpen.has(t))) catOpen.clear(); else all.forEach(t => catOpen.add(t));
       draw();
     } }, 'Expand / collapse all')));
-  host.append(el('p', { class: 'small muted', style: 'margin:0 0 10px' },
-    'Archiving takes a category out of every picker and leaves it on every entry that already uses it. '
-    + 'Use it for something like Family Visit that you may need again years later. '
-    + 'Archived names sit in their own section at the foot of each type.'));
 
   /** One category's row — the name, what it is on, and its two buttons. */
   const parentRow = (type, parent, list) => {
@@ -669,8 +662,7 @@ function fx() {
   const today = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Today’s rates')),
     el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-      'These convert current balances. A past transaction keeps the rate of the month it '
-      + 'happened in — that is what makes the historical totals match your sheet.'),
+      'These convert current balances. A past transaction keeps the rate of the month it happened in.'),
     el('div', { class: 'form-grid' },
       el('div', { class: 'field' }, el('label', {}, '1 SAR = ? INR'), sar),
       el('div', { class: 'field' }, el('label', {}, '1 USD = ? SAR'), usd),
@@ -682,10 +674,7 @@ function fx() {
   const byMonth = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, 'SAR → INR by month')),
     el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-      CONFIG.DEMO
-        ? 'Each transaction is converted at the rate of its own month, using the sample data.'
-        : 'Each transaction is converted at the rate of its own month, exactly like the workbook. '
-          + 'Add a rate whenever you transfer money and know the real rate you got.'),
+      'Each transaction uses its own month’s rate. Add one when you know the real rate you got.'),
     add);
   host.append(el('div', { class: 'grid g2' }, today, byMonth));
   const t = el('table');
@@ -721,8 +710,8 @@ function reconcile() {
       el('span', { class: 'small muted' }, 'As of'), dateIn),
     el('p', { class: 'small muted', style: 'margin:8px 0 0' },
       s.reconciled_at
-        ? `Last reconciled ${fmtDate(s.reconciled_at)}. Balances above are computed up to the “as of” date.`
-        : 'Type the balance your bank app shows into “Bank says”. Anything that does not match is a missing or wrong entry.')));
+        ? `Last reconciled ${fmtDate(s.reconciled_at)}.`
+        : 'Type what your bank app shows into “Bank says”.')));
 
   // The four counters are recomputed in place after every box, so that typing a
   // column of balances never has to rebuild the page.
@@ -787,7 +776,6 @@ function reconcile() {
 
   host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Balance check'), el('div', { class: 'spacer' }),
-      el('span', { class: 'small muted', style: 'margin-right:8px' }, 'drag ⠿ to reorder'),
       el('button', { class: 'btn sm', onclick: () => exportRecon(rows) }, '⬇ CSV'),
       el('button', { class: 'btn sm primary', onclick: async () => {
         const d = asOf || todayISO();
@@ -795,10 +783,7 @@ function reconcile() {
         toast('Reconciled as of ' + fmtDate(d));
         draw();
       } }, '✓ Mark reconciled')),
-    el('div', { class: 'table-wrap' }, t),
-    el('p', { class: 'hint', style: 'margin-top:10px' },
-      'A positive difference means the app counts more than the bank does — usually an entry that never happened, '
-      + 'or one entered twice. A negative difference means an entry is missing. Fix it in Transactions and this goes to zero.')));
+    el('div', { class: 'table-wrap' }, t)));
 }
 
 function exportRecon(rows) {
@@ -876,7 +861,9 @@ function data() {
       el('button', { class: 'btn', onclick: () => document.getElementById('restore-file').click() }, '⬆ Restore from backup'),
       el('input', { type: 'file', id: 'restore-file', accept: '.json', style: 'display:none', onchange: restore }))));
 
-  host.append(el('div', { class: 'card', style: 'margin-top:12px' },
+  // A one-time import: once done, running it again would only duplicate
+  // everything, so the card goes away. The demo keeps it for loading samples.
+  if (CONFIG.DEMO || !s.seeded) host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, CONFIG.DEMO ? 'Sample data' : 'Import from the Excel workbook')),
     el('p', { class: 'small muted' }, CONFIG.DEMO
       ? 'Load a fictional starter ledger for the demo. It contains sample accounts, categories, transactions, assets, policies and investments.'
@@ -898,44 +885,16 @@ function data() {
 
   const half = pairHalfTransfers();
   const blank = DB.transactions.filter(t => !t.deleted && t.type === 'Transfer' && !t.parent).length;
-  host.append(el('div', { class: 'card', style: 'margin-top:12px' },
+  // Nothing to tie together and nothing to fill in: no card at all.
+  if (half.pairs.length || blank) host.append(el('div', { class: 'card', style: 'margin-top:12px' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Tidy up')),
-
-    el('p', { class: 'small muted', style: 'margin:6px 0 4px' },
-      CONFIG.DEMO
-        ? 'A transfer is two rows — one for the money leaving, one for it arriving. The sample data '
-          + 'may contain unlinked rows, which is why opening one can show the other side as “— not known —”. '
-          + 'Linking changes no amount, date or account: it only records that the two rows are one transfer.'
-        : 'A transfer is two rows — one for the money leaving, one for it arriving. Everything the workbook '
-          + 'brought in came as single rows with nothing tying the halves together, which is why opening one '
-          + 'shows the other side as “— not known —”. Linking changes no amount, date or account: it only '
-          + 'records that the two rows already in the ledger are one transfer.'),
-    el('p', { class: 'small', style: 'margin:0 0 10px' },
-      half.pairs.length
-        ? `${half.pairs.length} pairs can be tied back together (${half.loose} unlinked in all).`
-        : half.loose ? `${half.loose} unlinked, none of them pair up on their own.`
-          : 'Every transfer has both its halves.'),
-    el('div', { class: 'row' },
-      el('button', { class: 'btn' + (half.pairs.length ? ' primary' : ''),
-        disabled: !half.pairs.length, onclick: linkHalfTransfers }, '⇄ Link half transfers')),
-
-    el('p', { class: 'small muted', style: 'margin:14px 0 4px' },
-      CONFIG.DEMO
-        ? 'Some sample transfers carry the category on the side the money left and nothing on the side it '
-          + 'arrived, so the same transfer reads “Transfer” on one statement and leaves the Category column '
-          + 'empty on the other. New ones no longer do this; these are the ones already saved.'
-        : 'Older transfers carried the category on the side the money left and nothing on the side it '
-          + 'arrived, so the same transfer reads “Transfer” on one statement and leaves the Category column '
-          + 'empty on the other. New ones no longer do this; these are the ones already saved.'),
-    el('p', { class: 'small', style: 'margin:0 0 10px' },
-      blank ? `${blank} entries have an empty Category column.` : 'Every transfer carries its category.'),
-    el('div', { class: 'row' },
-      el('button', { class: 'btn', disabled: !blank, onclick: fixTransferCategories },
-        'Fill in blank transfer categories'))));
-
-  if (!CONFIG.DEMO) host.append(el('div', { class: 'card', style: 'margin-top:12px' },
-    el('div', { class: 'card-head' }, el('h3', {}, 'Numbers check')),
-    verifyBlock()));
+    half.pairs.length ? el('div', { class: 'row', style: 'margin:6px 0 10px' },
+      el('span', { class: 'small', style: 'flex:1' },
+        `${half.pairs.length} transfer pairs can be linked (${half.loose} unlinked in all).`),
+      el('button', { class: 'btn primary', onclick: linkHalfTransfers }, '⇄ Link half transfers')) : null,
+    blank ? el('div', { class: 'row', style: 'margin:6px 0 10px' },
+      el('span', { class: 'small', style: 'flex:1' }, `${blank} transfers have a blank category.`),
+      el('button', { class: 'btn', onclick: fixTransferCategories }, 'Fill them in')) : null));
 }
 
 /** Give every transfer entry the category its other half already had. */
@@ -1122,33 +1081,6 @@ async function linkHalfTransfers() {
   draw();
 }
 
-function verifyBlock() {
-  const nw = C.netWorth();
-  const tot = C.periodTotals({});
-  const rows = [
-    ['Total income (all time, ≈ INR)', tot.incomeINR, 18793096.41],
-    ['Total expenses (all time, ≈ INR)', tot.expenseINR, 16979321.29],
-    ['Net savings', tot.netINR, 1813775.12],
-    ['Cash & bank', nw.cash, 194375.33],
-    ['Fixed assets', nw.assets, 9472896.24],
-    ['Lend / borrow (net)', nw.lendBorrow, -380431.27],
-  ];
-  const t = el('table');
-  t.append(el('thead', {}, el('tr', {}, el('th', {}, 'Figure'), el('th', { class: 'n' }, 'This app'),
-    el('th', { class: 'n' }, 'The workbook'), el('th', { class: 'n' }, 'Difference'))));
-  const tb = el('tbody');
-  for (const [label, mine, sheet] of rows) {
-    const d = mine - sheet;
-    tb.append(el('tr', {}, el('td', {}, label), el('td', { class: 'n' }, num(mine)),
-      el('td', { class: 'n muted' }, num(sheet)),
-      el('td', { class: 'n ' + (Math.abs(d) < 1 ? 'pos' : 'neg') }, Math.abs(d) < 1 ? '✓ match' : num(d))));
-  }
-  t.append(tb);
-  return el('div', {}, el('p', { class: 'small muted' },
-    'Compared against MISA Entry 06.xlsm as of 31 Aug 2026. Investments differ by ₹36,278 on purpose — the workbook’s dashboard left the Geojit equity out of its investments total while its own Settings sheet included it; this app includes it.'),
-    el('div', { class: 'table-wrap' }, t));
-}
-
 async function backup() {
   const out = { app: 'jinnyfin-finance', version: 1, exported: new Date().toISOString() };
   for (const t of TABLES) out[t] = DB[t];
@@ -1184,6 +1116,11 @@ const lbOdd = () => lbStrays().map(t => {
   const w = LB_MAP(t);
   return { t, why: `filed as ${[t.parent, t.sub].filter(Boolean).join(' · ') || 'nothing'} — should be ${w.parent} · ${w.sub}` };
 });
+
+/** A Lend/Borrow entry with no payee: it is in nobody's balance. */
+const noPayee = () => DB.transactions
+  .filter(t => !t.deleted && t.type === 'Lend/Borrow' && !String(t.payee || '').trim())
+  .map(t => ({ t, why: '' }));                 // the group's title already says it
 
 /** An entry with no category at all, so it lands nowhere in a report. */
 const noCategory = () => DB.transactions
@@ -1225,16 +1162,14 @@ const strayTransferLink = () => DB.transactions
 const SHOW = 60;                       // enough to work through, not a wall of rows
 
 function checkGroup(host2, title, blurb, rows, extra) {
+  if (!rows.length) return;                // a clean group is not worth a card
   const card = el('div', { class: 'card', style: 'margin-bottom:12px' });
   card.append(el('div', { class: 'card-head' },
     el('h3', {}, title),
     el('div', { class: 'spacer' }),
-    el('span', { class: 'chip' + (rows.length ? '' : ' on') },
-      rows.length ? rows.length.toLocaleString('en-IN') + ' to look at' : '✓ clean')));
+    el('span', { class: 'chip' }, rows.length.toLocaleString('en-IN') + ' to look at')));
   if (blurb) card.append(el('p', { class: 'small muted', style: 'margin:0 0 8px' }, blurb));
   if (extra) card.append(el('div', { class: 'row', style: 'margin-bottom:8px' }, extra));
-
-  if (!rows.length) { host2.append(card); return; }
 
   for (const { t, why } of rows.slice(0, SHOW)) {
     const amt = +t.expense || +t.income || 0;
@@ -1242,7 +1177,7 @@ function checkGroup(host2, title, blurb, rows, extra) {
       el('div', { style: 'min-width:0;flex:1' },
         el('div', { class: 't1' }, `${fmtDate(t.date)} · ${t.account}`),
         el('div', { class: 't2' }, [t.note, t.parent, t.payee].filter(Boolean).join(' · ') || t.type),
-        el('div', { class: 't3' }, why)),
+        why ? el('div', { class: 't3' }, why) : null),
       el('div', { class: 'check-amt' }, money(amt, t.currency), el('span', { class: 'go' }, '›'))));
   }
   if (rows.length > SHOW) card.append(el('p', { class: 'small muted', style: 'margin:8px 0 0' },
@@ -1330,9 +1265,7 @@ function mixedCard() {
     el('div', { class: 'spacer' }),
     el('span', { class: 'chip' }, mixed.length + (mixed.length === 1 ? ' account' : ' accounts'))));
   card.append(el('p', { class: 'small muted', style: 'margin:0 0 8px' },
-    'A balance can only be in one currency. Where a name was used as a bucket for several old accounts, '
-    + 'the other currency is being added up as though it were this one. Splitting it off leaves every '
-    + 'entry exactly as it is — it only stops the two being added together.'));
+    'The other currency is being added up as this one. Splitting changes no entry.'));
 
   for (const m of mixed) {
     for (const g of m.groups) {
@@ -1353,54 +1286,44 @@ function mixedCard() {
 }
 
 function check() {
-  const cur = currencyOdd(), lb = lbOdd(), nc = noCategory();
-  const total = cur.length + lb.length + nc.length;
+  const cur = currencyOdd(), lb = lbOdd(), nc = noCategory(), np = noPayee();
+  // The same count as the tab's badge — every group below, not just some.
+  const total = checkCount();
 
   host.append(el('div', { class: 'alert ' + (total ? 'soon' : 'ok'), style: 'margin-bottom:12px' },
     el('span', { class: 'ico' }, total ? '⚠' : '✓'),
     el('div', {}, el('b', {}, total
       ? `${total.toLocaleString('en-IN')} entries worth a second look`
-      : 'Nothing looks out of place'),
-      el('div', { class: 'small muted' },
-        'Nothing here is wrong on its own — the app will not change any of it. '
-        + 'Tap a line to open that entry and decide for yourself.'))));
+      : 'Nothing looks out of place'))));
 
   mixedCard();
 
   checkGroup(host, 'Currency does not match the account',
-    'The account is in one currency and the entry says another. Balances use the account’s currency, '
-    + 'reports use the entry’s — so the same money can read two different ways.',
+    'Balances use the account’s currency, reports use the entry’s.',
     cur);
 
   checkGroup(host, 'Lend / Borrow under old labels',
-    CONFIG.DEMO
-      ? 'These sample rows use older labels such as a bare “Repayment”. '
-        + 'Lend / Borrow should only ever be Lend (Lend · Collecting debts) or Borrow (Borrow · Repayment). '
-        + 'No amount changes either way — only the label.'
-      : 'These came from the workbook filed under labels like a bare “Repayment”. '
-        + 'Lend / Borrow should only ever be Lend (Lend · Collecting debts) or Borrow (Borrow · Repayment). '
-        + 'No amount changes either way — only the label.',
+    'Should be Lend · Collecting debts or Borrow · Repayment. Only the label changes.',
     lb,
     lb.length ? el('button', { class: 'btn sm primary', onclick: tidyLendBorrow }, '✓ Fix all ' + lb.length) : null);
+
+  checkGroup(host, 'Lend / Borrow with no payee', 'Open each and pick who it was with.', np);
 
   checkGroup(host, 'No category', 'These land nowhere in any breakdown.', nc);
 
   checkGroup(host, 'Account does not exist',
-    'The account named on these rows is not in your account list, so the money on them '
-    + 'sits in no balance and shows on no statement. Open each one and pick the account it belongs to.',
+    'Not in any balance or statement — open each and pick its account.',
     ghostAccount());
 
   checkGroup(host, 'Was a transfer, still linked like one',
-    'These are no longer transfers but still carry a transfer’s links. Where the other half is '
-    + 'still standing, the same money is counted twice — which is how an account balance goes wrong '
-    + 'by a large round number. Open each one, check the entry it names, and delete whichever is the duplicate.',
+    'Money may be counted twice — open each and delete the duplicate.',
     strayTransferLink());
 }
 
 /** How many entries the Data check tab would show — used for the tab badge. */
 function checkCount() {
   try {
-    return currencyOdd().length + lbOdd().length + noCategory().length
+    return currencyOdd().length + lbOdd().length + noCategory().length + noPayee().length
       + ghostAccount().length + strayTransferLink().length;
   } catch { return 0; }
 }

@@ -70,7 +70,7 @@ async function askPin(reason = 'Enter your vault PIN') {
       style: 'text-align:center;font-size:22px;letter-spacing:.4em' });
     const remember = el('input', { type: 'checkbox', checked: true });
     const m = modal('Vault PIN', el('div', { class: 'grid', style: 'gap:10px' },
-      el('p', { class: 'small muted' }, reason + '. This PIN is not stored anywhere — if you forget it the card data cannot be recovered.'),
+      el('p', { class: 'small muted' }, reason + '. Forget this PIN and the card data is gone for good.'),
       pin,
       el('label', { class: 'row small', style: 'gap:8px' }, remember, ' keep it unlocked until I close the app')),
       { footer: [el('button', { class: 'btn primary', onclick: () => {
@@ -103,8 +103,7 @@ async function reveal(c, face) {
     line('CVV', data.cvv),
     line('ATM PIN', data.pin),
     line('Name on card', data.holder, false),
-    data.note ? el('p', { class: 'small muted', style: 'margin-top:10px' }, data.note) : null,
-    el('p', { class: 'hint', style: 'margin-top:12px' }, 'Close this when you are done — nothing here is written to the screen again until you unlock.')));
+    data.note ? el('p', { class: 'small muted', style: 'margin-top:10px' }, data.note) : null));
 }
 
 function edit(c = null) {
@@ -136,7 +135,7 @@ function edit(c = null) {
     fld('ATM PIN', atmpin),
     fld('Name on card', holder, 'full'),
     fld('Note', note, 'full'),
-    el('p', { class: 'hint full' }, 'Label, bank, network and the last 4 digits stay readable so you can tell cards apart. Everything else is encrypted before it leaves this device.'));
+    el('p', { class: 'hint full' }, 'Only label, bank, network and last 4 stay unencrypted.'));
 
   const m = modal(c ? 'Edit card' : 'New card', body, {
     footer: [

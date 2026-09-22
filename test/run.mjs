@@ -1020,6 +1020,7 @@ test('Transactions: "Half transfers" lists only transfers missing their other ha
   // Fix one the way he would: open it, name the account it went to, Update.
   await page.locator('.tx-results .tx').filter({ has: page.locator('.amt.out') }).first().click();
   await page.waitForSelector('.modal');
+  await page.waitForTimeout(500);                          // let the sheet fill its account lists
   await page.evaluate(() => {
     const m = [...document.querySelectorAll('.modal')].pop();
     const f = [...m.querySelectorAll('.field')].find(x => x.querySelector('label')?.textContent.trim() === 'To account');
@@ -1027,6 +1028,11 @@ test('Transactions: "Half transfers" lists only transfers missing their other ha
   });
   await page.keyboard.type('Cash at Home');
   await tab(page);
+  const toShows = await page.evaluate(() => {
+    const m = [...document.querySelectorAll('.modal')].pop();
+    return [...m.querySelectorAll('.field')].find(x => x.querySelector('label')?.textContent.trim() === 'To account')?.querySelector('input')?.value;
+  });
+  if (!String(toShows).startsWith('Cash at Home')) { await ctx.close(); throw new Error(`the To box reads "${toShows}" after typing Cash at Home + Tab`); }
   await topClick(page, ['Update']);
   // "Create it" is asked only when no partner is found — wait for either that
   // question or the sheet closing, rather than guessing how long it takes.
@@ -1038,11 +1044,12 @@ test('Transactions: "Half transfers" lists only transfers missing their other ha
   await page.waitForTimeout(500);
   const after = { shown: await entriesShown(page), want: await unlinkedIn(page, 'Fed Bank NRO'),
     type: await page.evaluate(() => document.querySelector('select[data-fk="type"]').value),
-    open: await page.evaluate(() => document.querySelectorAll('.modal').length) };
+    open: await page.evaluate(() => document.querySelectorAll('.modal').length),
+    openText: await page.evaluate(() => [...document.querySelectorAll('.modal')].map(m => m.innerText.replace(/\s+/g, ' ').slice(0, 300)).join(' || ')) };
   await ctx.close();
   if (all.shown !== all.want.toLocaleString('en-IN')) throw new Error(`${all.shown} shown, ${all.want} unlinked transfers exist`);
   if (nro.shown !== String(nro.want) || nro.want < 2) throw new Error(`with Fed Bank NRO: ${nro.shown} shown, ${nro.want} expected`);
-  if (after.open) throw new Error('the sheet stayed open');
+  if (after.open) throw new Error('the sheet stayed open: ' + after.openText);
   if (after.want !== nro.want - 1 || after.shown !== String(after.want)) throw new Error(`after fixing one: ${after.shown} shown, ${after.want} left (was ${nro.want})`);
   if (after.type !== 'Half transfers') throw new Error(`fixing a row reset the filter to "${after.type}"`);
   if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
@@ -1077,6 +1084,217 @@ test('Transactions: the "Half transfers" option is gone once none are left', asy
   if (later.type !== 'All' || later.shown !== later.all.toLocaleString('en-IN')) throw new Error(`coming back: ${JSON.stringify(later)}`);
   if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
   return 'kept while in force (0 shown), gone on the next visit, filter back to All';
+});
+
+// ------------------------------------------------------ 2.3: text diet --
+const settingsTab = async (page, label) => {
+  await page.evaluate(l => [...document.querySelectorAll('#main .seg button')].find(b => b.textContent.trim().startsWith(l))?.click(), label);
+  await page.waitForTimeout(400);
+};
+const mainText = page => page.evaluate(() => document.querySelector('#main').innerText);
+
+test('lean screens: nothing-to-do cards stay away and dropped hints are gone', async browser => {
+  const { ctx, page, errors } = await open(browser, 'insurance');
+  const ins = await mainText(page);
+  await page.evaluate(() => window.JINNYFIN.go('settings')); await page.waitForTimeout(600);
+  const gen = await mainText(page);
+  // Finish every clean-up the Data tab offers, mark the import done, then look.
+  await page.evaluate(async () => {
+    const { S, DB } = window.JINNYFIN;
+    await S.putMany('transactions', DB.transactions.filter(t => t.type === 'Transfer' && (!t.transfer_group || !t.parent))
+      .map(t => ({ ...t, transfer_group: t.transfer_group || 'grp-' + t.id, parent: t.parent || 'Transfer' })));
+    await S.setSettings({ seeded: '2026-08-31' });
+  });
+  await page.waitForTimeout(500);
+  await settingsTab(page, 'Backup');
+  const data = await mainText(page);
+  await settingsTab(page, 'Data check');
+  const check = await page.evaluate(() => ({ text: document.querySelector('#main').innerText,
+    clean: [...document.querySelectorAll('#main .chip')].filter(c => /clean/.test(c.textContent)).length }));
+  await ctx.close();
+  const bad = [];
+  if (/ATM Cards/i.test(ins)) bad.push('Insurance shows an empty ATM Cards section');
+  if (/GitHub Action/.test(ins)) bad.push('Insurance still offers the GitHub Action e-mail');
+  if (/version I sent you/.test(gen)) bad.push('"compare this with the version I sent you" is back');
+  if (/Stylesheet:/.test(gen)) bad.push('the stylesheet line shows although it matches');
+  if (/If it is behind/.test(gen)) bad.push('the Force update paragraph is back');
+  if (/Import from the Excel workbook/i.test(data)) bad.push('the import card shows after the import');
+  if (/Tidy up/i.test(data)) bad.push('Tidy up shows with nothing to tidy');
+  if (/Numbers check/i.test(data)) bad.push('Numbers check is still there');
+  if (!/Backup/i.test(data)) bad.push('the Backup card went missing');
+  if (check.clean) bad.push(`${check.clean} clean Data check groups still shown`);
+  if (/Nothing here is wrong on its own/.test(check.text)) bad.push('the Data check explainer is back');
+  if (bad.length) throw new Error(bad.join('; '));
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'empty ATM section, import, Tidy up, clean checks, version chatter: all out of the way';
+});
+
+test('the account sheet has no Bank says box, and saving it keeps the reconciled figure', async browser => {
+  const { ctx, page, errors } = await open(browser, 'settings');
+  await page.evaluate(async () => {
+    const { S, DB } = window.JINNYFIN;
+    const a = DB.accounts.find(x => x.name === 'Fed Bank NRO');
+    await S.put('accounts', { ...a, stated_balance: 12345.67 });
+  });
+  await settingsTab(page, 'Accounts');
+  await page.evaluate(() => [...document.querySelectorAll('#main tr')].find(r => r.textContent.includes('Fed Bank NRO'))?.click());
+  await page.waitForSelector('.modal');
+  const labels = await page.evaluate(() => [...document.querySelector('.modal').querySelectorAll('label')].map(l => l.textContent.trim()));
+  const hints = await page.evaluate(() => document.querySelector('.modal').innerText);
+  await topClick(page, ['Save']);
+  await page.waitForTimeout(500);
+  const kept = await page.evaluate(() => window.JINNYFIN.DB.accounts.find(x => x.name === 'Fed Bank NRO')?.stated_balance);
+  await ctx.close();
+  if (labels.some(l => /Bank says/i.test(l))) throw new Error('the Bank says box is still on the account sheet');
+  if (/60 days|does not already carry it/.test(hints)) throw new Error('an account-sheet hint is back');
+  if (kept !== 12345.67) throw new Error(`saving the account changed the reconciled figure to ${kept}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'no Bank says box, no hints, 12,345.67 kept after Save';
+});
+
+// --------------------------------------- 2.3: statement, chart, payees --
+test('PC statement: Time and From / To columns, in the CSV too — the phone list stays as it was', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  // Tie one Fed Bank NRI transfer to a partner on Cash at Home, as if fixed.
+  const seed = await page.evaluate(async () => {
+    const { S, DB } = window.JINNYFIN;
+    const out = DB.transactions.find(t => t.account === 'Fed Bank NRI' && t.type === 'Transfer' && !t.transfer_group && +t.expense > 0);
+    const back = DB.transactions.find(t => t.account === 'Fed Bank NRI' && t.type === 'Transfer' && !t.transfer_group && +t.income > 0);
+    await S.putMany('transactions', [
+      { ...out, transfer_group: 'grp-st-1', time: '14:05' },
+      { ...out, id: 'tx-st-in', no: 990101, account: 'Cash at Home', currency: 'INR', income: out.expense, expense: 0, transfer_group: 'grp-st-1', to_account: null },
+      { ...back, transfer_group: 'grp-st-2', time: '09:30' },
+      { ...back, id: 'tx-st-out', no: 990102, account: 'Fed Bank NRO', currency: 'INR', income: 0, expense: back.income, transfer_group: 'grp-st-2', to_account: 'Fed Bank NRI' },
+    ]);
+    return { out: out.id, back: back.id };
+  });
+  await page.evaluate(() => window.JINNYFIN.go('statement?account=' + encodeURIComponent('Fed Bank NRI')));
+  await page.waitForTimeout(900);
+  const head = await page.evaluate(() => [...document.querySelectorAll('.stmt-table th')].map(th => th.textContent.trim()));
+  const cells = await page.evaluate(() => [...document.querySelectorAll('.stmt-table tbody tr')].map(tr => [...tr.children].map(td => td.textContent.trim())));
+  const find = pred => cells.find(pred);
+  const outRow = find(c => c[1] === '2:05 PM'), inRow = find(c => c[1] === '9:30 AM');
+  const loan = find(c => c[2].includes('Lend') && c[4] === 'Farooq');
+  const loose = find(c => c[2].includes('Transfer') && c[4] === 'not linked');
+  const phoneHasTime = await page.evaluate(() => /2:05 PM|→ Cash at Home/.test(document.querySelector('.stmt-list')?.textContent || ''));
+  const [dl] = await Promise.all([page.waitForEvent('download'),
+    page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '⬇ CSV')?.click())]);
+  const csv = readFileSync(await dl.path(), 'utf8');
+  await ctx.close();
+  const want = ['Date', 'Time', 'Type', 'Category', 'From / To', 'Description', 'In', 'Out', 'Balance'];
+  if (head.join('|') !== want.join('|')) throw new Error(`columns: ${head.join(', ')}`);
+  if (!outRow || outRow[4] !== '→ Cash at Home') throw new Error(`money that left: ${JSON.stringify(outRow)}`);
+  if (!inRow || inRow[4] !== '← Fed Bank NRO') throw new Error(`money that arrived: ${JSON.stringify(inRow)}`);
+  if (!loan) throw new Error('a Lend/Borrow row does not show its payee');
+  if (!loose) throw new Error('an unlinked transfer is not marked "not linked"');
+  if (phoneHasTime) throw new Error('the phone list picked up the PC-only detail');
+  if (!/Date,Time,Type,Category,Sub,From \/ To,Description,In,Out,Balance/.test(csv.replace(/"/g, ''))) throw new Error('the CSV header lacks Time / From / To');
+  if (!/2:05 PM.*To Cash at Home/.test(csv.replace(/"/g, ''))) throw new Error('the CSV row lacks the time or the other account');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return '2:05 PM → Cash at Home · 9:30 AM ← Fed Bank NRO · payee Farooq · "not linked" · CSV carries both';
+});
+
+test('Income vs Expense: one green and one red bar per year, per month once a year is picked', async browser => {
+  const { ctx, page, errors } = await open(browser, 'incexp');
+  const read = () => page.evaluate(() => {
+    const svg = document.querySelector('.ie-chart svg');
+    const labels = [...svg.querySelectorAll('text')].filter(t => t.getAttribute('text-anchor') === 'middle').map(t => t.textContent);
+    const fills = [...svg.querySelectorAll('rect')].map(r => r.getAttribute('fill'));
+    return { labels, bars: fills.length, colours: [...new Set(fills)].length,
+      title: document.querySelector('.ie-chart')?.closest('.card')?.querySelector('h3')?.textContent };
+  });
+  const sums = (f, by) => page.evaluate(async ([f, by]) => {
+    const C = await import('/js/calc.js');
+    const rows = C.incExpByPeriod(f, by);
+    const tot = C.incomeVsExpense(f);
+    return { n: rows.length, inc: rows.reduce((s, r) => s + r.income, 0), exp: rows.reduce((s, r) => s + r.expense, 0),
+      kInc: tot.income.equiv, kExp: tot.expense.equiv };
+  }, [f, by]);
+  await page.selectOption('select[data-fk="year"]', 'All'); await page.waitForTimeout(700);
+  const all = { chart: await read(), sum: await sums({}, 'year') };
+  const year = await page.evaluate(() => [...document.querySelectorAll('select[data-fk="year"] option')].map(o => o.value).filter(v => v !== 'All').sort().pop());
+  if (!year) { const h = await page.evaluate(() => document.querySelector('select[data-fk="year"]')?.outerHTML.slice(0, 300)); await ctx.close(); throw new Error('no year to pick: ' + h); }
+  await page.selectOption('select[data-fk="year"]', year); await page.waitForTimeout(700);
+  const yr = await read();
+  await page.selectOption('select[data-fk="month"]', '3'); await page.waitForTimeout(700);
+  const mon = await read();
+  // A From–To range: its months, or its years once it runs past two years.
+  const range = async (a, b) => {
+    await page.locator('input[data-dk="from"]').fill(a);
+    await page.locator('input[data-dk="to"]').fill(b);
+    await page.locator('[data-fk="account"] input').click();      // leaving the date box commits it
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(700);
+    return read();
+  };
+  const short = await range('2025-01-01', '2025-03-31');
+  const long = await range('2019-01-01', '2025-12-31');
+  await ctx.close();
+  if (short.labels.join(',') !== 'Jan,Feb,Mar') throw new Error(`a three-month range: ${JSON.stringify(short)}`);
+  if (long.labels[0] !== '2019' || long.labels.at(-1) !== '2025') throw new Error(`a seven-year range: ${JSON.stringify(long)}`);
+  if (all.chart.labels.length !== all.sum.n || all.chart.bars !== 2 * all.sum.n) throw new Error(`all years: ${JSON.stringify(all)}`);
+  if (all.chart.colours !== 2) throw new Error('the bars are not two colours');
+  if (Math.abs(all.sum.inc - all.sum.kInc) > 1 || Math.abs(all.sum.exp - all.sum.kExp) > 1) throw new Error(`the chart does not add up to the totals: ${JSON.stringify(all.sum)}`);
+  if (yr.labels.join(',') !== 'Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec' || yr.bars !== 24) throw new Error(`${year}: ${JSON.stringify(yr)}`);
+  if (mon.labels.length !== 12) throw new Error(`with a month picked: ${JSON.stringify(mon)}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `${all.sum.n} years × 2 bars, adding up to the totals; ${year}: Jan–Dec × 2; a month picked keeps the year`;
+});
+
+test('Income vs Expense on a phone: Group by and Sort show every button', async browser => {
+  const { ctx, page, errors } = await open(browser, 'incexp');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(500);
+  const r = await page.evaluate(() => [...document.querySelectorAll('#main .filters .seg')].map(s => ({
+    hidden: s.scrollWidth - s.clientWidth, right: Math.round(s.getBoundingClientRect().right) })));
+  await ctx.close();
+  if (r.length !== 2) throw new Error(`found ${r.length} button rows`);
+  if (r.some(x => x.hidden > 1 || x.right > 390)) throw new Error(`buttons cut off: ${JSON.stringify(r)}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'Category · Sub · Account and Biggest · A–Z all in view at 390px';
+});
+
+test('Lend / Borrow: nameless entries can be found and named, and no new one can be saved without a payee', async browser => {
+  const { ctx, page, errors } = await open(browser, 'payee');
+  const count = () => page.evaluate(() => window.JINNYFIN.DB.transactions.filter(t => t.type === 'Lend/Borrow' && !t.payee).length);
+  const before = await count();
+  const link = await page.evaluate(() => [...document.querySelectorAll('#main a')].find(a => a.textContent.trim() === 'Show them')?.getAttribute('href'));
+  await page.evaluate(() => [...document.querySelectorAll('#main a')].find(a => a.textContent.trim() === 'Show them')?.click());
+  await page.waitForTimeout(900);
+  const group = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('#main .card')].find(x => /no payee/i.test(x.querySelector('h3')?.textContent || ''));
+    return c ? { rows: c.querySelectorAll('.check-row').length, chip: c.querySelector('.chip')?.textContent } : null;
+  });
+  // A new Lend/Borrow with no payee is refused.
+  await page.evaluate(() => window.JINNYFIN.openTxEditor(null, { type: 'Lend/Borrow' }));
+  await page.waitForSelector('.modal');
+  await page.waitForTimeout(400);
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent.trim() === 'Lend/Borrow' || b.textContent.includes('Lend/'))?.click());
+  await page.locator('.modal input[inputmode="decimal"], .modal .amount-in input').first().fill('500');
+  const saved0 = await page.evaluate(() => window.JINNYFIN.DB.transactions.length);
+  await topClick(page, ['Save']);
+  await page.waitForTimeout(500);
+  const refused = { still: await page.evaluate(() => document.querySelectorAll('.modal').length), n: await page.evaluate(() => window.JINNYFIN.DB.transactions.length),
+    focus: await page.evaluate(() => document.activeElement?.getAttribute('placeholder')) };
+  await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+  await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+  // Naming them all makes the group and the alert go away.
+  await page.evaluate(async () => {
+    const { S, DB } = window.JINNYFIN;
+    await S.putMany('transactions', DB.transactions.filter(t => t.type === 'Lend/Borrow' && !t.payee).map(t => ({ ...t, payee: 'Test Friend' })));
+  });
+  await page.evaluate(() => window.JINNYFIN.go('settings?tab=check')); await page.waitForTimeout(700);
+  const groupAfter = await page.evaluate(() => [...document.querySelectorAll('#main .card h3')].some(h => /no payee/i.test(h.textContent)));
+  await page.evaluate(() => window.JINNYFIN.go('payee')); await page.waitForTimeout(700);
+  const alertAfter = await page.evaluate(() => [...document.querySelectorAll('#main a')].some(a => a.textContent.trim() === 'Show them'));
+  await ctx.close();
+  if (!before) throw new Error('the fixture has no nameless entries to test with');
+  if (link !== '#/settings?tab=check') throw new Error(`the alert links to ${link}`);
+  if (!group || group.chip !== `${before} to look at`) throw new Error(`Data check group: ${JSON.stringify(group)} (want ${before})`);
+  if (!refused.still || refused.n !== saved0 || refused.focus !== 'Who?') throw new Error(`saved without a payee: ${JSON.stringify(refused)}`);
+  if (groupAfter || alertAfter) throw new Error('named entries still flagged');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `${before} nameless → listed in Data check; save refused with the cursor on Payee; all named → both gone`;
 });
 
 test('Income vs Expense: the Account box keeps a From–To range, and Tab moves on', async browser => {

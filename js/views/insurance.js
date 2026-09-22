@@ -174,15 +174,12 @@ function cardDue(c) {
 
 /** The cards, by when they run out. The numbers stay locked in the vault. */
 function cardSection(cards) {
+  // No cards, no section: the Card Vault has its own place in the menu.
+  if (!cards.length) return;
   host.append(el('div', { class: 'card-head', style: 'margin:18px 0 8px' },
     el('h3', { class: 'row', style: 'gap:8px' }, icon('card', 17), 'ATM Cards'),
     el('div', { class: 'spacer' }),
     el('button', { class: 'btn sm', onclick: () => { location.hash = '#/cards'; } }, 'Open vault')));
-  if (!cards.length) {
-    host.append(el('p', { class: 'small muted', style: 'margin:0 2px 4px' },
-      'No cards yet — add them in the Card Vault, where the numbers are encrypted.'));
-    return;
-  }
   const grid = el('div', { class: 'grid g2' });
   for (const c of cards) {
     const badge = c.level === 'expired' ? ['⛔', 'var(--critical)', `expired ${-c.daysLeft} days ago`]
@@ -227,15 +224,15 @@ function pushRow() {
     acts.replaceChildren();
     const say = t => body.append(el('div', { class: 'small muted' }, t));
 
-    if (!P.supported()) return say('This browser cannot receive notifications with the app closed.');
-    if (!P.configured()) return say('Not set up yet — see PUSH-SETUP.md in the repo.');
+    if (!P.supported()) return say('Not supported in this browser');
+    if (!P.configured()) return say('Not set up yet');
 
     const sub = await P.current();
     const installed = matchMedia?.('(display-mode: standalone)').matches;
     const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
     if (sub) {
-      say('On. Reminders reach this device even when Jinnyfin is closed.');
+      say('On');
       acts.append(el('button', { class: 'btn sm', onclick: async () => {
         const r = await P.test();
         toast(r.why, r.ok ? 'ok' : 'warn', 7000);
@@ -253,7 +250,7 @@ function pushRow() {
       return say('On iPhone this needs the app added to the Home Screen first — '
         + 'Share → Add to Home Screen, then open it from there and come back.');
     }
-    say('Off. Reminders only ring while the app is open on this device.');
+    say('Off');
     acts.append(el('button', { class: 'btn sm primary', onclick: async () => {
       const r = await P.enable();
       toast(r.why, r.ok ? 'ok' : 'warn', 8000);
@@ -302,17 +299,16 @@ function notifyCard() {
     el('span', { class: 'row' }, icon('bell', 17)),
     el('div', { style: 'min-width:0' }, el('b', {}, 'Renewal reminders'),
       el('div', { class: 'small muted' },
-        !on ? 'Off — nothing will be announced until you switch this back on.'
-          : !supported ? 'On inside the app. This browser cannot show system pop-ups.'
-          : blocked ? 'On inside the app — but your browser is blocking pop-ups for this site. Allow notifications in the site settings.'
-          : needsAsking ? 'On inside the app. Tap “Allow pop-ups” to get them outside it too.'
-          : 'On — you get a pop-up when something falls due.')),
+        !on ? 'Off'
+          : !supported ? 'On · this browser cannot show pop-ups'
+          : blocked ? 'On · pop-ups blocked in the site settings'
+          : needsAsking ? 'On · pop-ups not allowed yet'
+          : 'On')),
     el('div', { class: 'spacer' }), sw));
 
   card.append(el('label', { class: 'row switch-row', style: 'cursor:pointer;margin-top:8px' },
     el('span', { class: 'row' }, icon('sound', 17)),
-    el('div', { style: 'min-width:0' }, el('b', {}, 'Sound'),
-      el('div', { class: 'small muted' }, 'A short chime when a reminder rings inside the app.')),
+    el('div', { style: 'min-width:0' }, el('b', {}, 'Sound')),
     el('div', { class: 'spacer' }), sndSw));
 
   card.append(pushRow());
@@ -344,10 +340,6 @@ function notifyCard() {
   }
   if (acts.children.length) card.append(acts);
 
-  card.append(el('p', { class: 'hint', style: 'margin:8px 0 0' },
-    'Want an e-mail too? The repo ships a GitHub Action ('
-    , el('span', { class: 'mono' }, '.github/workflows/expiry-email.yml')
-    , ') that checks every morning and mails you — see SETUP.md.'));
   return card;
 }
 
@@ -432,14 +424,14 @@ function edit(p = null, startKind = 'insurance', preset = {}) {
   const termMonths = () => (noTerm.checked ? 0 : Math.max(0, Math.round(+years.value || 0)) * 12 + Math.max(0, Math.round(+months.value || 0)));
 
   // Option text stays short: a phone-width select cuts a long one off mid-word.
-  // The longer explanation sits under it and changes with the choice.
   const mode = el('select', {},
     el('option', { value: 'fixed', selected: v.due_mode !== 'payments' }, 'Fixed date — Renew moves it'),
     el('option', { value: 'payments', selected: v.due_mode === 'payments' }, 'Follows the payments'));
   const modeHint = el('div', { class: 'hint' });
-  const paintMode = () => { modeHint.textContent = mode.value === 'payments'
-    ? 'Due one term after the last entry in its sub-category — for a scheme someone else pays (a chitty, say).'
-    : 'Due on the date above. Renew moves it on by the term.'; };
+  const paintMode = () => {
+    modeHint.textContent = mode.value === 'payments' ? 'Due a term after the last payment.' : '';
+    modeHint.hidden = mode.value !== 'payments';
+  };
   mode.addEventListener('change', paintMode); paintMode();
 
   // Renewing is a payment. It should leave an account, like every other payment.
@@ -495,8 +487,7 @@ function edit(p = null, startKind = 'insurance', preset = {}) {
     fileList.replaceChildren();
     if (!files.length) {
       fileList.append(el('p', { class: 'hint', style: 'margin:0' },
-        'Invoices, warranty cards, receipts. Photos or PDF, up to '
-        + `${F.prettySize(F.MAX_BYTES)} each. Kept private — opening one makes a link that dies after an hour.`));
+        `Photos or PDF, up to ${F.prettySize(F.MAX_BYTES)} each.`));
       return;
     }
     for (const f of files) {
@@ -900,8 +891,7 @@ function linkScreen() {
 
   const body = el('div', {},
     el('p', { class: 'hint', style: 'margin:0 0 6px' },
-      'Each policy gets its own sub-category under Insurance. Renew files the premium there, and the card shows what was paid. '
-      + 'The name on the card stays as you set it.'),
+      'One Insurance sub-category per policy — Renew files the premium there.'),
     ...rows.map(r => r.el), loose);
 
   const m = modal('Link policies', body, {

@@ -5,7 +5,6 @@
 import { el, money, num, fmtDate, fmtDateShort, downloadCSV, todayISO, esc, toast,
   dateGuard, restoreDateFocus, dateBox, modal, confirmBox } from '../util.js';
 import { DB, state, getSettings, put, putMany, remove } from '../store.js';
-import { CONFIG } from '../../config.js';
 import * as C from '../calc.js';
 import { topbar } from '../app.js';
 import { openTxEditor } from './editor.js';
@@ -122,18 +121,15 @@ function draw() {
     kpi('Net position', money(Math.abs(lb.netINR), 'INR', false), lb.netINR < 0 ? 'expense' : 'income'),
     kpi('Open / settled', `${lb.openCount} / ${lb.settledCount}`)));
   host.append(el('p', { class: 'small muted', style: 'margin:8px 0 12px' },
-    lb.netINR < 0 ? '➜ On balance you owe money.' : '➜ On balance people owe you money.',
-    ' Settled payees are excluded from the net figure — only the exchange-rate noise would remain.'));
+    lb.netINR < 0 ? '➜ On balance you owe money.' : '➜ On balance people owe you money.'));
 
   // Older rows carried over from the workbook never had a name typed against
   // them. They are settled history, but the totals above cannot see them — and
   // a total that quietly leaves out three quarters of the entries is a trap.
   const nameless = DB.transactions.filter(x => x.type === 'Lend/Borrow' && !x.payee && !x.deleted).length;
   if (nameless) host.append(el('div', { class: 'alert slim' }, el('span', { class: 'ico' }, 'ℹ️'),
-    el('div', {}, `${nameless.toLocaleString('en-IN')} older entries carry no name, so they are not in the figures above. `
-      + (CONFIG.DEMO
-        ? 'They are sample history marked settled — the money itself is in your account balances either way.'
-        : 'They came across from the workbook already settled — the money itself is in your account balances either way.'))));
+    el('div', {}, `${nameless.toLocaleString('en-IN')} older entries have no name — not in these totals. `,
+      el('a', { href: '#/settings?tab=check' }, 'Show them'))));
 
   const toggle = el('label', { class: 'chip', style: 'cursor:pointer' },
     el('input', { type: 'checkbox', checked: showSettled, onchange: e => { showSettled = e.target.checked; draw(); } }),
@@ -209,8 +205,7 @@ function renamePayee(name) {
     el('div', { class: 'form-grid' },
       el('div', { class: 'field full' }, el('label', {}, 'Name'), input),
       el('p', { class: 'hint full', style: 'margin:0' },
-        `${entriesOf(name).length.toLocaleString('en-IN')} entries carry this name, and all of them change together. `
-        + 'Type the name of another payee to merge the two.')),
+        `${entriesOf(name).length.toLocaleString('en-IN')} entries · type another payee's name to merge.`)),
     { footer: [el('button', { class: 'btn primary', onclick: () => save() }, 'Save')] });
   input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); save(); } };
   setTimeout(() => { input.focus(); input.select(); }, 30);
@@ -370,8 +365,7 @@ function ledgerCard(lb) {
     // cannot be put on either side. They stay in All, and the reader is told.
     side !== 'all' && L.unplaced
       ? el('div', { class: 'alert slim' }, el('span', { class: 'ico' }, 'ℹ️'),
-        el('div', {}, `${L.unplaced} of this payee's entries carry no Lend or Borrow label, `
-          + 'so they are in neither side. The All view shows them.'))
+        el('div', {}, `${L.unplaced} entries have no Lend/Borrow label — see All.`))
       : null,
     totals,
     el('div', { class: 'row gap wrap', style: 'margin:6px 0 10px' },

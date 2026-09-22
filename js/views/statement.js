@@ -1,7 +1,7 @@
 // ============================================================================
 //  statement.js — account statement with a running balance.
 // ============================================================================
-import { el, money, num, fmtDate, MONTHS, downloadCSV, todayISO, endOfMonth, iso,
+import { el, money, num, fmtDate, fmtTime, MONTHS, downloadCSV, todayISO, endOfMonth, iso,
   dateGuard, restoreDateFocus, onFilter, restoreFilterFocus, dateBox} from '../util.js';
 import { printStatement, printDate } from './printable.js';
 import { DB } from '../store.js';
@@ -166,7 +166,6 @@ function drawList() {
     ` show idle accounts (${closedCount})`));
 
   host.append(...cards);
-  host.append(el('p', { class: 'small muted' }, 'Tap anything here to see every movement behind its balance.'));
 }
 
 /** The same year / month / from / to row on every statement. */
@@ -258,13 +257,14 @@ function drawHolding() {
 
   const t = el('table');
   t.append(el('thead', {}, el('tr', {},
-    el('th', {}, 'Date'), el('th', {}, 'From account'), el('th', {}, 'Kind'), el('th', {}, 'Description'),
+    el('th', {}, 'Date'), el('th', {}, 'Time'), el('th', {}, 'From account'), el('th', {}, 'Kind'), el('th', {}, 'Description'),
     el('th', { class: 'n' }, 'Paid in'), el('th', { class: 'n' }, 'Taken out'), el('th', { class: 'n' }, 'Balance'))));
   const tb = el('tbody');
   for (const r of rows) {
     const d = r.move;
     tb.append(el('tr', { style: 'cursor:pointer', onclick: () => openTxEditor(r) },
-      el('td', {}, fmtDate(r.date)), el('td', {}, r.account || ''), el('td', {}, r.sub || r.type),
+      el('td', {}, fmtDate(r.date)), el('td', { class: 'nowrap' }, fmtTime(r.time)),
+      el('td', {}, r.account || ''), el('td', {}, r.sub || r.type),
       el('td', { class: 'wrap' }, r.note || ''),
       el('td', { class: 'n in' }, d > 0 ? num(d) : ''),
       el('td', { class: 'n out' }, d < 0 ? num(-d) : ''),
@@ -272,7 +272,7 @@ function drawHolding() {
   }
   // Oldest last, so the carried-in cost sits under everything it paid for.
   if (L.priorCost) tb.append(el('tr', { class: 'total' },
-    el('td', {}, '—'), el('td', {}, ''), el('td', {}, 'Opening'),
+    el('td', {}, '—'), el('td', {}, ''), el('td', {}, ''), el('td', {}, 'Opening'),
     el('td', { class: 'wrap' }, 'Cost before this ledger began'),
     el('td', { class: 'n' }, num(L.priorCost)), el('td', { class: 'n' }, ''),
     el('td', { class: 'n' }, num(L.priorCost))));
@@ -295,11 +295,11 @@ function printHolding(h, L, from, to) {
     subtitle: `${h.name} · INR`,
     meta: [['Period', period], ['Entries', String(L.total)], ['Currency', 'INR']],
     head: ['Date', 'From account', 'Kind', 'Description', 'Paid in', 'Taken out', 'Balance'],
-    numeric: [4, 5, 6], widths: [13, 15, 12, 20, 13, 13, 14],
+    numeric: [4, 5, 6], widths: [15, 14, 11, 20, 13, 13, 14],
     opening: ['', '', '', 'Opening balance', '', '', num(L.opening)],
     rows: L.rows.map(r => {
       const d = r.move;
-      return [printDate(r.date), r.account || '', r.sub || r.type, r.note || '',
+      return [dateTime(r), r.account || '', r.sub || r.type, r.note || '',
         d > 0 ? num(d) : '', d < 0 ? num(-d) : '', num(r.balance)];
     }),
     closing: ['', '', '', 'Balance', num(L.inSum), num(L.outSum), num(L.closing)],
@@ -309,11 +309,11 @@ function printHolding(h, L, from, to) {
 }
 
 function exportHolding(h, L) {
-  const head = ['Date', 'From account', 'Kind', 'Description', 'Paid in', 'Taken out', 'Balance'];
+  const head = ['Date', 'Time', 'From account', 'Kind', 'Description', 'Paid in', 'Taken out', 'Balance'];
   downloadCSV(`jinnyfin-${h.name.replace(/\W+/g, '-')}-${todayISO()}.csv`,
     [['Holding', h.name], ['Opening', L.opening.toFixed(2)], ['Balance', L.closing.toFixed(2)], [], head,
       ...L.rows.map(r => { const d = r.move;
-        return [r.date, r.account || '', r.sub || r.type, r.note || '',
+        return [r.date, fmtTime(r.time), r.account || '', r.sub || r.type, r.note || '',
           d > 0 ? d.toFixed(2) : '', d < 0 ? (-d).toFixed(2) : '', r.balance.toFixed(2)]; })]);
 }
 
@@ -400,20 +400,28 @@ function listRows(st, openingRow) {
 }
 
 // ----------------------------------------------------------- wide layout --
+// The wide table is the PC's view and carries the detail; the phone list above
+// stays as it is — minimal on purpose.
 function tableOf(st, openingRow) {
   const t = el('table');
   t.append(el('thead', {}, el('tr', {},
-    el('th', {}, 'Date'), el('th', {}, 'Type'), el('th', {}, 'Category'), el('th', {}, 'Description'),
+    el('th', {}, 'Date'), el('th', {}, 'Time'), el('th', {}, 'Type'), el('th', {}, 'Category'),
+    el('th', {}, 'From / To'), el('th', {}, 'Description'),
     el('th', { class: 'n' }, 'In'), el('th', { class: 'n' }, 'Out'), el('th', { class: 'n' }, 'Balance'))));
   const tb = el('tbody');
   const rows = openingRow ? [...st.rows.slice().reverse(), openingRow] : st.rows.slice().reverse();
+  const groups = C.transferGroups();
   for (const r of rows) {
+    const cp = r.__synthetic ? null : C.counterpartOf(r, groups);
     tb.append(el('tr', { class: r.__synthetic ? 'muted' : '',
       style: r.__synthetic ? '' : 'cursor:pointer', onclick: r.__synthetic ? null : () => openTxEditor(r) },
       el('td', {}, fmtDate(r.date)),
+      el('td', { class: 'nowrap' }, fmtTime(r.time)),
       el('td', {}, el('span', { style: 'display:inline-flex;align-items:center;gap:6px' },
         typeIcon(r.type, 16), r.type)),
-      el('td', {}, [r.parent, r.sub].filter(Boolean).join(' · ')),
+      el('td', { class: 'wrap-s' }, [r.parent, r.sub].filter(Boolean).join(' · ')),
+      cp?.unlinked ? el('td', { class: 'muted' }, 'not linked')
+        : el('td', { class: 'wrap-s' }, cp ? (cp.dir === 'to' ? '→ ' : cp.dir === 'from' ? '← ' : '') + cp.name : ''),
       el('td', { class: 'wrap' }, r.note || ''),
       el('td', { class: 'n in' }, r.income ? num(r.income) : ''),
       el('td', { class: 'n out' }, r.expense ? num(r.expense) : ''),
@@ -429,14 +437,15 @@ function printOne(st) {
     : f.year !== 'All' ? (f.month !== 'All' ? `${MONTHS[+f.month - 1]} ${f.year}` : String(f.year))
       : 'All time';
   const cols = ['Date', 'Type', 'Category', 'Description', 'In', 'Out', 'Balance'];
+  const groups = C.transferGroups();
   printStatement({
     title: 'Statement of account',
     subtitle: `${st.account} · ${st.currency}`,
     meta: [['Period', period], ['Entries', String(st.rows.length)], ['Currency', st.currency]],
-    head: cols, numeric: [4, 5, 6], widths: [13, 10, 16, 21, 13, 13, 14],
+    head: cols, numeric: [4, 5, 6], widths: [15, 9, 15, 21, 13, 13, 14],
     opening: ['', '', '', 'Opening balance', '', '', num(st.opening)],
-    rows: st.rows.map(r => [printDate(r.date), r.type, [r.parent, r.sub].filter(Boolean).join(' · '),
-      r.note || '', r.income ? num(r.income) : '', r.expense ? num(r.expense) : '', num(r.balance)]),
+    rows: st.rows.map(r => [dateTime(r), r.type, [r.parent, r.sub].filter(Boolean).join(' · '),
+      withCounterpart(r, groups), r.income ? num(r.income) : '', r.expense ? num(r.expense) : '', num(r.balance)]),
     closing: ['', '', '', 'Closing balance', num(st.inSum), num(st.outSum), num(st.closing)],
     standing: `Balance on ${printDate(f.to || todayISO())}: <b>${money(st.closing, st.currency)}</b>`,
     note: '“In” is money that came into this account; “Out” is money that left it. '
@@ -445,9 +454,30 @@ function printOne(st) {
 }
 
 function exportCSV(st) {
-  const head = ['Date', 'Type', 'Category', 'Sub', 'Description', 'In', 'Out', 'Balance'];
-  const rows = st.rows.map(r => [r.date, r.type, r.parent || '', r.sub || '', r.note || '',
+  const head = ['Date', 'Time', 'Type', 'Category', 'Sub', 'From / To', 'Description', 'In', 'Out', 'Balance'];
+  const groups = C.transferGroups();
+  const rows = st.rows.map(r => [r.date, fmtTime(r.time), r.type, r.parent || '', r.sub || '',
+    counterpartText(C.counterpartOf(r, groups)), r.note || '',
     r.income || 0, r.expense || 0, r.balance.toFixed(2)]);
   downloadCSV(`jinnyfin-statement-${st.account.replace(/\W+/g, '-')}-${todayISO()}.csv`,
     [['Account', st.account], ['Currency', st.currency], ['Opening', st.opening.toFixed(2)], ['Closing', st.closing.toFixed(2)], [], head, ...rows]);
+}
+
+// ------------------------------------------------------------ small helpers --
+/** "25-03-2021 11:14 AM" — the printed statement keeps its seven columns. */
+function dateTime(r) {
+  const t = fmtTime(r.time);
+  return t ? `${printDate(r.date)} ${t}` : printDate(r.date);
+}
+/** "To Geojit", "From Fed Bank NRO", a payee's name — words, for print and CSV. */
+function counterpartText(cp) {
+  if (!cp || cp.unlinked) return '';
+  return cp.dir === 'to' ? `To ${cp.name}` : cp.dir === 'from' ? `From ${cp.name}` : cp.name;
+}
+/** The description with the other side added, for the printed statement. */
+function withCounterpart(r, groups) {
+  const c = counterpartText(C.counterpartOf(r, groups));
+  const note = r.note || '';
+  if (!c || note.includes(c)) return note;
+  return note ? `${note} · ${c}` : c;
 }

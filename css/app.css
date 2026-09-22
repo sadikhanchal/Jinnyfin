@@ -9,7 +9,7 @@
      you whether this device is holding an old stylesheet, so it is bumped with
      every release — not only when the stylesheet itself changes, or the check
      cries wolf. */
-  --jf-css: "2.2";
+  --jf-css: "2.3";
   color-scheme: light;
   --page:        #f9f9f7;
   --surface:     #fcfcfb;
@@ -232,6 +232,9 @@ main { flex: 1; min-width: 0; padding: 18px 20px 28px; }
 .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; max-width: 100%; }
 .field { display: flex; flex-direction: column; gap: 3px; min-width: 0; max-width: 100%; }
 .filters > .field { flex: 1 1 150px; }
+/* A row of buttons keeps its natural width and wraps to the next line whole —
+   squeezed into a 150px share it hid its last button off the edge. */
+.filters > .field.seg-field { flex: 0 0 auto; }
 .report-filters > .compact-filter { flex: 0 1 118px; }
 .report-filters > .report-description { flex: 1 1 100%; }
 /* The search box is not a filter chip — it gets its own full-width row. */
@@ -283,6 +286,7 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--brand); }
   background: color-mix(in srgb, var(--warning) 14%, transparent); display: flex; gap: 8px;
   align-items: center; flex-wrap: wrap; }
 .term-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.nowrap { white-space: nowrap; }
 /* A tick box with words beside it. The words wrap beside the box, never under
    it — `.row` wraps whole items, so a long label used to drop below its box. */
 .inline-check { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: flex-start;
@@ -359,6 +363,12 @@ tr.total td { font-weight: 700; background: var(--surface-2); border-top: 2px so
 /* The row you are looking at, in a table you can pick from. */
 tbody tr.picked td { background: color-mix(in srgb, var(--brand) 9%, var(--surface)); }
 td.wrap { white-space: normal; min-width: 200px; }
+td.wrap-s { white-space: normal; min-width: 110px; }
+/* Nine columns on a PC statement: a little less padding keeps In, Out and
+   Balance on screen without a sideways scroll. */
+.stmt-table th, .stmt-table td { padding: 8px 6px; }
+.stmt-table td.wrap { min-width: 140px; }
+.stmt-table td.wrap-s { min-width: 96px; }
 /* Totals: the wide table on a real screen, the two-column one on a phone. */
 .sum-thin { display: none; }
 .sum-narrow { table-layout: fixed; }

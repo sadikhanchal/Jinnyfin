@@ -570,6 +570,26 @@ export function yearlyTotals(kind, f = {}) {
   return [...m.values()].sort((a, b) => a.year - b.year);
 }
 
+/**
+ * Income and expense side by side, one pair per period. `by` is 'year' or
+ * 'month'; `keys` fixes the periods to show (every month of a year, say, even
+ * the empty ones), otherwise the years that have entries. Amounts are ≈ INR at
+ * each entry's own month rate — the same figures as the totals above them.
+ */
+export function incExpByPeriod(f = {}, by = 'year', keys = null) {
+  const m = new Map();
+  const slot = k => m.get(k) || m.set(k, { key: k, income: 0, expense: 0 }).get(k);
+  if (keys) keys.forEach(slot);
+  for (const t of filterTx(f)) {
+    if (t.type !== 'Income' && t.type !== 'Expense') continue;
+    const k = by === 'month' ? String(t.date).slice(0, 7) : String(yearOf(t.date));
+    if (keys && !m.has(k)) continue;
+    const r = slot(k);
+    if (t.type === 'Income') r.income += inrOf(t); else r.expense += inrOut(t);
+  }
+  return [...m.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+
 /** Income vs Expense, grouped and sorted. */
 export function incomeVsExpense(f = {}, groupBy = 'parent') {
   const m = new Map();
@@ -609,6 +629,33 @@ export function statement(account, f = {}) {
   const inSum = rows.reduce((s, r) => s + (+r.income || 0), 0);
   const outSum = rows.reduce((s, r) => s + (+r.expense || 0), 0);
   return { account, currency: currencyOf(account), opening, closing: run, rows, inSum, outSum, net: inSum - outSum };
+}
+
+/** Every transfer group's rows, built once for a whole statement. */
+export function transferGroups() {
+  const m = new Map();
+  for (const t of DB.transactions) {
+    if (!t.transfer_group || t.deleted) continue;
+    const g = m.get(t.transfer_group);
+    if (g) g.push(t); else m.set(t.transfer_group, [t]);
+  }
+  return m;
+}
+
+/**
+ * Where the money on a row went to or came from: the other account of a
+ * transfer, otherwise the payee. `dir` is 'to' (money left this account),
+ * 'from' (it arrived), or null for a payee. A transfer whose other half was
+ * never linked has no name — `unlinked` says so.
+ */
+export function counterpartOf(t, groups = transferGroups()) {
+  if (t.type !== 'Transfer') return t.payee ? { dir: null, name: t.payee } : null;
+  const dir = +t.expense > 0 ? 'to' : 'from';
+  const legs = t.transfer_group ? groups.get(t.transfer_group) || [] : [];
+  // Only the partner row counts. A stray `to_account` on an unlinked row is not
+  // trusted — the editor ignores it too, and shows "— not known —".
+  const name = legs.find(x => x.id !== t.id && x.account !== t.account)?.account || null;
+  return name ? { dir, name } : { dir, name: null, unlinked: true };
 }
 
 /**

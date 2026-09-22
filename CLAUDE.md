@@ -137,8 +137,9 @@ He uploads it through GitHub's web UI ("Add files via upload").
   `sw.js` CACHE (AGENTS.md).
 - His stated scheme: from 1.14 on, 1.15 … 1.50, then **2.1 … 2.50**, then 3.1.
   1.51–1.60 were shipped outside that scheme. He chose to go on with **2.1**
-  after 1.60. **Latest built: 2.2** (2.1 insurance redesign, 2.2 "Half
-  transfers" filter). Next is **2.3**.
+  after 1.60. **Latest built: 2.3** (2.1 insurance redesign, 2.2 "Half
+  transfers" filter, 2.3 text diet + statement columns + Income vs Expense
+  chart + payee rule). Next is **2.4**.
 - `BUILD.date` is the release date.
 
 ## 6. Map of the code
@@ -160,7 +161,7 @@ No build step, no framework, plain ES modules (see AGENTS.md).
 | `js/views/report.js` | Expense Report and Income Report (one engine) |
 | `js/views/*.js` | one file per screen: dashboard, transactions, statement, payee (Lend/Borrow), business, equity, networth, insurance, cards, budgets, tasks, settings, incexp, importer, printable |
 | `supabase/` | schema, migrations (`migration-2.1.sql` = insurance link/term/mute columns), push Edge Function (`functions/jinnyfin-push/index.ts`, deployed by pasting into the Supabase dashboard editor, see PUSH-SETUP.md) |
-| `test/run.mjs` | Playwright suite, 74 checks at 2.2 (`seedInsurance` helper for fictional policies). `node run.mjs "part of a test name"` runs a subset |
+| `test/run.mjs` | Playwright suite, 80 checks at 2.3 (`seedInsurance` helper for fictional policies). `node run.mjs "part of a test name"` runs a subset |
 | `test/stub/supabase.mjs` | fake Supabase: rows, upsert (with `rejectUpsert` hook), auth incl. one-shot `PASSWORD_RECOVERY`, `updateUser` |
 | `test/stub/fixture.json` | fictional data (5 accounts, 70 categories, 424 transactions; no insurance rows, so seed any you need with `S.put`) |
 
@@ -213,6 +214,32 @@ works" text with a change. A one-time clean-up aid must disappear by itself once
 there is nothing left to clean. Example: the Transactions Type option "Half
 transfers" (`C.UNLINKED`) is listed only while unlinked transfers exist (or while
 it is the filter in force), and `render()` drops it on arrival once none are left.
+
+**PC gets the detail, the phone stays minimal (his rule).** Extra columns and
+detail go in the wide desktop layouts only (e.g. `.stmt-table`); the phone
+layouts (`.stmt-list`, `.tx` rows) are left as they are unless he asks.
+
+**Account statement (2.3):** the PC table is Date · Time · Type · Category ·
+From / To · Description · In · Out · Balance. `C.counterpartOf(t, groups)` gives
+the other account of a transfer (`dir` 'to'/'from', from the partner row only,
+never a stray `to_account`) or the payee; build `C.transferGroups()` once per
+statement. Print keeps seven columns (time in the Date cell, From/To appended
+to Description); the CSV has both as columns. Investment/asset statements have
+a Time column too. The payee statement deliberately has no time (he prints it
+for other people).
+
+**Income vs Expense chart (2.3):** `C.incExpByPeriod(f, 'year'|'month', keys)`,
+green income + red expense per period, ≈ INR at each entry's own month rate
+(the same as the totals; the old chart used today's rate). All years → years;
+a year → its Jan–Dec whatever month is picked; From–To → months, or years past
+24 months. Lesson: a mount-once bar must refresh data-driven option lists in
+`syncControls()` — the Year box offered only "All years" when the screen was
+opened directly, because the bar was built before the ledger loaded.
+
+**Lend/Borrow needs a payee (2.3):** the editor refuses to save one without it.
+Old unnamed ones are listed in Settings → Data check ("Lend / Borrow with no
+payee"); the Lend/Borrow page links there with `#/settings?tab=check`. Data
+check groups with nothing in them are not shown at all.
 
 **Insurance & Documents (2.1 model):**
 - A card links to Expense › `parent` › `sub` (policies: Insurance › one sub per
@@ -304,27 +331,28 @@ data he should check. Short, plain, a bit of fun.
    first. Do not adjust real account entries.
 3. After the 1.59 upload he was asked to check PC entries for a wrong Account
    (the Tab-through bug, fixed in 1.60). Ask whether anything needed correcting.
-4. Confirm 2.2 is live and CI is green.
-5. Demo-mode leftovers to review one by one: Card Vault appearing on the
-   Insurance page in demo; a GitHub Action hint; a PUSH-SETUP.md reference;
-   "since 2017" text; "compare this with the version I sent you" text; demo seed
-   cosmetics.
+4. Confirm 2.3 is live and CI is green. (The 2.2 copy of the "Half transfers"
+   test had a timing race that could turn CI red once; fixed in 2.3.)
+5. Demo-mode leftovers still to review: demo seed cosmetics. (2.3 cleared the
+   GitHub Action hint, the PUSH-SETUP.md reference, "since 2017", "compare this
+   with the version I sent you", and the empty ATM Cards section.)
 6. Demo repo step 6: a separate `Jinnyfin-demo` repo/site with its own config.
    Not started.
-7. Statement: show the other account on transfer rows. Offered with 2.2; he
-   chose to keep the app lean, so not now. Do not add it unless he asks.
-8. Income vs Expense: the "Group by" buttons overflow at 390px.
+7. (done in 2.3) Statement: the other account on transfer rows — a From / To
+   column on the PC table only.
+8. (done in 2.3) Income vs Expense "Group by" overflow at 390px.
 9. (done) Version numbering: 2.1 onwards.
 10. The screens that still rebuild fully (section 7). Move each to mount-once
     when you next touch it.
-11. **2.3 "text diet":** a screen-by-screen list of instruction texts to remove,
-    shorten to one line, or hide when there is nothing to do was sent to him
-    for approval. Build it only after he answers (he names exceptions; the rest
-    goes as proposed). It also clears three demo leftovers from item 5: the
-    GitHub Action e-mail hint (that workflow does not exist in the repo),
-    "compare this with the version I sent you", and "since 2017".
+11. (done in 2.3) Text diet, as he marked it. He chose to KEEP: the Card Vault
+    CVV warning box, the reminders-off hint in the policy sheet, the Business
+    setup hint, the Storage & offline card, the Backup line. Do not trim those
+    again.
 12. **Half-transfer clean-up (his own work, in progress):** he is fixing the
     remaining unlinked transfers account by account with the 2.2 filter,
     comparing each account's balance with MISA. Some accounts (e.g. the share
     trading account) have NO transfer rows of their own in the workbook, so
     "Create it" is expected there.
+13. **Test fixture privacy:** `test/stub/fixture.json` is called fictional, but
+    its notes carry real-looking names from his ledger. It is in the public
+    repo. Offered to anonymise the names (test data only). Wait for his answer.
