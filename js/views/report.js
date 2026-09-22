@@ -325,8 +325,10 @@ export function makeReport(kind) {
       const q = new URLSearchParams(location.hash.split('?')[1] || '');
       const wanted = q.get('parent');
       if (wanted) {
-        f = { ...f, parent: wanted, sub: 'All',
-          year: q.get('year') || f.year, month: q.get('month') || f.month, account: 'All' };
+        // ?sub= comes from an insurance card's "History" link: straight to that
+        // one sub-category, across every year it was ever paid.
+        f = { ...f, parent: wanted, sub: q.get('sub') || 'All',
+          year: q.get('year') || f.year, month: q.get('month') || f.month, account: 'All', description: '' };
       }
       mount();
       if (wanted) requestAnimationFrame(() =>

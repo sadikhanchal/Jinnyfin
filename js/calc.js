@@ -4,7 +4,7 @@
 //  verified against the workbook to the paisa (see VERIFICATION.md).
 // ============================================================================
 import { DB, getSettings } from './store.js';
-import { iso, monthStart, todayISO, round2, yearOf, monthOf, endOfMonth, daysBetween, MONTHS } from './util.js';
+import { iso, monthStart, todayISO, round2, yearOf, monthOf, endOfMonth, daysBetween, addDays, MONTHS } from './util.js';
 
 export const TYPES = ['Income', 'Expense', 'Transfer', 'Lend/Borrow', 'Investment', 'Opening Balance'];
 
@@ -672,10 +672,89 @@ export function equitySummary() {
 }
 
 // ------------------------------------------------------------- insurance ---
+/**
+ * How often a card renews, in months. 0 means no fixed term — the date is
+ * typed in afresh each time (a document renewed whenever the office says so).
+ * A card from before terms existed renews yearly.
+ */
+export const termOf = p => (p?.term_months == null || p.term_months === ''
+  ? 12 : Math.max(0, Math.round(+p.term_months) || 0));
+
+/**
+ * A date so many months on (or back, if negative), keeping the day wherever the
+ * month has one: 29 Feb + 1 year is 28 Feb, 31 Jan + 1 month is the last of Feb.
+ */
+export function addTerm(date, months) {
+  const [y, m, d] = iso(date).split('-').map(Number);
+  const total = y * 12 + (m - 1) + (Math.round(+months) || 0);
+  const ny = Math.floor(total / 12), nm = total - ny * 12 + 1;
+  const last = new Date(Date.UTC(ny, nm, 0)).getUTCDate();
+  return `${String(ny).padStart(4, '0')}-${String(nm).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
+}
+
+/** "1 year 6 months", "3 months", "2 years" — or null for no fixed term. */
+export function termLabel(months) {
+  const t = Math.max(0, Math.round(+months) || 0);
+  if (!t) return null;
+  const y = Math.floor(t / 12), m = t % 12;
+  return [y ? `${y} year${y > 1 ? 's' : ''}` : '', m ? `${m} month${m > 1 ? 's' : ''}` : ''].filter(Boolean).join(' ');
+}
+
+/**
+ * The entries a card is linked to — Expense rows in its category and
+ * sub-category — newest first. A card linked to a category with no sub counts
+ * only the rows filed with no sub, never the whole category.
+ */
+export function linkedPayments(p) {
+  if (!p?.parent) return [];
+  const sub = p.sub || null;
+  return DB.transactions
+    .filter(t => t.type === 'Expense' && t.parent === p.parent && (t.sub || null) === sub)
+    .sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')));
+}
+export const lastPayment = p => linkedPayments(p)[0] || null;
+
+/**
+ * When a card is next due. One that follows its payments (a subscription a chitty
+ * pays every month) is due one term after the last payment filed under it;
+ * every other card is due on the date he set.
+ */
+export function effectiveDue(p) {
+  if (p?.due_mode === 'payments') {
+    const last = lastPayment(p), term = termOf(p);
+    if (last && term > 0) return addTerm(last.date, term);
+  }
+  return iso(p?.renewal_date);
+}
+
+/**
+ * A payment filed under the card's category close to (or after) its renewal
+ * date that the card has not caught up with — the premium went in through New
+ * Transaction instead of Renew. The card offers to move its date for it,
+ * rather than sitting there showing ⛔ over a bill that was paid.
+ */
+export function unclaimedPayment(p) {
+  if (p?.due_mode === 'payments' || !p?.renewal_date) return null;
+  const last = lastPayment(p);
+  if (!last) return null;
+  if (p.last_paid && last.date <= iso(p.last_paid)) return null;
+  const from = addDays(iso(p.renewal_date), -Math.max(+p.notify_days || 30, 30));
+  return last.date >= from ? last : null;
+}
+
+/**
+ * Every policy and document with how far off it is. `renewal_date` on these
+ * copies is the date in force (see effectiveDue), so every screen and every
+ * reminder reads the same one. `muted` is his "reminders off" switch: the card
+ * still shows ⚠ and ⛔, but nothing announces it anywhere else.
+ */
 export function insuranceAlerts(refDate) {
   const today = refDate || todayISO();
   return DB.insurance
-    .map(p => ({ ...p, daysLeft: daysBetween(today, iso(p.renewal_date)) }))
+    .map(p => {
+      const due = effectiveDue(p);
+      return { ...p, renewal_date: due || p.renewal_date, muted: !!p.reminders_off, daysLeft: daysBetween(today, due) };
+    })
     .sort((a, b) => a.daysLeft - b.daysLeft)
     .map(p => ({
       ...p,
@@ -684,9 +763,12 @@ export function insuranceAlerts(refDate) {
         : p.daysLeft <= (p.notify_days || 30) ? 'soon' : 'ok',
     }));
 }
+/** The one line at the top of the Dashboard and the Insurance page. Muted cards stay out of it. */
 export function insuranceHeadline(refDate) {
-  const a = insuranceAlerts(refDate);
-  if (!a.length) return { text: 'No policies added yet', level: 'none', next: null, then: null };
+  const all = insuranceAlerts(refDate);
+  if (!all.length) return { text: 'No policies added yet', level: 'none', next: null, then: null };
+  const a = all.filter(p => !p.muted);
+  if (!a.length) return { text: 'Reminders are off for every policy and document', level: 'ok', next: null, then: null };
   const exp = a.filter(p => p.level === 'expired');
   const next = a.find(p => p.daysLeft >= 0);
   const then = a.filter(p => p.daysLeft >= 0)[1] || null;

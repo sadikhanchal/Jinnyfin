@@ -73,8 +73,17 @@ Go through every line for every change:
       **Tab pressed repeatedly**, Enter, Escape, ↑↓, clicking away mid-typing.
 - [ ] **Phone width (390px) and desktop.** Screenshots, looked at.
 - [ ] **Data already saved.** A rename must move the existing rows too
-      (categories and payees are matched by text, not by id). A new rule must
-      not silently change old entries.
+      (categories and payees are matched by text, not by id), AND every other
+      thing that points at that name: budgets, business expense/income sides,
+      insurance cards (`linksOf` in settings.js). A new rule must not silently
+      change old entries.
+- [ ] **Server-side readers.** The push Edge Function
+      (`supabase/functions/jinnyfin-push/index.ts`) reads `insurance`, `tasks`
+      etc. on its own. A new rule the app obeys (mute, a rolled due date) must
+      hold there too, and he must be told to redeploy it.
+- [ ] **New column?** Nullable (or healed), added to `onlyColumns` in
+      store.js (otherwise the push silently strips it), a migration SQL file in
+      `supabase/`, and he runs it BEFORE uploading the code.
 - [ ] **After a sync, after navigating away and back, after Clear, after a deep
       link.** Does the screen still show what the filters really are?
 - [ ] **Does it steal focus or leave a list or dialog open somewhere else?**
@@ -127,8 +136,8 @@ He uploads it through GitHub's web UI ("Add files via upload").
 - The three stamps move together: `js/app.js` BUILD, `css/app.css` `--jf-css`,
   `sw.js` CACHE (AGENTS.md).
 - His stated scheme: from 1.14 on, 1.15 … 1.50, then **2.1 … 2.50**, then 3.1.
-  1.51–1.60 were shipped outside that scheme. **Live is 1.60.** Ask him whether
-  the next one is 2.1 or 1.61, then write the answer here.
+  1.51–1.60 were shipped outside that scheme. He chose to go on with **2.1**
+  after 1.60. **Latest built: 2.1** (insurance redesign). Next is **2.2**.
 - `BUILD.date` is the release date.
 
 ## 6. Map of the code
@@ -141,7 +150,7 @@ No build step, no framework, plain ES modules (see AGENTS.md).
 | `config.js` | Supabase URL + publishable anon key, `CONFIG.DEMO` |
 | `js/app.js` | router (`ROUTES`, `go()`), auth gate, sign-in screen, `recoveryScreen()` for reset links, global shortcuts (`n` = new transaction, `/` = Transactions), `BUILD`, test hook `window.JINNYFIN = { S, DB, go, openTxEditor }` |
 | `js/store.js` | IndexedDB, write queue, delta sync, `onlyColumns`, `healForPush`, auth incl. `finishPasswordRecovery` |
-| `js/calc.js` | every calculation: `filterTx`, `parentsFor`, `subsFor`, `parentsOfSub`, `payeeNames`, `accountNames`, `activeAccounts`, FX, reports, `insuranceAlerts` |
+| `js/calc.js` | every calculation: `filterTx`, `parentsFor`, `subsFor`, `parentsOfSub`, `payeeNames`, `accountNames`, `activeAccounts`, FX, reports, insurance (`addTerm`, `termLabel`, `linkedPayments`, `lastPayment`, `effectiveDue`, `unclaimedPayment`, `insuranceAlerts`, `insuranceHeadline`) |
 | `js/util.js` | `el`, `modal`, `confirmBox`, `trapFocus`, back-history stack, `searchSelect`, `dateGuard`/`restoreDateFocus`, `onFilter`/`restoreFilterFocus`, CSV |
 | `js/charts.js` | SVG charts, `barList` |
 | `js/alerts.js`, `js/push.js` | in-app reminders, web push |
@@ -149,8 +158,8 @@ No build step, no framework, plain ES modules (see AGENTS.md).
 | `js/views/editor.js` | the New/Edit Transaction sheet (every screen uses it) |
 | `js/views/report.js` | Expense Report and Income Report (one engine) |
 | `js/views/*.js` | one file per screen: dashboard, transactions, statement, payee (Lend/Borrow), business, equity, networth, insurance, cards, budgets, tasks, settings, incexp, importer, printable |
-| `supabase/` | schema, migrations, push Edge Function |
-| `test/run.mjs` | Playwright suite, 57 checks at 1.60. `node run.mjs "part of a test name"` runs a subset |
+| `supabase/` | schema, migrations (`migration-2.1.sql` = insurance link/term/mute columns), push Edge Function (`functions/jinnyfin-push/index.ts`, deployed by pasting into the Supabase dashboard editor, see PUSH-SETUP.md) |
+| `test/run.mjs` | Playwright suite, 72 checks at 2.1 (`seedInsurance` helper for fictional policies). `node run.mjs "part of a test name"` runs a subset |
 | `test/stub/supabase.mjs` | fake Supabase: rows, upsert (with `rejectUpsert` hook), auth incl. one-shot `PASSWORD_RECOVERY`, `updateUser` |
 | `test/stub/fixture.json` | fictional data (5 accounts, 70 categories, 424 transactions; no insurance rows, so seed any you need with `S.put`) |
 
@@ -183,7 +192,9 @@ everywhere, and each has a test:
 - On opening, the current value is lit. `change` fires only on a real change.
   Setting `.value` to the same value never overwrites typing.
 - Matching is on the start of any word ("Rajhi" finds "Al Rajhi").
-- `searchSelect(list, { placeholder })`, list items `{ value, label, search }`.
+- `searchSelect(list, { placeholder, allowNew })`, list items `{ value, label, search }`.
+  `allowNew` adds a "＋ Add “x”" row; `wrap.isNew()` tells the caller to create
+  it (insurance asks before creating a sub-category: `ensureSub`).
 - In use: Expense/Income Report (Category, Sub-category, Account), Transactions
   (Account, Category, Payee), Income vs Expense (Account), Budget sheet
   (Category), Insurance sheet (Pay from), New Transaction (Account, To).
@@ -194,6 +205,28 @@ everywhere, and each has a test:
   shows "Sub · Category", and fills in the category (same as New Transaction).
 
 **Live-filter text boxes:** debounce, and never rebuild the box itself.
+
+**Insurance & Documents (2.1 model):**
+- A card links to Expense › `parent` › `sub` (policies: Insurance › one sub per
+  card, unique; documents: optional, no default). Payments are the Expense rows
+  with that parent+sub (`linkedPayments`). The card's label is HIS display name;
+  the sub is only the link.
+- `term_months` = years×12 + months; `0` = no fixed term (he types each new
+  date). `due_mode`: `'fixed'` = the date on the card; `'payments'` = last
+  linked payment + term (monthly schemes paid by someone else, e.g. a chitty).
+  `effectiveDue(p)` is the one truth; `rollPaymentCards()` in app.js saves the
+  rolled date so the push function (which cannot run calc.js) agrees.
+- `reminders_off`: the card still shows ⚠/⛔, but no in-app alert, no headline,
+  not in the KPIs, and the Edge Function skips it (`if (p.reminders_off) continue;`).
+- Renew (`renewSheet`): new date = old + term (today + term if lapsed), chips,
+  optional Expense row from Premium/Pay from converted into the paying
+  account's currency, card written after the row (row removed if the card
+  fails), Undo for both, double-renew confirm within 30 days.
+- `unclaimedPayment`: a premium entered through New Transaction shows
+  "Mark renewed" on the card instead of a second entry.
+- The "🔗 Links" screen suggests a sub per card (name tokens + entry notes),
+  offers to move mis-filed entries (unticked by default), and lists subs that
+  have payments but no card.
 
 **Focus loss turns typing into shortcuts.** With focus on `<body>`, "n" opens
 New Transaction and "/" jumps to Transactions.
@@ -252,32 +285,17 @@ data he should check. Short, plain, a bit of fun.
 
 ## 9. Open work — keep this list current
 
-1. **Insurance "↻ Renewed +1 yr" crashes.** `js/views/insurance.js` calls
-   `renew(v, m, { premium, currency, account, record, label })`, but `renew` is
-   defined nowhere, so it is a ReferenceError on click. He agreed to fix it in
-   the next session. Plan to show him before coding:
-   - renewal_date +1 year (29 Feb → 28 Feb); `last_paid` = today;
-     `pay_account` = the Pay-from choice; save the policy.
-   - If "Record the premium as a transaction when I renew" is ticked and the
-     premium > 0: write ONE Expense row from the Pay-from account, in that
-     account's currency, dated today, note `<label> renewal`. **Ask him which
-     category/sub** (probably parent "Insurance").
-   - Confirm before writing (shows the new date and the amount). Guard against a
-     double press adding two years and two expenses.
-   - Related: the Save button never stores `pay_account` (Pay-from only feeds
-     Renew). Ask whether the policy should remember it. Reminders (`alerts.js`
-     keys include `renewal_date`), the dashboard line and the push text read the
-     new date on their own. Verify. Handle an idle Pay-from account (the list
-     already keeps it).
-   - Tests: seed a policy with `S.put('insurance', …)`. Check the date moves,
-     exactly one row when ticked, none when unticked, and no double-renew.
+1. **2.1 insurance redesign: built, delivered as a zip.** Confirm with him:
+   `supabase/migration-2.1.sql` was run BEFORE the upload; the push Edge
+   Function was redeployed with the `reminders_off` line; he ran "Link them"
+   once. The demo database will need the same migration when the demo resumes.
 2. **A payee's INR balance off by a fixed amount.** Details are in his private
    notes file, not here. Waiting on him: he has to compare his old MISA app's
    running balance at the checkpoint dates listed there. Do not adjust real
    account entries.
 3. After the 1.59 upload he was asked to check PC entries for a wrong Account
    (the Tab-through bug, fixed in 1.60). Ask whether anything needed correcting.
-4. Confirm 1.60 is live and CI is green.
+4. Confirm 2.1 (which includes 1.60) is live and CI is green.
 5. Demo-mode leftovers to review one by one: Card Vault appearing on the
    Insurance page in demo; a GitHub Action hint; a PUSH-SETUP.md reference;
    "since 2017" text; "compare this with the version I sent you" text; demo seed
@@ -287,6 +305,6 @@ data he should check. Short, plain, a bit of fun.
 7. Statement: show the other account on transfer rows. Waiting for his "Link
    half transfers" count.
 8. Income vs Expense: the "Group by" buttons overflow at 390px.
-9. Version numbering decision (section 5).
+9. (done) Version numbering: 2.1 onwards.
 10. The screens that still rebuild fully (section 7). Move each to mount-once
     when you next touch it.

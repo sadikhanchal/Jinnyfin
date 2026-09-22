@@ -819,11 +819,11 @@ test('switching off Lend/Borrow clears the payee, and coming back restores it', 
     [...document.querySelectorAll('.modal-body input')].find(i => i.placeholder === 'Who?')?.value || '');
   await page.evaluate(() => {
     const p = [...document.querySelectorAll('.modal-body input')].find(i => i.placeholder === 'Who?');
-    p.focus(); p.value = 'Sadiq';
+    p.focus(); p.value = 'Test Friend';
   });
   await page.keyboard.press('Tab');
   await page.waitForTimeout(300);
-  if (await payeeVal() !== 'Sadiq') { await ctx.close(); throw new Error('payee did not take the typed name'); }
+  if (await payeeVal() !== 'Test Friend') { await ctx.close(); throw new Error('payee did not take the typed name'); }
 
   await page.click('.type-pick button[data-ty="Expense"]');
   await page.waitForTimeout(300);
@@ -834,7 +834,7 @@ test('switching off Lend/Borrow clears the payee, and coming back restores it', 
   const backOnLB = await payeeVal();
   await ctx.close();
   if (onExpense) throw new Error(`switching to Expense still showed the Lend/Borrow payee: "${onExpense}"`);
-  if (backOnLB !== 'Sadiq') throw new Error(`coming back to Lend/Borrow lost the payee: "${backOnLB}"`);
+  if (backOnLB !== 'Test Friend') throw new Error(`coming back to Lend/Borrow lost the payee: "${backOnLB}"`);
   if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
   return 'payee stays out of other types, and comes back on Lend/Borrow';
 });
@@ -1126,6 +1126,451 @@ test('leaving a changed date box for the next one lands there, not back in the s
   if (where.dk !== 'to') throw new Error(`moving from From to To landed on ${where.dk || where.tag}`);
   if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
   return 'From → To, after the redraw';
+});
+
+// ---- insurance & documents (2.1) -------------------------------------------
+/**
+ * Fictional policies and past premiums, dated from today so the checks mean the
+ * same thing whenever they run. Mirrors the owner's real situation without any
+ * of his data: one card per sub-category, one entry filed under the wrong one
+ * (Shield's premium under Accident Cover), a monthly subscription paid by
+ * someone else, and a sub-category with payments but no card.
+ */
+const seedInsurance = page => page.evaluate(async () => {
+  const { S } = window.JINNYFIN;
+  const C = await import('/js/calc.js');
+  const U = await import('/js/util.js');
+  const today = U.todayISO();
+  const day = n => U.addDays(today, n);
+  const subs = ['Car Insurance', 'Health Insurance', 'Accident Cover', 'Shield Raksha', 'Micro Cover', 'Welfare Fund'];
+  await S.putMany('categories', subs.map(sub => ({ id: 'ins-cat-' + sub.replace(/\W/g, ''), type: 'Expense', parent: 'Insurance', sub, active: true })));
+  let no = 900000;
+  const tx = (id, date, sub, amt, note, account = 'Fed Bank NRI') => ({ id, no: ++no, date, time: '10:00', type: 'Expense',
+    account, currency: C.currencyOf(account) || 'INR', income: 0, expense: amt, parent: 'Insurance', sub, note, fx: C.fxFor(date),
+    transfer_group: null, to_account: null, payee: null, event: null });
+  await S.putMany('transactions', [
+    tx('ins-t-car', day(-350), 'Car Insurance', 3200, 'Sedan Co car policy renewed'),
+    tx('ins-t-health', day(-355), 'Health Insurance', 22000, 'CarePlus health renewed upto next year'),
+    tx('ins-t-acc', day(-130), 'Accident Cover', 865, 'SafeLife accident cover renewed'),
+    tx('ins-t-shield', day(-200), 'Accident Cover', 661, 'Shield Raksha premium for the year', 'Cash at Home'),
+    tx('ins-t-micro', day(-120), 'Micro Cover', 20, 'Micro cover yearly'),
+    tx('ins-t-fund1', day(-40), 'Welfare Fund', 350, 'Fund office paid the monthly subscription'),
+    tx('ins-t-fund2', day(-10), 'Welfare Fund', 350, 'Fund office paid the monthly subscription'),
+  ]);
+  const card = (id, label, policy, renewal, extra = {}) => ({ id, label, policy, policy_no: '', renewal_date: renewal,
+    premium: 0, currency: 'INR', notify_days: 30, kind: 'insurance', note: '', files: [], ...extra });
+  await S.putMany('insurance', [
+    card('ins-c-car', 'Car', 'Sedan Co', day(105)),
+    card('ins-c-health', 'Health', 'CarePlus', day(12)),
+    card('ins-c-acc', 'Accident', 'SafeLife', day(230)),
+    card('ins-c-shield', 'Shield', 'Shield Raksha', day(178)),
+    card('ins-c-pass', 'Passport', 'Passport office', day(-41), { kind: 'document' }),
+    card('ins-c-iqama', 'Iqama', 'Jawazat', day(23), { kind: 'document' }),
+  ]);
+  return { today };
+});
+const insPage = async page => { await page.evaluate(() => window.JINNYFIN.go('insurance')); await page.waitForTimeout(600); };
+const card = (page, label) => page.evaluate(l => {
+  const b = [...document.querySelectorAll('#main .card b')].find(x => x.textContent === l);
+  return b ? b.closest('.card').textContent.replace(/\s+/g, ' ') : null;
+}, label);
+const clickIn = (page, label, text) => page.evaluate(([l, t]) => {
+  const c = [...document.querySelectorAll('#main .card b')].find(x => x.textContent === l)?.closest('.card');
+  const b = c && [...c.querySelectorAll('button, a')].find(x => x.textContent.trim().startsWith(t));
+  if (b) b.click(); return !!b;
+}, [label, text]);
+const row = (page, id) => page.evaluate(i => window.JINNYFIN.DB.insurance.find(x => x.id === i), id);
+const newTx = (page, before) => page.evaluate(ids => window.JINNYFIN.DB.transactions.filter(t => !ids.includes(t.id)), before);
+const txIds = page => page.evaluate(() => window.JINNYFIN.DB.transactions.map(t => t.id));
+const link = (page, id, sub, extra = {}) => page.evaluate(([i, s, x]) => {
+  const r = window.JINNYFIN.DB.insurance.find(y => y.id === i);
+  return window.JINNYFIN.S.put('insurance', { ...r, parent: 'Insurance', sub: s, ...x });
+}, [id, sub, extra]);
+
+test('terms add up by the calendar: 29 Feb, month ends, years and months together', async browser => {
+  const { ctx, page } = await open(browser, 'dashboard');
+  const r = await page.evaluate(async () => {
+    const C = await import('/js/calc.js');
+    return [C.addTerm('2024-02-29', 12), C.addTerm('2026-01-31', 1), C.addTerm('2026-10-03', -12),
+      C.addTerm('2026-10-03', 18), C.addTerm('2026-12-15', 1), C.termLabel(18), C.termLabel(0), C.termOf({}), C.termOf({ term_months: 0 })];
+  });
+  await ctx.close();
+  const want = ['2025-02-28', '2026-02-28', '2025-10-03', '2028-04-03', '2027-01-15', '1 year 6 months', null, 12, 0];
+  if (JSON.stringify(r) !== JSON.stringify(want)) throw new Error(`got ${JSON.stringify(r)}, want ${JSON.stringify(want)}`);
+  return want.slice(0, 5).join(' · ');
+});
+
+test('insurance: the link screen suggests each policy its own sub, and offers the misfiled entry', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  await seedInsurance(page);
+  await insPage(page);
+  const banner = await page.evaluate(() => [...document.querySelectorAll('#main .alert')].map(a => a.textContent).join(' | '));
+  await page.evaluate(() => [...document.querySelectorAll('#main button')].find(b => b.textContent.trim() === 'Link them')?.click());
+  await page.waitForTimeout(400);
+  const picks = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.modal .link-row')].map(r =>
+    [r.querySelector('b').textContent, r.querySelector('.combo').value])));
+  const offer = await page.evaluate(() => [...document.querySelectorAll('.modal .link-moves label')].map(l => l.textContent));
+  const loose = await page.evaluate(() => [...document.querySelectorAll('.modal h4 ~ .row')].map(r => r.textContent));
+  // take the offered move, keep the "use the last payment" ticks
+  await page.evaluate(() => document.querySelector('.modal .link-moves input')?.click());
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent === 'Save links')?.click());
+  await page.waitForTimeout(500);
+  const after = await page.evaluate(() => ({
+    cards: Object.fromEntries(window.JINNYFIN.DB.insurance.filter(p => p.kind !== 'document').map(p => [p.label, [p.parent, p.sub, p.premium, p.pay_account, p.last_paid ? 'paid' : '']])),
+    shieldEntry: window.JINNYFIN.DB.transactions.find(t => t.id === 'ins-t-shield')?.sub,
+  }));
+  const shieldCard = await card(page, 'Shield');
+  await ctx.close();
+  if (!/4 policies are not linked/.test(banner)) throw new Error(`no banner for the unlinked policies: ${banner}`);
+  const want = { Car: 'Car Insurance', Health: 'Health Insurance', Accident: 'Accident Cover', Shield: 'Shield Raksha' };
+  for (const [k, v] of Object.entries(want)) if (picks[k] !== v) throw new Error(`${k} was offered “${picks[k]}”, expected “${v}”`);
+  if (offer.length !== 1 || !/Shield Raksha premium/.test(offer[0])) throw new Error(`move offer: ${JSON.stringify(offer)}`);
+  if (!loose.some(t => t.includes('Micro Cover')) || !loose.some(t => t.includes('Welfare Fund')))
+    throw new Error(`sub-categories with payments but no card were not listed: ${JSON.stringify(loose)}`);
+  if (after.shieldEntry !== 'Shield Raksha') throw new Error(`the ticked entry was not moved: ${after.shieldEntry}`);
+  const h = after.cards.Health;
+  if (h[0] !== 'Insurance' || h[1] !== 'Health Insurance' || h[2] !== 22000 || h[3] !== 'Fed Bank NRI' || h[4] !== 'paid')
+    throw new Error(`Health after linking: ${JSON.stringify(h)}`);
+  if (after.cards.Shield[2] !== 661 || after.cards.Shield[3] !== 'Cash at Home') throw new Error(`Shield did not take the moved payment: ${JSON.stringify(after.cards.Shield)}`);
+  if (!/Insurance › Shield Raksha/.test(shieldCard) || !/History \(1\)/.test(shieldCard)) throw new Error(`Shield card: ${shieldCard}`);
+  if (/Mark renewed/.test(shieldCard)) throw new Error('an old payment was offered as a new renewal');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'four right suggestions, one move offered and made, premiums filled, loose subs listed';
+});
+
+test('Renew files one Expense entry under the card’s sub and moves the date by its term — and Undo takes both back', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  const { today } = await seedInsurance(page);
+  await link(page, 'ins-c-health', 'Health Insurance', { premium: 22000, currency: 'INR', pay_account: 'Fed Bank NRI' });
+  await insPage(page);
+  const before = await txIds(page);
+  const old = (await row(page, 'ins-c-health')).renewal_date;
+  if (!(await clickIn(page, 'Health', '↻ Renew'))) { await ctx.close(); throw new Error('no Renew button on a card 12 days from due'); }
+  await page.waitForTimeout(400);
+  const sheet = await page.evaluate(() => ({
+    date: document.querySelector('.modal input[type=date]')?.value,
+    note: [...document.querySelectorAll('.modal input')].find(i => /renewed upto/.test(i.value))?.value || '',
+    amount: document.querySelector('.modal input[type=number]')?.value,
+  }));
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent === 'Renew')?.click());
+  await page.waitForTimeout(500);
+  const added = await newTx(page, before);
+  const cardNow = await row(page, 'ins-c-health');
+  const shown = await card(page, 'Health');
+  await page.evaluate(() => [...document.querySelectorAll('.toast-action')].pop()?.click());
+  await page.waitForTimeout(500);
+  const undone = { added: (await newTx(page, before)).length, date: (await row(page, 'ins-c-health')).renewal_date };
+  await ctx.close();
+  const C = { addTerm: (d, n) => { const [y, m, dd] = d.split('-').map(Number); const t = y * 12 + m - 1 + n;
+    const ny = Math.floor(t / 12), nm = t - ny * 12 + 1; const last = new Date(Date.UTC(ny, nm, 0)).getUTCDate();
+    return `${ny}-${String(nm).padStart(2, '0')}-${String(Math.min(dd, last)).padStart(2, '0')}`; } };
+  const want = C.addTerm(old, 12);
+  if (sheet.date !== want) throw new Error(`the sheet offered ${sheet.date}, expected ${want}`);
+  if (!sheet.note.includes('Health (CarePlus) renewed upto')) throw new Error(`description: “${sheet.note}”`);
+  if (sheet.amount !== '22000') throw new Error(`amount started at ${sheet.amount}`);
+  if (added.length !== 1) throw new Error(`${added.length} entries written, expected exactly 1`);
+  const t = added[0];
+  const bad = Object.entries({ type: 'Expense', parent: 'Insurance', sub: 'Health Insurance', expense: 22000, account: 'Fed Bank NRI',
+    currency: 'INR', date: today, income: 0 }).filter(([k, v]) => t[k] !== v);
+  if (bad.length) throw new Error(`the entry is wrong: ${bad.map(([k, v]) => `${k}=${t[k]} (want ${v})`).join(', ')}`);
+  if (cardNow.renewal_date !== want || cardNow.last_paid !== today) throw new Error(`card after renew: ${cardNow.renewal_date} / ${cardNow.last_paid}`);
+  if (!/✓/.test(shown) || /↻ Renew/.test(shown)) throw new Error(`card still looks due: ${shown}`);
+  if (undone.added !== 0 || undone.date !== old) throw new Error(`Undo left ${undone.added} entries and date ${undone.date}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `${old} → ${want}, one ₹22,000 entry under Insurance › Health Insurance; Undo reverted both`;
+});
+
+test('Renew without recording writes nothing; renewing again within 30 days asks first', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  await seedInsurance(page);
+  await link(page, 'ins-c-health', 'Health Insurance', { premium: 22000, currency: 'INR', pay_account: 'Fed Bank NRI' });
+  await insPage(page);
+  const before = await txIds(page);
+  await clickIn(page, 'Health', '↻ Renew');
+  await page.waitForTimeout(400);
+  await page.evaluate(() => [...document.querySelectorAll('.modal label')].find(l => /Record the premium/.test(l.textContent))?.querySelector('input').click());
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent === 'Renew')?.click());
+  await page.waitForTimeout(500);
+  const added = (await newTx(page, before)).length;
+  // open it again straight away from the edit sheet
+  await page.evaluate(() => [...document.querySelectorAll('#main .card b')].find(x => x.textContent === 'Health')?.click());
+  await page.waitForTimeout(400);
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent.includes('Renew'))?.click());
+  await page.waitForTimeout(500);
+  const asked = await page.evaluate(() => [...document.querySelectorAll('.modal')].pop()?.textContent || '');
+  await ctx.close();
+  if (added) throw new Error(`${added} entries written with the tick off`);
+  if (!/already renewed on/.test(asked)) throw new Error(`a second renew was not questioned: ${asked.slice(0, 120)}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'tick off → no entry; second press → “already renewed on …”';
+});
+
+test('a card that follows its payments is due a term after the last one, and saves that date', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  const { today } = await seedInsurance(page);
+  await page.evaluate(() => window.JINNYFIN.S.put('insurance', { id: 'ins-c-fund', label: 'Welfare fund', policy: 'Paid by the fund office',
+    renewal_date: '2020-01-01', premium: 350, currency: 'INR', notify_days: 7, kind: 'insurance', parent: 'Insurance',
+    sub: 'Welfare Fund', term_months: 1, due_mode: 'payments', reminders_off: true, files: [] }));
+  await page.waitForTimeout(1500);                      // the roll runs a beat after the data settles
+  await insPage(page);
+  const saved = (await row(page, 'ins-c-fund')).renewal_date;
+  const shown = await card(page, 'Welfare fund');
+  const want = await page.evaluate(async t => (await import('/js/calc.js')).addTerm((await import('/js/util.js')).addDays(t, -10), 1), today);
+  await ctx.close();
+  if (saved !== want) throw new Error(`stored due date ${saved}, expected ${want} (last payment + 1 month)`);
+  if (!/✓/.test(shown) || !/due date follows payments/.test(shown) || !/🔕 reminders off/.test(shown)) throw new Error(`card: ${shown}`);
+  if (/↻ Renew/.test(shown)) throw new Error('a payment-following card offered Renew');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `due ${want}, saved on the card; ✓ with reminders off`;
+});
+
+test('reminders off: the card keeps its ⛔, but nothing else announces it', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  await seedInsurance(page);
+  const pass = await row(page, 'ins-c-pass');
+  await page.evaluate(r => window.JINNYFIN.S.put('insurance', { ...r, reminders_off: true }), pass);
+  await insPage(page);
+  const r = await page.evaluate(() => ({
+    head: document.querySelector('#main .alert')?.textContent || '',
+    expired: [...document.querySelectorAll('#main .stat')].find(k => /Already expired/i.test(k.textContent))?.querySelector('.value')?.textContent,
+  }));
+  const shown = await card(page, 'Passport');
+  const alerts = await page.evaluate(async () => (await import('/js/alerts.js')).collect?.({ all: true })?.map(a => a.title) ?? null);
+  await page.evaluate(() => window.JINNYFIN.go('dashboard'));
+  await page.waitForTimeout(500);
+  const dash = await page.evaluate(() => document.querySelector('#main')?.textContent || '');
+  await ctx.close();
+  if (/Passport/.test(r.head)) throw new Error(`the headline still names it: ${r.head}`);
+  if (r.expired !== '0') throw new Error(`still counted as expired: ${r.expired}`);
+  if (!/⛔/.test(shown) || !/🔕 reminders off/.test(shown)) throw new Error(`card lost its mark: ${shown}`);
+  if (alerts && alerts.some(t => /Passport/.test(t))) throw new Error(`still in the reminders: ${alerts.join(' | ')}`);
+  if (/EXPIRED: Passport/.test(dash)) throw new Error('the dashboard still announces it');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'headline, count, reminders and dashboard quiet; card shows ⛔ 🔕';
+});
+
+test('a premium entered through New Transaction offers to mark the card renewed, and records nothing new', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  const { today } = await seedInsurance(page);
+  await link(page, 'ins-c-health', 'Health Insurance', { premium: 22000, currency: 'INR', pay_account: 'Fed Bank NRI', last_paid: '2020-01-01' });
+  await page.evaluate(async t => {
+    const C = await import('/js/calc.js');
+    await window.JINNYFIN.S.put('transactions', { id: 'ins-t-health-new', no: 999999, date: t, time: '09:00', type: 'Expense',
+      account: 'Fed Bank NRI', currency: 'INR', income: 0, expense: 23000, parent: 'Insurance', sub: 'Health Insurance',
+      note: 'paid at the branch', fx: C.fxFor(t) });
+  }, today);
+  await insPage(page);
+  const offered = await card(page, 'Health');
+  const before = await txIds(page);
+  await clickIn(page, 'Health', 'Mark renewed');
+  await page.waitForTimeout(400);
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent === 'Renew')?.click());
+  await page.waitForTimeout(500);
+  const r = await row(page, 'ins-c-health');
+  const added = (await newTx(page, before)).length;
+  const shown = await card(page, 'Health');
+  await ctx.close();
+  if (!/₹23,000.00 paid on/.test(offered)) throw new Error(`no offer on the card: ${offered}`);
+  if (added) throw new Error(`${added} new entries — the payment was already in the ledger`);
+  if (r.last_paid !== today) throw new Error(`last paid ${r.last_paid}`);
+  if (/Mark renewed/.test(shown)) throw new Error('the offer stayed after it was taken');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `offer shown, date moved to ${r.renewal_date}, no duplicate entry`;
+});
+
+test('Renew paying from an account in another currency re-states the amount', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  await seedInsurance(page);
+  await link(page, 'ins-c-health', 'Health Insurance', { premium: 22000, currency: 'INR', pay_account: 'Fed Bank NRI' });
+  await insPage(page);
+  await clickIn(page, 'Health', '↻ Renew');
+  await page.waitForTimeout(400);
+  const acct = page.locator('.modal .field').filter({ hasText: 'Paid from' }).locator('.combo input');
+  await acct.click();
+  await page.keyboard.type('Rajhi');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+  const r = await page.evaluate(() => ({ amount: +document.querySelector('.modal input[type=number]').value,
+    hint: document.querySelector('.modal .hint:not(:empty)')?.textContent || '', tag: [...document.querySelectorAll('.modal .small.muted')].map(x => x.textContent).join(' ') }));
+  const expect = await page.evaluate(async () => (await import('/js/calc.js')).convertAmount(22000, 'INR', 'SAR', (await import('/js/util.js')).todayISO()));
+  await ctx.close();
+  if (Math.abs(r.amount - Math.round(expect * 100) / 100) > 0.01) throw new Error(`amount ${r.amount}, expected about ${expect}`);
+  if (!/SAR/.test(r.tag)) throw new Error('the amount does not say SAR');
+  if (!/is about/.test(r.hint)) throw new Error(`no conversion note: ${r.hint}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `₹22,000 → SR ${r.amount}`;
+});
+
+test('the card sheet keeps Pay from, links a new sub it creates, and refuses a sub another card has', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  await seedInsurance(page);
+  await link(page, 'ins-c-acc', 'Accident Cover');
+  await insPage(page);
+  const openCard = l => page.evaluate(x => [...document.querySelectorAll('#main .card b')].find(b => b.textContent === x)?.click(), l);
+  const boxIn = label => page.locator('.modal .field').filter({ hasText: label }).locator('.combo input').first();
+  await openCard('Shield'); await page.waitForTimeout(400);
+  await boxIn('Pay from').click(); await page.keyboard.type('Home'); await page.keyboard.press('Tab');
+  await boxIn('Expense category').click(); await page.keyboard.type('Insurance'); await page.keyboard.press('Tab');
+  await page.keyboard.type('Shield Plus'); await page.waitForTimeout(150);
+  const offered = await page.evaluate(() => document.querySelector('.combo-list:not([hidden]) .combo-opt.hi')?.textContent || '');
+  await page.keyboard.press('Tab');
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent === 'Save')?.click());
+  await page.waitForTimeout(400);
+  const asked = await page.evaluate(() => [...document.querySelectorAll('.modal')].pop()?.textContent || '');
+  await topClick(page, ['Add it']);
+  await page.waitForTimeout(500);
+  const saved = await row(page, 'ins-c-shield');
+  const cat = await page.evaluate(() => window.JINNYFIN.DB.categories.some(c => c.type === 'Expense' && c.parent === 'Insurance' && c.sub === 'Shield Plus'));
+  // Car tries to take Accident's sub
+  await openCard('Car'); await page.waitForTimeout(400);
+  await boxIn('Expense category').click(); await page.keyboard.type('Insurance'); await page.keyboard.press('Tab');
+  await page.keyboard.type('Accident Cover'); await page.keyboard.press('Tab');
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent === 'Save')?.click());
+  await page.waitForTimeout(400);
+  const refused = await page.evaluate(() => ({ toast: document.querySelector('#toasts')?.textContent || '', open: !!document.querySelector('.modal') }));
+  const car = await row(page, 'ins-c-car');
+  await ctx.close();
+  if (offered !== '＋ Add “Shield Plus”') throw new Error(`typing a new name lit “${offered}”`);
+  if (!/Add the sub-category “Shield Plus” under Insurance/.test(asked)) throw new Error(`no question before creating it: ${asked.slice(0, 100)}`);
+  if (saved.pay_account !== 'Cash at Home' || saved.sub !== 'Shield Plus' || saved.parent !== 'Insurance') throw new Error(`saved ${JSON.stringify([saved.pay_account, saved.parent, saved.sub])}`);
+  if (!cat) throw new Error('the new sub-category was not created');
+  if (!/Accident.*already uses/.test(refused.toast) || !refused.open || car.sub) throw new Error(`a second card took the same sub: ${refused.toast} / ${car.sub}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'Pay from kept; “Shield Plus” created after asking; Car refused Accident’s sub';
+});
+
+test('Renews every: years and months together, and no fixed term asks for the date', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  await seedInsurance(page);
+  const iq = await row(page, 'ins-c-iqama'), pass = await row(page, 'ins-c-pass');
+  await page.evaluate(([a, b]) => window.JINNYFIN.S.putMany('insurance', [{ ...a, term_months: 18 }, { ...b, term_months: 0 }]), [iq, pass]);
+  await insPage(page);
+  await clickIn(page, 'Iqama', '↻ Renew'); await page.waitForTimeout(400);
+  const d18 = await page.evaluate(() => document.querySelector('.modal input[type=date]').value);
+  await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+  await clickIn(page, 'Passport', '↻ Renew'); await page.waitForTimeout(400);
+  const d0 = await page.evaluate(() => document.querySelector('.modal input[type=date]').value);
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent === 'Renew')?.click());
+  await page.waitForTimeout(300);
+  const refused = await page.evaluate(() => ({ open: !!document.querySelector('.modal'), toast: document.querySelector('#toasts')?.textContent || '' }));
+  const card18 = await card(page, 'Iqama');
+  await ctx.close();
+  const want = await (async () => { const [y, m, d] = iq.renewal_date.split('-').map(Number); const t = y * 12 + m - 1 + 18; const ny = Math.floor(t / 12), nm = t - ny * 12 + 1;
+    return `${ny}-${String(nm).padStart(2, '0')}-${String(Math.min(d, new Date(Date.UTC(ny, nm, 0)).getUTCDate())).padStart(2, '0')}`; })();
+  if (d18 !== want) throw new Error(`18 months from ${iq.renewal_date} was offered as ${d18}, expected ${want}`);
+  if (d0 !== '') throw new Error(`a card with no fixed term suggested ${d0}`);
+  if (!refused.open || !/Set the new date/.test(refused.toast)) throw new Error('renewed with no date');
+  if (!/every 1 year 6 months/.test(card18)) throw new Error(`card: ${card18}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `+18 months → ${d18}; no fixed term → date required`;
+});
+
+test('History on a card opens the Expense Report on that sub, every year', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  await seedInsurance(page);
+  await link(page, 'ins-c-car', 'Car Insurance');
+  await insPage(page);
+  await clickIn(page, 'Car', 'History');
+  await page.waitForTimeout(700);
+  const r = await page.evaluate(() => ({ head: document.querySelector('.jf-bd h3')?.textContent, year: document.querySelector('[data-fk="year"]')?.value,
+    sub: document.querySelector('[data-fk="sub"] input')?.value, hash: location.hash }));
+  await ctx.close();
+  if (r.head !== 'Inside Car Insurance' || r.year !== 'All' || r.sub !== 'Car Insurance') throw new Error(`landed on ${JSON.stringify(r)}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `${r.hash}`;
+});
+
+test('renaming a category or sub also moves the budgets, business setups and cards that name it', async browser => {
+  const { ctx, page, errors } = await open(browser, 'settings');
+  await seedInsurance(page);
+  await link(page, 'ins-c-health', 'Health Insurance');
+  await page.evaluate(() => window.JINNYFIN.S.put('budgets', { id: 'b-health', parent: 'Insurance', sub: 'Health Insurance', amount: 2000, currency: 'INR', period: 'monthly' }));
+  await page.evaluate(() => window.JINNYFIN.go('settings'));
+  await page.waitForTimeout(500);
+  const goCats = () => page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Categories')?.click());
+  await goCats(); await page.waitForTimeout(400);
+  // 1) the sub, through its chip
+  await page.locator('input[data-fk="cat-search"]').fill('Health Insurance');
+  await page.waitForTimeout(400);
+  await page.evaluate(() => [...document.querySelectorAll('#main .chip')].find(c => c.textContent.startsWith('Health Insurance'))?.click());
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { const i = [...document.querySelectorAll('.modal input')][1]; i.value = 'Family Health'; });
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent === 'Save')?.click());
+  await page.waitForTimeout(500);
+  const afterSub = await page.evaluate(() => ({ card: window.JINNYFIN.DB.insurance.find(x => x.id === 'ins-c-health').sub,
+    budget: window.JINNYFIN.DB.budgets.find(x => x.id === 'b-health').sub }));
+  // 2) a whole category that a business points at — the Expense one
+  await page.locator('input[data-fk="cat-search"]').fill('');
+  await page.waitForTimeout(400);
+  const expenseCard = () => [...document.querySelectorAll('#main .card')].find(c => /Expense —/.test(c.querySelector('.card-head h3')?.textContent || ''));
+  await page.evaluate(sel => { const c = eval(sel)(); if (c && !c.querySelector('b')) c.querySelector('.card-head').click(); }, `(${expenseCard})`);
+  await page.waitForTimeout(400);
+  const hit = await page.evaluate(sel => {
+    const sec = eval(sel)();
+    const b = sec && [...sec.querySelectorAll('b')].find(x => x.textContent.trim() === 'Cake Business');
+    if (b) b.click(); return !!b;
+  }, `(${expenseCard})`);
+  if (!hit) { await ctx.close(); throw new Error('could not find the Expense “Cake Business” to rename'); }
+  await page.waitForTimeout(300);
+  await page.fill('.modal input[type=text]', 'Cake Plans');
+  await page.click('.modal .btn.primary');
+  await page.waitForTimeout(600);
+  const biz = await page.evaluate(() => window.JINNYFIN.DB.businesses.find(b => b.id === 'biz-0611'));
+  await ctx.close();
+  if (afterSub.card !== 'Family Health' || afterSub.budget !== 'Family Health') throw new Error(`sub rename left ${JSON.stringify(afterSub)}`);
+  if (biz.expense_parent !== 'Cake Plans' || biz.income_parent !== 'Cake Business')
+    throw new Error(`the Expense rename should move only the expense side: ${biz.expense_parent} / ${biz.income_parent}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'sub → card + budget; Expense “Cake Business” → the business’s expense side';
+});
+
+test('deleting a sub-category an insurance card is linked to says so, and offers to archive instead', async browser => {
+  const { ctx, page, errors } = await open(browser, 'settings');
+  await seedInsurance(page);
+  await link(page, 'ins-c-shield', 'Shield Raksha');
+  await page.evaluate(() => window.JINNYFIN.go('settings'));
+  await page.waitForTimeout(500);
+  await page.evaluate(() => [...document.querySelectorAll('.seg button')].find(b => b.textContent.trim() === 'Categories')?.click());
+  await page.waitForTimeout(400);
+  await page.locator('input[data-fk="cat-search"]').fill('Shield Raksha');
+  await page.waitForTimeout(400);
+  await page.evaluate(() => [...document.querySelectorAll('#main .chip')].find(c => c.textContent.startsWith('Shield Raksha'))?.click());
+  await page.waitForTimeout(300);
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent === 'Delete')?.click());
+  await page.waitForTimeout(300);
+  const asked = await page.evaluate(() => [...document.querySelectorAll('.modal')].pop()?.textContent || '');
+  await topClick(page, ['Cancel']);
+  await page.waitForTimeout(200);
+  const still = await page.evaluate(() => window.JINNYFIN.DB.categories.some(c => c.parent === 'Insurance' && c.sub === 'Shield Raksha'));
+  await ctx.close();
+  if (!/1 insurance card/.test(asked) || !/Archive it/.test(asked)) throw new Error(`no warning about the card: ${asked.slice(0, 160)}`);
+  if (!still) throw new Error('the sub-category was deleted anyway');
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'warned: used by 1 insurance card; archive offered';
+});
+
+test('the server push skips cards whose reminders are off', async () => {
+  // The phone is woken by the Edge Function, which reads the table itself —
+  // muting only inside the app would still ring. It cannot run here (Deno),
+  // so hold the rule in place: the check must stay in the policy loop.
+  const src = readFileSync(join(ROOT, 'supabase/functions/jinnyfin-push/index.ts'), 'utf8');
+  const loop = src.slice(src.indexOf("db.from('insurance')"), src.indexOf("db.from('cards')"));
+  if (!/if \(p\.reminders_off\) continue;/.test(loop)) throw new Error('jinnyfin-push no longer skips muted cards');
+  return 'reminders_off is checked in the policy loop';
+});
+
+test('the Annual premium counts a year of each premium, by its term', async browser => {
+  const { ctx, page, errors } = await open(browser, 'dashboard');
+  await seedInsurance(page);
+  const h = await row(page, 'ins-c-health'), c = await row(page, 'ins-c-car');
+  await page.evaluate(([a, b]) => window.JINNYFIN.S.putMany('insurance', [{ ...a, premium: 5828, currency: 'INR', term_months: 3 },
+    { ...b, premium: 3200, currency: 'INR', term_months: 12 }]), [h, c]);
+  await insPage(page);
+  const v = await page.evaluate(() => [...document.querySelectorAll('#main .stat')].find(k => /Annual premium/i.test(k.textContent))?.querySelector('.value')?.textContent);
+  await ctx.close();
+  if (v !== '₹26,512') throw new Error(`annual premium ${v}, expected ₹26,512 (5,828 × 4 + 3,200)`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return v;
 });
 
 test('Investments & savings totals show deposits, returns, and value', async browser => {

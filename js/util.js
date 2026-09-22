@@ -445,7 +445,8 @@ export function restoreFilterFocus(host) {
  *
  * `change` fires only when the chosen value actually changes.
  */
-export function searchSelect(list = [], { placeholder = '' } = {}) {
+export function searchSelect(list = [], { placeholder = '', allowNew = false,
+  newLabel = t => `＋ Add “${t}”` } = {}) {
   const wrap = el('div', { class: 'combo' });
   const input = el('input', { type: 'text', autocomplete: 'off', style: 'width:100%',
     placeholder: placeholder || null });
@@ -459,7 +460,10 @@ export function searchSelect(list = [], { placeholder = '' } = {}) {
   let dirty = false;                // he typed or arrowed since the box took focus
 
   const labelOf = v => options.find(o => o.value === v)?.label ?? '';
-  const commit = (v, fire) => {
+  const commit = (v, fire, picked = null) => {
+    // A new name picked from the "＋ Add" row joins the list, so the box can
+    // show it and the screen can ask `isNew()` before creating it for real.
+    if (picked?.isNew && !options.some(o => o.value === v)) options = [...options, { value: v, search: v, label: v, isNew: true }];
     const changed = v !== current;
     current = v; input.value = labelOf(v); dirty = false;
     if (fire && changed) wrap.dispatchEvent(new Event('change'));
@@ -469,10 +473,10 @@ export function searchSelect(list = [], { placeholder = '' } = {}) {
     menu.innerHTML = '';
     if (!visible.length) { menu.append(el('div', { class: 'combo-empty' }, 'No match')); return; }
     visible.forEach((o, i) => menu.append(el('div', {
-      class: 'combo-opt' + (i === hi ? ' hi' : ''),
+      class: 'combo-opt' + (i === hi ? ' hi' : '') + (o.isNew ? ' new' : ''),
       // A click already has the value; blur must not run first and revert it.
       onmousedown: e => e.preventDefault(),
-      onclick: () => { commit(o.value, true); close(); },
+      onclick: () => { commit(o.value, true, o); close(); },
     }, o.label)));
     // A long list scrolls; the lit row must stay in sight as the arrows move.
     menu.children[hi]?.scrollIntoView?.({ block: 'nearest' });
@@ -487,6 +491,13 @@ export function searchSelect(list = [], { placeholder = '' } = {}) {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     visible = !words.length ? options
       : options.filter(o => words.every(w => o.search.toLowerCase().split(/\s+/).some(part => part.startsWith(w))));
+    // allowNew: a name that is not in the list yet can be picked as typed —
+    // offered last, so an existing match is always what Tab and Enter take.
+    const typed = q.trim();
+    if (allowNew && typed && !options.some(o => o.search.toLowerCase() === typed.toLowerCase()
+        || String(o.value).toLowerCase() === typed.toLowerCase())) {
+      visible = [...visible, { value: typed, search: typed, label: newLabel(typed), isNew: true }];
+    }
     // Nothing typed: light the entry already chosen, so ↓ moves on from it
     // and passing through with Tab has nothing new to pick.
     const at = words.length ? 0 : visible.findIndex(o => o.value === current);
@@ -505,7 +516,7 @@ export function searchSelect(list = [], { placeholder = '' } = {}) {
     // Leaving after a search picks what the search lit up — Tab, Shift+Tab and
     // a click somewhere else all come through here. Leaving without having
     // searched changes nothing, and a half-typed word never stays in the box.
-    if (dirty && !menu.hidden && visible[hi]) commit(visible[hi].value, true);
+    if (dirty && !menu.hidden && visible[hi]) commit(visible[hi].value, true, visible[hi]);
     dirty = false;
     close(); input.value = labelOf(current);
   });
@@ -516,7 +527,7 @@ export function searchSelect(list = [], { placeholder = '' } = {}) {
     if (menu.hidden) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); dirty = true; hi = Math.min(hi + 1, visible.length - 1); render(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); dirty = true; hi = Math.max(hi - 1, 0); render(); }
-    else if (e.key === 'Enter') { if (visible[hi]) { e.preventDefault(); commit(visible[hi].value, true); close(); } }
+    else if (e.key === 'Enter') { if (visible[hi]) { e.preventDefault(); commit(visible[hi].value, true, visible[hi]); close(); } }
     else if (e.key === 'Escape') {
       e.preventDefault(); e.stopPropagation();
       dirty = false; close(); input.value = labelOf(current); input.select();
@@ -527,8 +538,15 @@ export function searchSelect(list = [], { placeholder = '' } = {}) {
   // whatever is being typed in the box at that moment (a background sync
   // re-applying the filters, say).
   Object.defineProperty(wrap, 'value', { get: () => current, set: v => { if (v !== current) commit(v, false); } });
-  wrap.setOptions = newList => { options = newList; if (!menu.hidden) open(dirty ? input.value : ''); else input.value = labelOf(current); };
+  wrap.setOptions = newList => {
+    // A name he added with "＋ Add" is not in anybody's list yet; keep it.
+    const mine = options.find(o => o.isNew && o.value === current);
+    options = mine && !newList.some(o => o.value === current) ? [...newList, mine] : newList;
+    if (!menu.hidden) open(dirty ? input.value : ''); else input.value = labelOf(current);
+  };
   wrap.focus = () => input.focus();
+  /** True when the chosen value was typed in through "＋ Add" and is not in the list it was given. */
+  wrap.isNew = () => !!options.find(o => o.value === current)?.isNew;
   return wrap;
 }
 

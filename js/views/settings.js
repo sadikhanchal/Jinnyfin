@@ -503,6 +503,42 @@ function usageOf(c) {
 }
 
 /**
+ * Everything besides entries that names a category by its TEXT: budgets and
+ * insurance cards (Expense) and business setups (either side). A rename that
+ * moved only the entries left a budget watching nothing, a business reading
+ * ₹0, and a card no longer finding its own premiums.
+ *
+ * `from.sub === undefined` means the whole category (renameCategory);
+ * otherwise exactly that one sub (editCat).
+ */
+function linksOf(type, from) {
+  const whole = from.sub === undefined;
+  const hit = (p, s) => p === from.parent && (whole || (s || null) === (from.sub || null));
+  const side = type === 'Income' ? ['income_parent', 'income_sub'] : ['expense_parent', 'expense_sub'];
+  return {
+    budgets: type === 'Expense' ? DB.budgets.filter(x => hit(x.parent, x.sub)) : [],
+    cards: type === 'Expense' ? DB.insurance.filter(x => hit(x.parent, x.sub)) : [],
+    businesses: (type === 'Expense' || type === 'Income') ? DB.businesses.filter(x => hit(x[side[0]], x[side[1]])) : [],
+    side,
+    whole,
+  };
+}
+async function cascadeCategory(type, from, to) {
+  const L = linksOf(type, from);
+  const move = (x, pk, sk) => ({ ...x, [pk]: to.parent, ...(L.whole ? {} : { [sk]: to.sub }) });
+  if (L.budgets.length) await putMany('budgets', L.budgets.map(x => move(x, 'parent', 'sub')));
+  if (L.cards.length) await putMany('insurance', L.cards.map(x => move(x, 'parent', 'sub')));
+  if (L.businesses.length) await putMany('businesses', L.businesses.map(x => move(x, L.side[0], L.side[1])));
+  return L;
+}
+/** "1 budget, 2 cards" — the links a change is about to touch, or '' when none. */
+function linkWords(L) {
+  const n = (k, one, many) => (L[k].length ? `${L[k].length} ${L[k].length === 1 ? one : many}` : null);
+  return [n('budgets', 'budget', 'budgets'), n('businesses', 'business', 'businesses'),
+    n('cards', 'insurance card', 'insurance cards')].filter(Boolean).join(', ');
+}
+
+/**
  * Rename the category itself, from its name in the list. Every sub filed
  * under the old name, and every entry already carrying it, move together —
  * editing one sub through editCat only ever moves that sub on its own.
@@ -527,7 +563,11 @@ function renameCategory(type, parent) {
     if (rows.length) await putMany('categories', rows.map(c => ({ ...c, parent: next })));
     const tx = DB.transactions.filter(t => !t.deleted && t.type === type && t.parent === parent);
     if (tx.length) await putMany('transactions', tx.map(t => ({ ...t, parent: next })));
-    toast(tx.length ? `Renamed — ${tx.length.toLocaleString('en-IN')} ${tx.length === 1 ? 'entry' : 'entries'} moved with it` : 'Renamed');
+    const L = await cascadeCategory(type, { parent }, { parent: next });
+    const also = linkWords(L);
+    toast(tx.length || also
+      ? `Renamed — ${[tx.length ? `${tx.length.toLocaleString('en-IN')} ${tx.length === 1 ? 'entry' : 'entries'}` : null, also || null].filter(Boolean).join(', ')} moved with it`
+      : 'Renamed', 'ok', 4000);
     m.close();
     draw();
   }
@@ -554,13 +594,14 @@ function editCat(c = null) {
           // they answer to nothing in any picker or report. Archiving is what
           // he actually wants in that case, and it is offered here.
           const used = usageOf(c);
-          if (used) {
+          const links = linkWords(linksOf(c.type, { parent: c.parent, sub: c.sub ? c.sub : undefined }));
+          if (used || links) {
             const what = c.sub ? `${c.parent} · ${c.sub}` : c.parent;
-            const many = used === 1 ? '1 entry' : `${used} entries`;
+            const on = [used ? (used === 1 ? '1 entry' : `${used} entries`) : null, links || null].filter(Boolean).join(' and ');
             if (await confirmBox(
-              `“${what}” is on ${many}. Deleting it leaves them pointing at a category that no longer exists. `
-              + `Archive it instead — it goes out of the pickers and those ${used === 1 ? 'entries keeps' : 'entries keep'} their name. `
-              + `To delete it for good, change ${used === 1 ? 'that entry' : 'those entries'} to another category first.`,
+              `“${what}” is used by ${on}. Deleting it leaves them pointing at a category that no longer exists. `
+              + 'Archive it instead — it goes out of the pickers and everything that uses it keeps its name. '
+              + 'To delete it for good, move those to another category first.',
               'Archive it')) {
               await put('categories', { ...c, active: false });
               toast(`${what} archived`);
@@ -580,16 +621,28 @@ function editCat(c = null) {
         // (see renameCategory). Moving or renaming a sub here still has to
         // take its own entries with it, or they are orphaned under a sub that
         // no longer exists, on their way to nothing in any picker or report.
+        let also = '';
         if (c?.id) {
           const oldType = c.type, oldParent = c.parent, oldSub = c.sub || null;
           if (oldType !== newType || oldParent !== newParent || oldSub !== newSub) {
+            // Budgets and cards only ever point at Expense categories, and a
+            // business side at one type. Moving the sub to another type would
+            // leave them pointing at nothing — say so before doing it.
+            const from = { parent: oldParent, sub: oldSub };
+            if (oldType !== newType) {
+              const stuck = linkWords(linksOf(oldType, from));
+              if (stuck && !(await confirmBox(`${stuck} still point at “${oldParent}${oldSub ? ' · ' + oldSub : ''}” as ${oldType}. `
+                + `Moving it to ${newType} leaves them pointing at nothing. Move it anyway?`, 'Move it'))) return;
+            }
             const rows = DB.transactions.filter(t => !t.deleted && t.type === oldType && t.parent === oldParent && (t.sub || null) === oldSub);
             if (rows.length) { await putMany('transactions', rows.map(t => ({ ...t, type: newType, parent: newParent, sub: newSub }))); renamed = rows.length; }
+            if (oldType === newType) also = linkWords(await cascadeCategory(oldType, from, { parent: newParent, sub: newSub }));
           }
         }
 
         await put('categories', { ...v, type: newType, parent: newParent, sub: newSub, active: live.checked });
-        if (renamed) toast(`Moved ${renamed.toLocaleString('en-IN')} ${renamed === 1 ? 'entry' : 'entries'} with it`);
+        if (renamed || also) toast(`Moved ${[renamed ? `${renamed.toLocaleString('en-IN')} ${renamed === 1 ? 'entry' : 'entries'}` : null, also || null]
+          .filter(Boolean).join(', ')} with it`, 'ok', 4000);
         m.close();
       } }, 'Save'),
     ].filter(Boolean),
@@ -911,8 +964,8 @@ async function fixTransferCategories() {
  *
  * Five passes, most certain first, each row used at most once:
  *   1. same day, same currency, the same amount to the paisa
- *   2. same day, and the two notes name the same thing — "Preethi (To Federal
- *      bank NRO)" against "Preethi (From Big Ticket)". This has to come before
+ *   2. same day, and the two notes name the same thing — "Anu (To the
+ *      NRO account)" against "Anu (From the exchange)". This has to come before
  *      the clock and the row number, because two remittances sent in the same
  *      minute are told apart by nothing else: 55 SAR and 220 SAR both leaving
  *      Big Ticket at 17:10, arriving as ₹1,200 and ₹4,800, get crossed by any

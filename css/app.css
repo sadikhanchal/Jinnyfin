@@ -9,7 +9,7 @@
      you whether this device is holding an old stylesheet, so it is bumped with
      every release — not only when the stylesheet itself changes, or the check
      cries wolf. */
-  --jf-css: "1.60";
+  --jf-css: "2.1";
   color-scheme: light;
   --page:        #f9f9f7;
   --surface:     #fcfcfb;
@@ -272,6 +272,30 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--brand); }
 .combo-opt { padding: 8px 10px; cursor: pointer; font-size: 14px; }
 .combo-opt.hi, .combo-opt:hover { background: color-mix(in srgb, var(--brand) 14%, transparent); }
 .combo-empty { padding: 8px 10px; font-size: 13px; color: var(--ink-3); }
+.combo-opt.new { color: var(--brand-ink); font-weight: 600; }
+
+/* ------------------------------------------------ insurance cards (2.1) -- */
+.ins-meta { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 3px 10px; align-items: baseline;
+  font-size: 12.5px; color: var(--ink-2); }
+.ins-meta .sep { color: var(--ink-3); }
+.ins-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.ins-claim { margin-top: 8px; padding: 7px 9px; border-radius: var(--r-sm); font-size: 12.5px;
+  background: color-mix(in srgb, var(--warning) 14%, transparent); display: flex; gap: 8px;
+  align-items: center; flex-wrap: wrap; }
+.term-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* A tick box with words beside it. The words wrap beside the box, never under
+   it — `.row` wraps whole items, so a long label used to drop below its box. */
+.inline-check { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: flex-start;
+  gap: 8px; cursor: pointer; line-height: 1.35; }
+.inline-check > input[type=checkbox] { flex: none; margin: 1px 0 0; }
+.inline-check .sub { display: block; font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+.term-row input[type=number] { width: 70px; }
+.chips-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.link-row { border-bottom: 1px solid var(--grid); padding: 10px 0; display: grid; gap: 6px; }
+.link-row:last-child { border-bottom: 0; }
+.link-moves { display: grid; gap: 4px; padding-left: 4px; }
+.link-moves label { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; }
+.link-moves label > input[type=checkbox] { flex: none; margin-top: 2px; }
 
 .btn {
   border: 1px solid var(--hair); background: var(--surface); border-radius: var(--r-sm);

@@ -5,7 +5,7 @@ import { CONFIG } from '../config.js';
 import { $, el, toast, todayISO, store as safeStore, storageBlocked, confirmBox, modal, closeThen } from './util.js';
 import * as S from './store.js';
 import { DB, state, getSettings, setSettings } from './store.js';
-import { insuranceHeadline } from './calc.js';
+import { insuranceHeadline, effectiveDue } from './calc.js';
 import { icon } from './icons.js';
 import { checkPin } from './crypto.js';
 import { openTxEditor } from './views/editor.js';
@@ -14,7 +14,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '1.60', date: '2026-09-21' };
+export const BUILD = { version: '2.1', date: '2026-09-22' };
 
 /**
  * `icon` names a mark in js/icons.js; `tint` is the palette token it wears.
@@ -709,9 +709,27 @@ function holdRedrawWhileTyping(node) {
   arm(node);
 }
 
+/**
+ * A card that follows its payments (a subscription a chitty pays every month) is
+ * due one term after the last payment filed under it. The app writes that date
+ * back onto the card, so the server's push reminders — which only read the
+ * stored date — see the same one the app shows.
+ */
+let rollTimer = 0;
+const scheduleRoll = () => { clearTimeout(rollTimer); rollTimer = setTimeout(rollPaymentCards, 900); };
+async function rollPaymentCards() {
+  for (const p of DB.insurance.slice()) {
+    if (p.due_mode !== 'payments') continue;
+    const due = effectiveDue(p);
+    if (!due || due === String(p.renewal_date || '').slice(0, 10)) continue;
+    try { await S.put('insurance', { ...p, renewal_date: due }); } catch (e) { console.warn('[insurance roll]', e); }
+  }
+}
+
 S.onChange(what => {
   updateChip();
   paintBell();
+  if (what === 'data' || what === 'boot') scheduleRoll();
   if (what === 'recovery') {
     // Overrides whatever is on screen — sign-in, dashboard, mid-edit — because
     // Supabase already swapped the session under it for a recovery-only one.

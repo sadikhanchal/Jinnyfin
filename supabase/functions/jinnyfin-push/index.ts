@@ -140,6 +140,9 @@ async function dueFor(userId: string, now: Date): Promise<Push[]> {
     .eq('user_id', userId).eq('deleted', false);
   for (const p of pol || []) {
     if (!p.renewal_date) continue;
+    // "Reminders off" on the card (2.1). The app still shows its ⚠ / ⛔; the
+    // phone is simply not woken for it.
+    if (p.reminders_off) continue;
     const left = daysBetween(today, String(p.renewal_date).slice(0, 10));
     if (left > (p.notify_days ?? 30)) continue;
     const key = keyFor(p.kind === 'document' ? 'doc' : 'policy', p.id, p.renewal_date);

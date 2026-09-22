@@ -93,6 +93,9 @@ export function alerts({ all = false } = {}) {
 
   // ── policies and documents ───────────────────────────────────────────────
   for (const p of insuranceAlerts(today)) {
+    // "Reminders off" on the card: it still shows ⚠ / ⛔ on the Insurance page,
+    // but it is not announced — no bell, no pop-up.
+    if (p.muted) continue;
     const within = p.daysLeft <= (p.notify_days || 30);
     if (!all && !within) continue;
     push({

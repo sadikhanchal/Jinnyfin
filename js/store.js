@@ -44,8 +44,12 @@ export const COLUMNS = {
   fx_rates: ['id', 'user_id', 'month', 'rate', 'source', 'deleted', 'updated_at'],
   assets: ['id', 'user_id', 'name', 'category_tag', 'opening_cost', 'market_value', 'market_date',
     'note', 'deleted', 'updated_at'],
+  // parent / sub / term_months / due_mode / reminders_off arrived in 2.1
+  // (supabase/migration-2.1.sql). Left out of this list they would be stripped
+  // on every save and the links would never leave the device.
   insurance: ['id', 'user_id', 'label', 'policy', 'policy_no', 'renewal_date', 'premium', 'currency',
-    'notify_days', 'kind', 'pay_account', 'last_paid', 'note', 'files', 'deleted', 'updated_at'],
+    'notify_days', 'kind', 'pay_account', 'last_paid', 'note', 'files',
+    'parent', 'sub', 'term_months', 'due_mode', 'reminders_off', 'deleted', 'updated_at'],
   cards: ['id', 'user_id', 'label', 'bank', 'network', 'kind', 'last4', 'expiry_hint',
     'enc_blob', 'enc_iv', 'enc_salt', 'deleted', 'updated_at'],
   equity_positions: ['id', 'user_id', 'symbol', 'company', 'qty', 'avg_cost', 'price', 'price_date',
