@@ -999,6 +999,86 @@ test('Transactions filters: type a word, Tab — kept, filtered, and the cursor 
   return `"NRO" → Fed Bank NRO, ${r.count} entries, cursor on Category`;
 });
 
+// ------------------------------------------------ 2.2: unlinked transfers --
+const typeOptions = page => page.evaluate(() => [...document.querySelectorAll('select[data-fk="type"] option')].map(o => o.value));
+const entriesShown = page => page.evaluate(() => document.querySelector('.tx-results .stat .value')?.textContent.trim());
+const unlinkedIn = (page, account) => page.evaluate(a => window.JINNYFIN.DB.transactions
+  .filter(t => !t.deleted && t.type === 'Transfer' && !t.transfer_group && (!a || t.account === a)).length, account);
+
+test('Transactions: "Half transfers" lists only transfers missing their other half, and a fixed one drops out', async browser => {
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  const opts = await typeOptions(page);
+  if (!opts.includes('Half transfers')) { await ctx.close(); throw new Error(`the Type box has no "Half transfers": ${opts.join(', ')}`); }
+  await page.selectOption('select[data-fk="type"]', 'Half transfers');
+  await page.waitForTimeout(300);
+  const all = { shown: await entriesShown(page), want: await unlinkedIn(page) };
+  // …and it combines with the other filters.
+  await page.locator('[data-fk="account"] input').click();
+  await page.keyboard.type('NRO');
+  await tab(page);
+  const nro = { shown: await entriesShown(page), want: await unlinkedIn(page, 'Fed Bank NRO') };
+  // Fix one the way he would: open it, name the account it went to, Update.
+  await page.locator('.tx-results .tx').filter({ has: page.locator('.amt.out') }).first().click();
+  await page.waitForSelector('.modal');
+  await page.evaluate(() => {
+    const m = [...document.querySelectorAll('.modal')].pop();
+    const f = [...m.querySelectorAll('.field')].find(x => x.querySelector('label')?.textContent.trim() === 'To account');
+    f.querySelector('input').focus();
+  });
+  await page.keyboard.type('Cash at Home');
+  await tab(page);
+  await topClick(page, ['Update']);
+  // "Create it" is asked only when no partner is found — wait for either that
+  // question or the sheet closing, rather than guessing how long it takes.
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(150);
+    if (await topClick(page, ['Create it'])) continue;
+    if (!(await page.evaluate(() => document.querySelectorAll('.modal').length))) break;
+  }
+  await page.waitForTimeout(500);
+  const after = { shown: await entriesShown(page), want: await unlinkedIn(page, 'Fed Bank NRO'),
+    type: await page.evaluate(() => document.querySelector('select[data-fk="type"]').value),
+    open: await page.evaluate(() => document.querySelectorAll('.modal').length) };
+  await ctx.close();
+  if (all.shown !== all.want.toLocaleString('en-IN')) throw new Error(`${all.shown} shown, ${all.want} unlinked transfers exist`);
+  if (nro.shown !== String(nro.want) || nro.want < 2) throw new Error(`with Fed Bank NRO: ${nro.shown} shown, ${nro.want} expected`);
+  if (after.open) throw new Error('the sheet stayed open');
+  if (after.want !== nro.want - 1 || after.shown !== String(after.want)) throw new Error(`after fixing one: ${after.shown} shown, ${after.want} left (was ${nro.want})`);
+  if (after.type !== 'Half transfers') throw new Error(`fixing a row reset the filter to "${after.type}"`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return `${all.want} unlinked; ${nro.want} on Fed Bank NRO → ${after.want} after one was fixed, filter kept`;
+});
+
+test('Transactions: the "Half transfers" option is gone once none are left', async browser => {
+  const { ctx, page, errors } = await open(browser, 'transactions');
+  await page.selectOption('select[data-fk="type"]', 'Half transfers');
+  await page.waitForTimeout(300);
+  // Every last one gets its other half — as if he had finished the clean-up.
+  await page.evaluate(async () => {
+    const { S, DB } = window.JINNYFIN;
+    await S.putMany('transactions', DB.transactions.filter(t => t.type === 'Transfer' && !t.transfer_group)
+      .map(t => ({ ...t, transfer_group: 'grp-' + t.id })));
+  });
+  await page.waitForTimeout(700);
+  const during = { opts: await typeOptions(page), shown: await entriesShown(page),
+    type: await page.evaluate(() => document.querySelector('select[data-fk="type"]').value) };
+  await page.evaluate(() => window.JINNYFIN.go('dashboard'));
+  await page.waitForTimeout(500);
+  await page.evaluate(() => window.JINNYFIN.go('transactions'));
+  await page.waitForTimeout(600);
+  const later = { opts: await typeOptions(page), shown: await entriesShown(page),
+    type: await page.evaluate(() => document.querySelector('select[data-fk="type"]').value),
+    all: await page.evaluate(() => window.JINNYFIN.DB.transactions.filter(t => !t.deleted).length) };
+  await ctx.close();
+  // While it is still the filter in force the box must not go blank…
+  if (during.type !== 'Half transfers' || during.shown !== '0') throw new Error(`right after the last fix: ${JSON.stringify(during)}`);
+  // …but on the next visit it has no reason to exist.
+  if (later.opts.includes('Half transfers')) throw new Error('the option is still offered with nothing left to fix');
+  if (later.type !== 'All' || later.shown !== later.all.toLocaleString('en-IN')) throw new Error(`coming back: ${JSON.stringify(later)}`);
+  if (errors.length) throw new Error(`console errors: ${errors.slice(0, 2).join(' | ')}`);
+  return 'kept while in force (0 shown), gone on the next visit, filter back to All';
+});
+
 test('Income vs Expense: the Account box keeps a From–To range, and Tab moves on', async browser => {
   const { ctx, page, errors } = await open(browser, 'incexp');
   const from = page.locator('input[data-dk="from"]');

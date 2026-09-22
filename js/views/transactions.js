@@ -29,6 +29,9 @@ let pickPushed = false;
 export async function render(root) {
   host = root;
   picking = false; picked.clear(); pickPushed = false;
+  // The last unlinked transfer was fixed since this filter was chosen: the
+  // option no longer exists, so arriving here must not leave it in force.
+  if (f.type === C.UNLINKED && !C.unlinkedCount()) f.type = 'All';
   mount();
 }
 /**
@@ -210,7 +213,10 @@ function buildChrome() {
     return el('div', { class: 'field' }, el('label', {}, label), box);
   };
   const filters = el('div', { class: 'filters' },
-    sel('Type', 'type', C.TYPES),
+    // "Half transfers" is a clean-up aid, listed only while there is
+    // something to clean up (and while it is the filter in force, so the box
+    // does not go blank the moment the last one is fixed).
+    sel('Type', 'type', C.unlinkedCount() || f.type === C.UNLINKED ? [...C.TYPES, C.UNLINKED] : C.TYPES),
     pick('Account', 'account', C.accountNames(), 'All accounts'),
     pick('Category', 'parent', C.parentsFor(null), 'All categories'),
     pick('Payee', 'payee', C.payeeNames(), 'All payees'),

@@ -137,7 +137,8 @@ He uploads it through GitHub's web UI ("Add files via upload").
   `sw.js` CACHE (AGENTS.md).
 - His stated scheme: from 1.14 on, 1.15 … 1.50, then **2.1 … 2.50**, then 3.1.
   1.51–1.60 were shipped outside that scheme. He chose to go on with **2.1**
-  after 1.60. **Latest built: 2.1** (insurance redesign). Next is **2.2**.
+  after 1.60. **Latest built: 2.2** (2.1 insurance redesign, 2.2 "Half
+  transfers" filter). Next is **2.3**.
 - `BUILD.date` is the release date.
 
 ## 6. Map of the code
@@ -159,7 +160,7 @@ No build step, no framework, plain ES modules (see AGENTS.md).
 | `js/views/report.js` | Expense Report and Income Report (one engine) |
 | `js/views/*.js` | one file per screen: dashboard, transactions, statement, payee (Lend/Borrow), business, equity, networth, insurance, cards, budgets, tasks, settings, incexp, importer, printable |
 | `supabase/` | schema, migrations (`migration-2.1.sql` = insurance link/term/mute columns), push Edge Function (`functions/jinnyfin-push/index.ts`, deployed by pasting into the Supabase dashboard editor, see PUSH-SETUP.md) |
-| `test/run.mjs` | Playwright suite, 72 checks at 2.1 (`seedInsurance` helper for fictional policies). `node run.mjs "part of a test name"` runs a subset |
+| `test/run.mjs` | Playwright suite, 74 checks at 2.2 (`seedInsurance` helper for fictional policies). `node run.mjs "part of a test name"` runs a subset |
 | `test/stub/supabase.mjs` | fake Supabase: rows, upsert (with `rejectUpsert` hook), auth incl. one-shot `PASSWORD_RECOVERY`, `updateUser` |
 | `test/stub/fixture.json` | fictional data (5 accounts, 70 categories, 424 transactions; no insurance rows, so seed any you need with `S.put`) |
 
@@ -205,6 +206,13 @@ everywhere, and each has a test:
   shows "Sub · Category", and fills in the category (same as New Transaction).
 
 **Live-filter text boxes:** debounce, and never rebuild the box itself.
+
+**Keep the app lean (his words: long instruction texts everywhere make it
+"messy" and "bulky").** Do not add explanatory paragraphs, hints or "how this
+works" text with a change. A one-time clean-up aid must disappear by itself once
+there is nothing left to clean. Example: the Transactions Type option "Half
+transfers" (`C.UNLINKED`) is listed only while unlinked transfers exist (or while
+it is the filter in force), and `render()` drops it on arrival once none are left.
 
 **Insurance & Documents (2.1 model):**
 - A card links to Expense › `parent` › `sub` (policies: Insurance › one sub per
@@ -285,26 +293,38 @@ data he should check. Short, plain, a bit of fun.
 
 ## 9. Open work — keep this list current
 
-1. **2.1 insurance redesign: built, delivered as a zip.** Confirm with him:
-   `supabase/migration-2.1.sql` was run BEFORE the upload; the push Edge
-   Function was redeployed with the `reminders_off` line; he ran "Link them"
-   once. The demo database will need the same migration when the demo resumes.
+1. **2.1 insurance redesign: live** (he reported it all set up on 22-09-2026).
+   The demo database will need `supabase/migration-2.1.sql` when the demo
+   resumes.
 2. **A payee's INR balance off by a fixed amount.** Details are in his private
-   notes file, not here. Waiting on him: he has to compare his old MISA app's
-   running balance at the checkpoint dates listed there. Do not adjust real
-   account entries.
+   notes file, not here. MISA can no longer show that payee's history, so the
+   checkpoint comparison is dead. The current lead (a share sale never credited,
+   and one repayment possibly tagged to the wrong person) needs two statements
+   from him, listed in the notes. He wants to finish the half-transfer clean-up
+   first. Do not adjust real account entries.
 3. After the 1.59 upload he was asked to check PC entries for a wrong Account
    (the Tab-through bug, fixed in 1.60). Ask whether anything needed correcting.
-4. Confirm 2.1 (which includes 1.60) is live and CI is green.
+4. Confirm 2.2 is live and CI is green.
 5. Demo-mode leftovers to review one by one: Card Vault appearing on the
    Insurance page in demo; a GitHub Action hint; a PUSH-SETUP.md reference;
    "since 2017" text; "compare this with the version I sent you" text; demo seed
    cosmetics.
 6. Demo repo step 6: a separate `Jinnyfin-demo` repo/site with its own config.
    Not started.
-7. Statement: show the other account on transfer rows. Waiting for his "Link
-   half transfers" count.
+7. Statement: show the other account on transfer rows. Offered with 2.2; he
+   chose to keep the app lean, so not now. Do not add it unless he asks.
 8. Income vs Expense: the "Group by" buttons overflow at 390px.
 9. (done) Version numbering: 2.1 onwards.
 10. The screens that still rebuild fully (section 7). Move each to mount-once
     when you next touch it.
+11. **2.3 "text diet":** a screen-by-screen list of instruction texts to remove,
+    shorten to one line, or hide when there is nothing to do was sent to him
+    for approval. Build it only after he answers (he names exceptions; the rest
+    goes as proposed). It also clears three demo leftovers from item 5: the
+    GitHub Action e-mail hint (that workflow does not exist in the repo),
+    "compare this with the version I sent you", and "since 2017".
+12. **Half-transfer clean-up (his own work, in progress):** he is fixing the
+    remaining unlinked transfers account by account with the 2.2 filter,
+    comparing each account's balance with MISA. Some accounts (e.g. the share
+    trading account) have NO transfer rows of their own in the workbook, so
+    "Create it" is expected there.

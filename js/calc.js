@@ -8,6 +8,19 @@ import { iso, monthStart, todayISO, round2, yearOf, monthOf, endOfMonth, daysBet
 
 export const TYPES = ['Income', 'Expense', 'Transfer', 'Lend/Borrow', 'Investment', 'Opening Balance'];
 
+/**
+ * A transfer row whose other half was never tied to it: the workbook brought
+ * every transfer in as single rows. The Transactions filter offers these only
+ * while any are left, so once they are all fixed the option is gone for good.
+ */
+export const UNLINKED = 'Half transfers';
+export const isUnlinkedTransfer = t => t.type === 'Transfer' && !t.transfer_group;
+export function unlinkedCount() {
+  let n = 0;
+  for (const t of DB.transactions) if (isUnlinkedTransfer(t)) n++;
+  return n;
+}
+
 // ------------------------------------------------------------------ rates --
 export function rates() {
   const s = getSettings();
@@ -280,7 +293,8 @@ export function filterTx(f = {}) {
     if (f.year && f.year !== 'All' && yearOf(t.date) !== +f.year) return false;
     if (f.month && f.month !== 'All' && monthOf(t.date) !== +f.month) return false;
     if (f.account && f.account !== 'All' && t.account !== f.account) return false;
-    if (f.type && f.type !== 'All' && t.type !== f.type) return false;
+    if (f.type === UNLINKED) { if (!isUnlinkedTransfer(t)) return false; }
+    else if (f.type && f.type !== 'All' && t.type !== f.type) return false;
     if (f.parent && f.parent !== 'All' && t.parent !== f.parent) return false;
     if (f.sub && f.sub !== 'All' && t.sub !== f.sub) return false;
     if (f.payee && f.payee !== 'All' && t.payee !== f.payee) return false;
