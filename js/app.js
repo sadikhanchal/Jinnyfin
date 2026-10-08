@@ -311,7 +311,7 @@ async function ring() {
   if (getSettings().notify_on !== false && 'Notification' in window && Notification.permission === 'granted') {
     try {
       const reg = await navigator.serviceWorker?.getRegistration();
-      const opts = { body: rest ? `and ${rest} more waiting` : (lead.body || ''), icon: 'icons/icon-192.png',
+      const opts = { body: rest ? `and ${rest} more waiting` : (lead.body || ''), 
         tag: 'jinnyfin-reminder', badge: 'icons/icon-192.png' };
       if (reg) reg.showNotification('Jinnyfin · ' + lead.title, opts);
       else new Notification('Jinnyfin · ' + lead.title, opts);
@@ -838,7 +838,7 @@ async function maybeNotify() {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const reg = await navigator.serviceWorker?.getRegistration();
   const body = head.next ? `${head.next.label} — ${head.next.policy || ''} renews ${head.next.renewal_date}` : '';
-  const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'jinnyfin-insurance' };
+  const opts = { body, badge: 'icons/icon-192.png', tag: 'jinnyfin-insurance' };
   if (reg) reg.showNotification('Jinnyfin · ' + head.text, opts); else new Notification('Jinnyfin · ' + head.text, opts);
   safeStore(key, '1');
 }
