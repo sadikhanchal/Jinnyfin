@@ -2,7 +2,7 @@
 //  sw.js — service worker: makes the app installable and fully offline.
 //  Bump CACHE when you change any file, so devices pick up the new version.
 // ============================================================================
-const CACHE = 'jinnyfin-2.3';
+const CACHE = 'jinnyfin-2.3-notification-icon-1';
 
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './config.js',
@@ -84,7 +84,7 @@ self.addEventListener('push', e => {
   try { data = { ...data, ...e.data.json() }; } catch { if (e.data) data.body = e.data.text(); }
   e.waitUntil(self.registration.showNotification(data.title, {
     body: data.body,
-    icon: './icons/icon-192.png',
+    // Omit the content icon: the OS already displays the installed app icon.
     badge: './icons/icon-32.png',
     // A tag replaces an earlier notification about the SAME thing instead of
     // stacking duplicates; renotify makes the replacement sound again, so a
