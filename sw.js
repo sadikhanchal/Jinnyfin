@@ -2,10 +2,10 @@
 //  sw.js — service worker: makes the app installable and fully offline.
 //  Bump CACHE when you change any file, so devices pick up the new version.
 // ============================================================================
-const CACHE = 'jinnyfin-2.3-logo-20261009';
+const CACHE = 'jinnyfin-2.3-logo-20261010-transparent';
 
 const SHELL = [
-  './', './index.html', './manifest.webmanifest', './manifest.webmanifest?v=logo-20261009', './config.js',
+  './', './index.html', './manifest.webmanifest', './manifest.webmanifest?v=logo-20261010-transparent', './config.js',
   './css/app.css',
   './js/app.js', './js/util.js', './js/store.js', './js/calc.js', './js/charts.js', './js/crypto.js',
   './js/alerts.js', './js/push.js', './js/files.js', './js/icons.js',
@@ -14,8 +14,8 @@ const SHELL = [
   './js/views/statement.js', './js/views/payee.js', './js/views/business.js', './js/views/equity.js',
   './js/views/networth.js', './js/views/insurance.js', './js/views/cards.js', './js/views/budgets.js',
   './js/views/settings.js', './js/views/importer.js', './js/views/printable.js',
-  './icons/icon-32.png?v=logo-20261009',
-  './icons/icon-192.png?v=logo-20261009', './icons/icon-512.png?v=logo-20261009', './icons/icon-maskable-512.png?v=logo-20261009', './icons/icon-180.png?v=logo-20261009',
+  './icons/icon-32.png?v=logo-20261010-transparent',
+  './icons/icon-192.png?v=logo-20261010-transparent', './icons/icon-512.png?v=logo-20261010-transparent', './icons/icon-maskable-512.png?v=logo-20261010-transparent', './icons/icon-180.png?v=logo-20261010-transparent',
 ];
 
 self.addEventListener('install', e => {
@@ -85,7 +85,7 @@ self.addEventListener('push', e => {
   e.waitUntil(self.registration.showNotification(data.title, {
     body: data.body,
     // Omit the content icon: the OS already displays the installed app icon.
-    badge: './icons/icon-32.png?v=logo-20261009',
+    badge: './icons/icon-32.png?v=logo-20261010-transparent',
     // A tag replaces an earlier notification about the SAME thing instead of
     // stacking duplicates; renotify makes the replacement sound again, so a
     // reminder that has grown more urgent is not silently swapped in.
