@@ -42,7 +42,7 @@ export function printStatement(o) {
   const html = `
     <div class="st-head">
       <div class="st-brand">
-        <img src="icons/icon-192.png?v=logo-20261009" alt="">
+        <img src="icons/icon-192.png?v=logo-20261010-transparent" alt="">
         <div>
           <h1>Jinnyfin</h1>
           <div class="st-tag">Personal Finance</div>
