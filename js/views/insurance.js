@@ -330,7 +330,7 @@ function notifyCard() {
         const body = head.next ? `${head.next.label} renews ${fmtDate(head.next.renewal_date)}` : 'Nothing due soon.';
         const reg = await navigator.serviceWorker?.getRegistration();
         if (supported && Notification.permission === 'granted') {
-          const opts = { body, icon: 'icons/icon-192.png?v=logo-20261009', tag: 'jinnyfin-test' };
+          const opts = { body, icon: 'icons/icon-192.png?v=logo-20261010-transparent', tag: 'jinnyfin-test' };
           if (reg) reg.showNotification('Jinnyfin · ' + head.text, opts);
           else new Notification('Jinnyfin · ' + head.text, opts);
         }
