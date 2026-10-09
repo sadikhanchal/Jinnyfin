@@ -155,7 +155,7 @@ addEventListener('keydown', e => { if (e.key === 'Escape' && drawerOpen()) close
 
 /** The app mark — the same artwork as the home-screen icon. */
 const brandMark = (size = 30) =>
-  el('img', { class: 'brand-mark', src: 'icons/icon-192.png', alt: '',
+  el('img', { class: 'brand-mark', src: 'icons/icon-192.png?v=logo-20261009', alt: '',
               width: size, height: size, style: `width:${size}px;height:${size}px` });
 
 // ---------------------------------------------------------------- render ---
@@ -312,7 +312,7 @@ async function ring() {
     try {
       const reg = await navigator.serviceWorker?.getRegistration();
       const opts = { body: rest ? `and ${rest} more waiting` : (lead.body || ''), 
-        tag: 'jinnyfin-reminder', badge: 'icons/icon-192.png' };
+        tag: 'jinnyfin-reminder', badge: 'icons/icon-192.png?v=logo-20261009' };
       if (reg) reg.showNotification('Jinnyfin · ' + lead.title, opts);
       else new Notification('Jinnyfin · ' + lead.title, opts);
     } catch { /* the browser said no; the in-app toast already did the job */ }
@@ -838,7 +838,7 @@ async function maybeNotify() {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const reg = await navigator.serviceWorker?.getRegistration();
   const body = head.next ? `${head.next.label} — ${head.next.policy || ''} renews ${head.next.renewal_date}` : '';
-  const opts = { body, badge: 'icons/icon-192.png', tag: 'jinnyfin-insurance' };
+  const opts = { body, badge: 'icons/icon-192.png?v=logo-20261009', tag: 'jinnyfin-insurance' };
   if (reg) reg.showNotification('Jinnyfin · ' + head.text, opts); else new Notification('Jinnyfin · ' + head.text, opts);
   safeStore(key, '1');
 }
