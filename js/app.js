@@ -335,8 +335,10 @@ function updateChip(chip) {
   let cls = 'dot', txt = 'Synced';
   if (!s.online) { cls += ' off'; txt = 'Offline'; }
   else if (s.syncing) { cls += ' busy'; txt = 'Syncing…'; }
+  else if (s.syncError) { cls += ' err'; txt = 'Sync failed'; }
   else if (s.pending) { cls += ' busy'; txt = s.pending + ' to sync'; }
   else if (!s.user) { cls += ' err'; txt = 'Not signed in'; }
+  chip.title = s.syncError || (s.pending ? s.pending + ' changes waiting to upload' : '');
   chip.innerHTML = '';
   chip.append(el('span', { class: cls }), txt);
 }
@@ -358,7 +360,7 @@ async function renderRoute() {
     if (state.storageError && safeStore('jinnyfin-hide-storage-note', undefined, 'session') !== '1') {
       const note = el('div', { class: 'alert soon slim', style: 'margin-bottom:10px' },
         el('span', { class: 'ico' }, '⚠'),
-        el('div', { class: 'small' }, 'Storage is blocked here — syncs fine, but no offline use.'),
+        el('div', { class: 'small' }, 'Storage is blocked here — unsynced changes are held only for this session. Do not close or reload before syncing or making a backup.'),
         el('div', { style: 'flex:1' }),
         el('button', {
           class: 'icon-btn', title: 'Hide',
@@ -391,25 +393,16 @@ export async function askSignOut() {
     ? ' This device is not keeping your sign-in, so you will have to type your password again.'
     : ' You will need your password to get back in.';
 
-  // Never discard writes that have not reached Supabase without saying so. If a
-  // background sync is already running, give it a short chance to settle before
-  // starting another one; after the cap, the pending count still decides.
-  if (state.pending > 0) {
-    if (state.online) {
-      const deadline = Date.now() + 1000;
-      while (state.syncing && Date.now() < deadline)
-        await new Promise(resolve => setTimeout(resolve, 25));
-      if (!state.syncing && state.pending > 0) await S.sync();
-    }
+  try {
+    if (state.pending > 0 || state.syncing) await S.sync();
     if (state.pending > 0) {
-      const n = state.pending;
-      const warning = `${n} changes have not reached the server yet. Signing out now deletes them from this device for good.` + warn;
-      if (await confirmBox(warning, 'Delete changes and sign out')) await S.signOut();
+      toast(state.pending + ' changes are not uploaded. Sign-out is blocked to protect them. ' +
+        (state.syncError || '') + ' Keep this device signed in; Settings → Data → Backup saves a copy.', 'warn', 10000);
       return;
     }
-  }
+    if (await confirmBox('Sign out of Jinnyfin?' + warn, 'Sign out')) await S.signOut();
+  } catch (e) { toast(e.message || String(e), 'warn', 10000); }
 
-  if (await confirmBox('Sign out of Jinnyfin?' + warn, 'Sign out')) await S.signOut();
 }
 
 export function toggleTheme() {
