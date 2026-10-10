@@ -14,6 +14,7 @@ const blank = () => ({ text: '', type: 'All', account: 'All', parent: 'All', pay
                        year: 'All', month: 'All', from: '', to: '' });
 let f = blank();
 let shown = PAGE, host = null;
+let filtersExpanded = false;
 let chrome = null, results = null;   // the bar that stays, and the pane that is rebuilt
 let picking = false;            // multi-select mode
 const picked = new Set();       // ids chosen while picking
@@ -149,7 +150,7 @@ function mount() {
   host.innerHTML = '';
   chrome = buildChrome();
   results = el('div', { class: 'tx-results' });
-  host.append(chrome.bar, chrome.search, chrome.filters, results);
+  host.append(chrome.bar, chrome.search, chrome.filterToggle, chrome.filters, results);
   draw();
 }
 
@@ -157,8 +158,8 @@ function buildChrome() {
   const bar = topbar('Transactions',
     el('button', { class: 'btn sm' + (picking ? ' primary' : ''),
       onclick: () => (picking ? stopPicking() : startPicking(null)) }, picking ? 'Done' : '\u2713 Select'),
-    el('button', { class: 'btn sm', onclick: () => exportCSV(rows) }, '⬇ CSV'),
-    el('button', { class: 'btn sm primary', onclick: () => openTxEditor() }, '+ Add'));
+    el('button', { class: 'btn sm', onclick: () => exportCSV(C.filterTx(f).slice().reverse()) }, '⬇ CSV'),
+    el('button', { class: 'btn sm primary jf-mobile-redundant-add', onclick: () => openTxEditor() }, '+ Add'));
 
   // ------------------------------------------------------------ search ----
   // The box now survives the redraw, so there is nothing to put the cursor
@@ -226,7 +227,11 @@ function buildChrome() {
     el('div', { class: 'field' }, el('label', {}, ' '),
       el('button', { class: 'btn sm', onclick: () => { f = blank(); mount(); } }, 'Clear')));
 
-  return { bar, search: searchBar, filters };
+  filters.classList.add('jf-ledger-filters');
+  filters.id = 'jf-ledger-filters';
+  const filterToggle = el('button', {class:'btn jf-filter-toggle', 'aria-controls':'jf-ledger-filters', 'aria-expanded':String(filtersExpanded), onclick:()=>{filtersExpanded=!filtersExpanded;filters.classList.toggle('expanded',filtersExpanded);filterToggle.setAttribute('aria-expanded',String(filtersExpanded));}}, icon('menu',16), 'Filters');
+  filters.classList.toggle('expanded',filtersExpanded);
+  return { bar, search: searchBar, filters, filterToggle };
 }
 
 function draw() {
@@ -240,10 +245,13 @@ function draw() {
   const selBtn = chrome.bar.querySelector('button');
   if (selBtn) { selBtn.textContent = picking ? 'Done' : '\u2713 Select'; selBtn.classList.toggle('primary', picking); }
 
+  const activeFilters = Object.entries(f).filter(([k,v])=>k!=='text' && v && v!=='All').length;
+  chrome.filterToggle.replaceChildren(icon('menu',16), document.createTextNode(activeFilters ? 'Filters · '+activeFilters+' active' : 'Filters · All entries'));
+
   // ----------------------------------------------------------- summary ----
   const eqIn = rows.reduce((s, t) => s + C.inrOf(t), 0);
   const eqOut = rows.reduce((s, t) => s + C.inrOut(t), 0);
-  host.append(el('div', { class: 'grid g4 keep2', style: 'margin-bottom:12px' },
+  host.append(el('div', { class: 'grid g4 keep2 jf-ledger-summary', style: 'margin-bottom:12px' },
     mini('Entries', rows.length.toLocaleString('en-IN')),
     mini('▲ In', money(eqIn, 'INR', false), 'income'),
     mini('▼ Out', money(eqOut, 'INR', false), 'expense'),
