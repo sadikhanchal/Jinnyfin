@@ -21,7 +21,12 @@ export async function render(root) {
 }
 export function refresh() { if (host) draw(); }
 
+const mobileViewport = window.matchMedia('(max-width: 860px)');
+let mobileDetailsOpen = false;
+mobileViewport.addEventListener('change', () => { if (host?.isConnected && (location.hash.replace(/^#\/?/, '').split('?')[0] || 'dashboard') === 'dashboard') draw(); });
+
 function draw() {
+  if (mobileViewport.matches) { drawMobile(); return; }
   const f = { year, month };
   const tot = C.periodTotals(f);
   const nw = C.netWorth();
@@ -179,12 +184,12 @@ function balancesCard() {
   return card;
 }
 
-function recentCard() {
+function recentCard(limit = 12) {
   const card = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Latest entries'), el('div', { class: 'spacer' }),
       el('button', { class: 'btn sm ghost', onclick: () => go('transactions') }, 'All →')));
   const list = el('div', {});
-  const recent = DB.transactions.slice(-12).reverse();
+  const recent = DB.transactions.slice(-limit).reverse();
   for (const t of recent) {
     const isIn = Number(t.income) > 0;
     list.append(el('div', {
@@ -202,4 +207,53 @@ function recentCard() {
     el('button', { class: 'btn primary', onclick: () => openTxEditor() }, 'Add the first one')));
   card.append(list);
   return card;
+}
+
+// Mobile uses the same calculations and editors; only presentation changes.
+function drawMobile() {
+  const f = { year, month }, tot = C.periodTotals(f), nw = C.netWorth(), head = C.insuranceHeadline();
+  host.innerHTML = '';
+  const wrap = el('div', { class: 'jf-mobile-home' });
+  host.append(wrap);
+  const bar = topbar('Jinnyfin');
+  bar.querySelector('h1').prepend(el('img', { src: 'icons/icon-192.png?v=logo-20261010-transparent', alt: '', class: 'jf-mobile-mark' }));
+  wrap.append(bar);
+  const ys = el('select', { 'aria-label': 'Year' }, el('option', { value:'All', selected:year === 'All' }, 'All years'), ...C.yearsPresent().map(y => el('option',{value:y,selected:String(year)===String(y)},y)));
+  const ms = el('select', { 'aria-label': 'Month' }, el('option',{value:'All',selected:month === 'All'},'All months'), ...MONTHS.map((m,i)=>el('option',{value:i+1,selected:String(month)===String(i+1)},m)));
+  onFilter(ys,'year',()=>{year=ys.value;draw();}); onFilter(ms,'month',()=>{month=ms.value;draw();});
+  wrap.append(el('div',{class:'jf-mobile-period'},el('span',{},'Your overview'),el('div',{class:'row gap'},ms,ys)));
+  const q = new URLSearchParams({year:String(year),month:String(month)});
+  wrap.append(el('section',{class:'jf-mobile-hero'},
+    el('div',{class:'jf-eyebrow'},'NET SAVINGS · SELECTED PERIOD'),
+    el('div',{class:'jf-hero-value tnum'+(tot.netINR<0?' negative':'')},money(tot.netINR,'INR',false)),
+    el('div',{class:'jf-hero-sub'},'INR equivalent'),
+    el('div',{class:'jf-hero-foot'},el('span',{},(tot.savingsRate*100).toFixed(1)+'% of income kept'),
+      el('button',{class:'btn ghost sm',onclick:()=>go('incexp?'+q)},'Cash flow →'))));
+  wrap.append(el('div',{class:'jf-mobile-totals'},
+    el('button',{class:'jf-mobile-total',onclick:()=>go('income?'+q)},el('span',{},'↓ Income'),el('b',{class:'tnum income'},money(tot.incomeINR,'INR',false)),el('small',{},money(tot.incomeSAR,'SAR',false)+' earned in SAR')),
+    el('button',{class:'jf-mobile-total',onclick:()=>go('expense?'+q)},el('span',{},'↑ Expenses'),el('b',{class:'tnum expense'},money(tot.expenseINR,'INR',false)),el('small',{},money(tot.expenseSAR,'SAR',false)+' spent in SAR'))));
+  wrap.append(el('button',{class:'jf-mobile-worth',onclick:()=>go('networth')},icon('trendUp',18),el('span',{},'Net worth'),el('b',{class:'tnum'},money(nw.total,'INR',false)),el('span',{},'›')));
+  // Never hide an expired/urgent policy behind an accordion.
+  const sub = head.level === 'soon' ? head.then : head.next;
+  wrap.append(el('div',{class:'alert slim '+head.level},icon('shield',18),el('div',{},el('b',{},head.text),sub?el('div',{class:'small muted'},sub.label+' · '+fmtDate(sub.renewal_date)):null),el('div',{class:'spacer'}),el('button',{class:'btn ghost sm',onclick:()=>go('insurance')},'View')));
+  const recent = recentCard(5); recent.classList.add('jf-mobile-recent'); wrap.append(recent);
+  const details = el('details',{class:'jf-mobile-breakdowns',open:mobileDetailsOpen},el('summary',{},'Monthly breakdowns & account balances'));
+  const detailHost = el('div',{class:'jf-mobile-details-body'}); details.append(detailHost); let built = false;
+  const build = () => {
+    if (built) return; built=true; const S=SERIES();
+    detailHost.append(sourceCard('Income by source',C.bySource('Income',f),S.income,'income',f),sourceCard('Expense by source',C.bySource('Expense',f),S.expense,'expense',f));
+    const ch = el('div',{}), nwCh = el('div',{});
+    detailHost.append(el('div',{class:'card'},el('div',{class:'card-head'},el('h3',{},'Income vs expense')),ch));
+    detailHost.append(el('div',{class:'card'},el('div',{class:'card-head'},el('h3',{},'Net worth trend'),el('button',{class:'btn ghost sm',onclick:()=>go('networth')},'Breakdown →')),nwCh));
+    detailHost.append(balancesCard());
+    requestAnimationFrame(()=>{
+      let labels,iv,ev;
+      if(year==='All'){const yi=C.yearlyTotals('Income'),ye=C.yearlyTotals('Expense');const years=[...new Set([...yi.map(r=>r.year),...ye.map(r=>r.year)])].sort();labels=years.map(String);iv=years.map(y=>yi.find(r=>r.year===y)?.equiv||0);ev=years.map(y=>ye.find(r=>r.year===y)?.equiv||0);}
+      else{labels=MON3;iv=C.monthlyTotals('Income',year).map(r=>r.equiv);ev=C.monthlyTotals('Expense',year).map(r=>r.equiv);}
+      groupedBars(ch,{labels,series:[{name:'Income',color:S.income,values:iv},{name:'Expense',color:S.expense,values:ev}]});
+      const ns=C.netWorthSeries(year==='All'?null:year);lineChart(nwCh,{labels:ns.map(r=>MON3[+r.month.slice(5,7)-1]+' '+r.month.slice(2,4)),values:ns.map(r=>r.total),color:S.s1});
+    });
+  };
+  details.addEventListener('toggle',()=>{mobileDetailsOpen=details.open;if(details.open)build();});
+  wrap.append(details); if(mobileDetailsOpen)build(); restoreFilterFocus(host);
 }
