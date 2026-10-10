@@ -9,7 +9,7 @@
      you whether this device is holding an old stylesheet, so it is bumped with
      every release — not only when the stylesheet itself changes, or the check
      cries wolf. */
-  --jf-css: "2.3.1";
+  --jf-css: "2.3.2";
   color-scheme: light;
   --page:        #f9f9f7;
   --surface:     #fcfcfb;
@@ -965,3 +965,12 @@ main > .topbar { max-width: none; }
 }
 
 @media (max-width:860px) { .jf-mobile-redundant-add {display:none;} #tabbar button .ic {color:var(--ink-3) !important;} #tabbar button.active .ic {color:var(--brand) !important;} }
+
+@media(max-width:860px){
+ .jf-balances-table{width:100%;table-layout:fixed;font-size:12px;}
+ .jf-balances-table th,.jf-balances-table td{padding:10px 8px;white-space:normal;vertical-align:middle;}
+ .jf-balances-table th:first-child,.jf-balances-table td:first-child{width:44%;overflow-wrap:anywhere;line-height:1.45;}
+ .jf-balances-table th:last-child,.jf-balances-table td:last-child{width:56%;}
+ .jf-balances-table .jf-balance-amount{white-space:normal;overflow-wrap:anywhere;}
+ .jf-balances-table .jf-balance-amount small{display:block;font-size:10px;line-height:1.35;margin-top:4px;}
+}
