@@ -2840,6 +2840,73 @@ test('setting a new password after a reset link signs you straight in', async br
   return 'password saved, app moved straight to the dashboard';
 });
 
+
+// Mobile refinement: use offline fixtures; never touch production accounts.
+test('mobile compact Home preserves calculations and desktop dashboard', async browser => {
+  const {ctx,page,errors}=await open(browser);
+  await page.setViewportSize({width:390,height:844});
+  await page.waitForSelector('.jf-mobile-home');
+  await page.selectOption('.jf-mobile-period select[aria-label="Year"]','All');
+  await page.selectOption('.jf-mobile-period select[aria-label="Month"]','All');
+  const same=await page.evaluate(async()=>{
+    const C=await import('/js/calc.js'),U=await import('/js/util.js');
+    const totals=C.periodTotals({year:'All',month:'All'});
+    return document.querySelector('.jf-hero-value').textContent===U.money(totals.netINR,'INR',false)
+      && document.querySelectorAll('.jf-mobile-recent .tx').length<=5;
+  });
+  if(!same)throw Error('Mobile totals or recent limit changed');
+  await page.click('.jf-mobile-breakdowns summary');
+  await page.waitForFunction(()=>document.querySelector('.jf-mobile-details-body').children.length===5);
+  await page.setViewportSize({width:320,height:760});
+  const wide=await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth);
+  if(wide)throw Error('320px Home overflow');
+  await page.setViewportSize({width:1280,height:800});
+  await page.waitForFunction(()=>!document.querySelector('.jf-mobile-home'));
+  if(await page.locator('#main>.grid.g4.keep2 .stat').count()!==4)throw Error('Desktop dashboard lost headline tiles');
+  await ctx.close();if(errors.length)throw Error(errors.join(' | '));return 'mobile math, lazy charts, 320px and original desktop checked';
+});
+test('mobile ledger filters disclose and retain full desktop controls', async browser => {
+  const {ctx,page,errors}=await open(browser,'transactions');
+  await page.setViewportSize({width:390,height:844});
+  if(await page.locator('.jf-ledger-filters').isVisible())throw Error('Mobile filters not collapsed');
+  await page.click('.jf-filter-toggle');
+  if(!await page.locator('.jf-ledger-filters').isVisible())throw Error('Filters cannot open');
+  await page.selectOption('.jf-ledger-filters select[data-fk="type"]','Expense');
+  await page.waitForFunction(()=>document.querySelector('.jf-filter-toggle').textContent.includes('1 active'));
+  await page.click('.jf-filter-toggle');
+  await page.setViewportSize({width:1280,height:800});
+  if(!await page.locator('.jf-ledger-filters').isVisible())throw Error('Desktop filters hidden');
+  if(!await page.locator('.jf-mobile-redundant-add').isVisible())throw Error('Desktop Add hidden');
+  await ctx.close();if(errors.length)throw Error(errors.join(' | '));return 'mobile disclosure, active count and desktop controls checked';
+});
+test('mobile Reports and More retain existing tools and editor', async browser => {
+  const {ctx,page,errors}=await open(browser);
+  await page.setViewportSize({width:390,height:844});
+  await page.click('#tabbar [data-route="mobileReports"]');
+  await page.waitForSelector('.jf-report-link');
+  if(await page.locator('.jf-report-link').count()!==7)throw Error('Reports missing');
+  await page.locator('.jf-report-link').filter({hasText:'Expense report'}).click();
+  await page.waitForFunction(()=>location.hash.startsWith('#/expense'));
+  await page.waitForSelector('#main h1');
+  if(!await page.locator('#tabbar [data-route="mobileReports"]').evaluate(n=>n.classList.contains('active')))throw Error('Reports tab not active on report child');
+  await page.click('#moretab');
+  await page.waitForSelector('body.drawer-open');
+  if(!await page.locator('#sidebar [data-route="cards"]').isVisible())throw Error('Private Card Vault removed');
+  await page.click('.drawer-close');
+  await page.waitForFunction(()=>!document.body.classList.contains('drawer-open'));
+  await page.click('#tabbar .fab');
+  await page.waitForSelector('.modal');
+  await ctx.close();if(errors.length)throw Error(errors.join(' | '));return 'Reports children, More tools and Add editor checked';
+});
+test('mobile breakpoint never replaces a non-dashboard screen', async browser => {
+  const {ctx,page,errors}=await open(browser,'transactions');
+  await page.setViewportSize({width:390,height:844});
+  await page.waitForFunction(()=>getComputedStyle(document.querySelector('#tabbar')).display==='flex');
+  if(await page.locator('.jf-mobile-home').count())throw Error('Resize replaced Transactions with Home');
+  if(!await page.locator('.tx-results').isVisible())throw Error('Transactions lost after resize');
+  await ctx.close();if(errors.length)throw Error(errors.join(' | '));return 'desktop/mobile resizing preserves active screen';
+});
+
 // ------------------------------------------------------------------- run ---
 const only = process.argv.slice(2).filter(a => !a.startsWith('-'));
 const server = await serve();
