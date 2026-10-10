@@ -8,11 +8,14 @@ import {join, dirname} from 'node:path';
 const ROOT=join(dirname(fileURLToPath(import.meta.url)), '..');
 const source=fs.readFileSync(process.env.STORE_SOURCE || join(ROOT,'js/store.js'),'utf8').replace(/^import .*;$/gm,'').replace(/export /g,'');
 const tests=[];const test=(name,fn)=>tests.push({name,fn});
-async function setup(factory = new IDBFactory()){
+async function setup(factory = new IDBFactory(), options = {}){
  const messages=[], server=new Map();let revoked=0, calls=0;
- const control={error:null,hang:false,hold:null,onPull:null};
+ const control={error:null,hang:false,hold:null,onPull:null,user:{id:'fixture-user',email:'fixture@test.local'},sessionError:null};
+ const events = {}; const listen = (name,fn) => { (events[name] ||= []).push(fn); };
+ const fire = name => (events[name] || []).forEach(fn=>fn());
  const navigator={onLine:false}; const storage=new Map();
- const sb={auth:{signOut:async()=>{revoked++;return {error:null}}},from(table){
+ let authCallback;
+ const sb={auth:{getSession:async()=>({data:{session:control.user?{user:control.user}:null},error:control.sessionError}),onAuthStateChange:fn=>{authCallback=fn;},signOut:async()=>{revoked++;return {error:null}}},from(table){
   let rows=null;
   const query={upsert(r){rows=r;return this},select(){return this},gt(){return this},order(){return this},range(){return this},abortSignal(signal){this.signal=signal;return this},then(resolve,reject){
    calls++;
@@ -24,10 +27,15 @@ async function setup(factory = new IDBFactory()){
    })().then(resolve,reject);
   }};return query;
  }};
- const context=vm.createContext({console:{warn(){},error(){}},navigator,indexedDB:factory,CONFIG:{SUPABASE_URL:'',SUPABASE_ANON_KEY:''},uuid:randomUUID,todayISO:()=> '2026-10-10',toast:(...a)=>messages.push(a),safeStore:(k,v)=>v===undefined?storage.get(k):(v===null?storage.delete(k):storage.set(k,v)),storageBlocked:()=>false,window:{addEventListener(){}},document:{addEventListener(){},hidden:false},localStorage:{length:0,key(){},removeItem(){}},location:{origin:'http://local',pathname:'/'},AbortController,Date,Map,Set,Promise,setTimeout:(fn,ms)=>{const t=setTimeout(fn,ms===20000?50:ms);t.unref();return t},clearTimeout});
+ const context=vm.createContext({console:{warn(){},error(){}},navigator,indexedDB:factory,CONFIG:{SUPABASE_URL:'',SUPABASE_ANON_KEY:''},uuid:randomUUID,todayISO:()=> '2026-10-10',toast:(...a)=>messages.push(a),safeStore:(k,v)=>v===undefined?storage.get(k):(v===null?storage.delete(k):storage.set(k,v)),storageBlocked:()=>false,window:{addEventListener:listen},document:{addEventListener:listen,hidden:false},localStorage:{length:0,key(){},removeItem(){}},location:{origin:'http://local',pathname:'/'},AbortController,Date,Map,Set,Promise,setTimeout:(fn,ms)=>{const t=setTimeout(fn,ms===20000?50:(ms===15000 && options.fastRetry ? 30 : ms));t.unref();return t},clearTimeout});
  vm.runInContext(source+'\nglobalThis.S={DB,state,boot,put,putMany,sync,signOut,resetLocal,queueAll};globalThis.getIDB=()=>idb;',context);
- const S=context.S;S.state.sb=sb;await S.boot();S.state.user={id:'fixture-user'};navigator.onLine=true;
- return {S,context,navigator,control,messages,server,get revoked(){return revoked},get calls(){return calls}};
+ const S=context.S;
+ if(options.clientInit){context.CONFIG.SUPABASE_URL='https://fixture.invalid';context.fixtureSB=sb;vm.runInContext('loadClient=async()=>({createClient:()=>fixtureSB});',context);}
+ else S.state.sb=sb;
+ await S.boot();
+ if(!options.clientInit) S.state.user=control.user;
+ navigator.onLine=true;
+ return {S,context,navigator,control,messages,server,fire,auth:(event,user)=>authCallback?.(event,user?{user}:null),get revoked(){return revoked},get calls(){return calls}};
 }
 const row=(id,note='local')=>({id,note,type:'Expense',date:'2026-10-10',expense:1,currency:'SAR'});
 test('all historical queue versions drain after latest version succeeds',async()=>{const e=await setup();await e.S.put('transactions',row('a','old'),{silent:true});await e.S.put('transactions',row('a','new'),{silent:true});const result=await e.S.sync();assert.equal(result.ok,true);assert.equal(e.S.state.pending,0);assert.equal((await e.S.queueAll()).length,0);assert.equal(e.server.get('transactions:a').note,'new');});
@@ -45,5 +53,22 @@ test('pending queue read failure must fail closed before sign-out',async()=>{con
 test('save guard blocks writes during sign-out',async()=>{const e=await setup();e.S.state.signingOut=true;await assert.rejects(e.S.put('transactions',row('a'),{silent:true}),/Sign-out/);assert.equal(e.S.DB.transactions.length,0);});
 test('pending entries survive a fresh app boot in durable storage',async()=>{const factory=new IDBFactory();const e=await setup(factory);await e.S.put('transactions',row('a'),{silent:true});const reloaded=await setup(factory);assert.equal(reloaded.S.state.pending,1);assert.equal(reloaded.S.DB.transactions[0].id,'a');assert.equal((await reloaded.S.queueAll()).length,1);});
 test('an edit arriving during pull is never overwritten by the server',async()=>{const e=await setup();e.server.set('transactions:a',row('a','remote'));let edited=false;e.control.onPull=async table=>{if(table==='transactions'&&!edited){edited=true;await e.S.put('transactions',row('a','new local'),{silent:true});}};await e.S.sync();assert.equal(e.S.DB.transactions[0].note,'new local');assert.equal(e.S.state.pending,1);});
+test('fresh offline boot can add and modify then reconnect without losing edits',async()=>{const factory=new IDBFactory();const first=await setup(factory);await first.S.put('transactions',row('a','original'),{silent:true});await first.S.sync();const e=await setup(factory);e.navigator.onLine=false;e.S.state.user=null;assert.equal(e.S.state.localUser.id,'fixture-user');await e.S.put('transactions',row('b','new offline'),{silent:true});await e.S.put('transactions',row('a','edited offline'),{silent:true});assert.equal((await e.S.sync()).ok,false);assert.equal(e.S.state.pending,2);e.navigator.onLine=true;e.fire('online');assert.equal(e.S.state.online,true);assert.equal((await e.S.sync()).ok,true);assert.equal(e.server.get('transactions:a').note,'edited offline');assert.equal(e.server.get('transactions:b').note,'new offline');});
+test('background offline edits sync on foreground even if online event was missed',async()=>{const e=await setup();await e.S.sync();e.navigator.onLine=false;e.fire('offline');e.context.document.hidden=true;await e.S.put('transactions',row('a','first'),{silent:true});await e.S.put('transactions',row('a','edited'),{silent:true});e.navigator.onLine=true;e.context.document.hidden=false;e.fire('visibilitychange');assert.equal(e.S.state.online,true);await new Promise(r=>setTimeout(r,350));assert.equal(e.S.state.pending,0);assert.equal(e.server.get('transactions:a').note,'edited');});
+test('missing session is explicit, keeps local data, and same-account restoration uploads',async()=>{const e=await setup();await e.S.sync();await e.S.put('transactions',row('a'),{silent:true});e.control.user=null;const result=await e.S.sync();assert.equal(result.ok,false);assert.equal(e.S.state.reauthRequired,true);assert.equal(e.S.state.localUser.id,'fixture-user');assert.equal(e.S.state.pending,1);assert.match(e.S.state.syncError,/Sign in again/);e.control.user={id:'fixture-user',email:'fixture@test.local'};assert.equal((await e.S.sync()).ok,true);assert.equal(e.S.state.reauthRequired,false);});
+test('wrong-account restored session cannot upload another owner’s pending work',async()=>{const e=await setup();await e.S.sync();await e.S.put('transactions',row('a'),{silent:true});e.control.user={id:'another-user'};assert.equal((await e.S.sync()).ok,false);assert.equal(e.server.size,0);assert.equal(e.S.state.pending,1);assert.equal(e.S.state.user,null);assert.equal(e.S.state.localUser.id,'fixture-user');});
+test('session loss auth event does not clear local entries',async()=>{const e=await setup(new IDBFactory(),{clientInit:true});await e.S.put('transactions',row('a'),{silent:true});e.auth('INITIAL_SESSION',e.control.user);e.control.user=null;e.auth('SIGNED_OUT',null);assert.equal(e.S.state.user,null);assert.equal(e.S.state.reauthRequired,true);assert.equal(e.S.DB.transactions[0].id,'a');assert.equal(e.S.state.pending,1);});
+test('offline foreground status refresh and persistent session notice are wired',async()=>{const app=fs.readFileSync(join(ROOT,'js/app.js'),'utf8');assert.ok(app.includes('session-notice'));assert.ok(app.includes('Sign in again'));assert.ok(source.includes("window.addEventListener('pageshow', resumeSync)"));assert.ok(source.includes("window.addEventListener('focus', resumeSync)"));});
+test('service-worker upgrade preserves cached auth CDN modules for offline launch',async()=>{
+ const handlers={}, stores=new Map();
+ const open=async name=>{if(!stores.has(name))stores.set(name,new Map());const map=stores.get(name);return {keys:async()=>[...map.keys()].map(url=>({url})),match:async request=>map.get(typeof request==='string'?request:request.url),put:async(request,response)=>map.set(typeof request==='string'?request:request.url,response)};};
+ const cdn='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+ const old=await open('old-release');await old.put(cdn,{cached:true});await old.put('https://app.local/js/app.js',{old:true});
+ vm.runInNewContext(fs.readFileSync(join(ROOT,'sw.js'),'utf8'),{URL,self:{addEventListener:(name,fn)=>handlers[name]=fn,clients:{claim:async()=>{}}},caches:{open,keys:async()=>[...stores.keys()],delete:async name=>stores.delete(name)}});
+ let completion;handlers.activate({waitUntil:p=>completion=p});await completion;
+ assert.equal((await(await open('jinnyfin-runtime-v1')).match(cdn)).cached,true);assert.equal(stores.has('old-release'),false);
+});
+test('a transient upload failure automatically retries while foregrounded',async()=>{const e=await setup(new IDBFactory(),{fastRetry:true});await e.S.put('transactions',row('a'),{silent:true});e.control.error={message:'Failed to fetch'};assert.equal((await e.S.sync()).ok,false);e.control.error=null;await new Promise(r=>setTimeout(r,80));assert.equal(e.S.state.pending,0);assert.equal(e.server.get('transactions:a').id,'a');});
+test('session loss during upload leaves the acknowledgement queued for safe retry',async()=>{const e=await setup(new IDBFactory(),{clientInit:true});e.auth('INITIAL_SESSION',e.control.user);await e.S.put('transactions',row('a'),{silent:true});let release;e.control.hold=new Promise(r=>release=r);const syncing=e.S.sync();await new Promise(r=>setTimeout(r,5));e.control.user=null;e.auth('SIGNED_OUT',null);release();await syncing;assert.equal(e.S.state.pending,1);assert.equal(e.S.DB.transactions[0].id,'a');assert.equal(e.S.state.user,null);});
 test('UI contains no discard escape hatch or unconditional success toast',async()=>{const app=fs.readFileSync(join(ROOT,'js/app.js'),'utf8'),settings=fs.readFileSync(join(ROOT,'js/views/settings.js'),'utf8');assert.ok(!app.includes('Delete changes and sign out'));assert.ok(!settings.includes("sync().then(() => toast('Synced'))"));assert.ok(settings.includes('result?.ok'));});
 const keepAlive=setInterval(()=>{},1000);let failed=0;for(const t of tests){try{await t.fn();console.log('PASS '+t.name)}catch(e){failed++;console.error('FAIL '+t.name,e)}}clearInterval(keepAlive);console.log(`${tests.length-failed}/${tests.length} passed`);process.exitCode=failed?1:0;
