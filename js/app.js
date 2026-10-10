@@ -335,12 +335,30 @@ function updateChip(chip) {
   let cls = 'dot', txt = 'Synced';
   if (!s.online) { cls += ' off'; txt = 'Offline'; }
   else if (s.syncing) { cls += ' busy'; txt = 'Syncing…'; }
+  else if (!s.user && s.localUser) { cls += ' err'; txt = 'Sign in to sync'; }
   else if (s.syncError) { cls += ' err'; txt = 'Sync failed'; }
   else if (s.pending) { cls += ' busy'; txt = s.pending + ' to sync'; }
   else if (!s.user) { cls += ' err'; txt = 'Not signed in'; }
+  updateSessionNotice();
   chip.title = s.syncError || (s.pending ? s.pending + ' changes waiting to upload' : '');
   chip.innerHTML = '';
   chip.append(el('span', { class: cls }), txt);
+}
+
+function updateSessionNotice() {
+  const main = $('#main'); if (!main) return;
+  let note = $('#session-notice');
+  const needed = !!state.storageError || ((!!state.localUser || DB.transactions.length > 0) && (!state.user || !state.online));
+  if (!needed) { note?.remove(); return; }
+  if (!note) { note = el('div', { id: 'session-notice', class: 'alert soon slim', role: 'status', style: 'margin:10px 0' }); main.prepend(note); }
+  note.replaceChildren();
+  const message = state.storageError
+    ? 'Local storage is unavailable: unsynced entries are held only in memory. Keep this app open until you sync or make a backup.'
+    : !state.user
+    ? 'Local mode: your server session is unavailable. Entries stay on this device but cannot upload until you sign in again.'
+    : 'Offline: entries and edits are saved on this device. Sync will retry when the connection returns.';
+  note.append(el('span', { class: 'small' }, message + ' ' + state.pending + ' changes waiting to upload.'));
+  if (!state.user) note.append(el('button', { class: 'btn', onclick: () => loginScreen('Sign in to your original account. Local entries will be kept.') }, 'Sign in again'));
 }
 
 async function renderRoute() {
@@ -356,6 +374,7 @@ async function renderRoute() {
     currentView = mod;
     main.innerHTML = '';
     await mod.render(main);
+    updateSessionNotice();
     // Storage refused by the browser: one line, dismissible for the session.
     if (state.storageError && safeStore('jinnyfin-hide-storage-note', undefined, 'session') !== '1') {
       const note = el('div', { class: 'alert soon slim', style: 'margin-bottom:10px' },
@@ -635,7 +654,7 @@ async function lockScreen() {
 let renderedFor;
 
 async function start() {
-  renderedFor = state.user?.id || null;
+  renderedFor = state.user?.id || state.localUser?.id || null;
   applyTheme();
   if (!(await lockScreen())) return;
   await renderShell();
@@ -730,17 +749,17 @@ S.onChange(what => {
   if (what === 'recovery') {
     // Overrides whatever is on screen — sign-in, dashboard, mid-edit — because
     // Supabase already swapped the session under it for a recovery-only one.
-    renderedFor = state.user?.id || null;
+    renderedFor = state.user?.id || state.localUser?.id || null;
     recoveryScreen();
   } else if (what === 'auth') {
     // Belt and braces for the same thing store.js guards at the source: only a
     // change of ACCOUNT may tear the screen down and build it again. Anything
     // else — a token refreshed in the background, a session re-read when the
     // tab comes back to the front — leaves the page exactly where you left it.
-    const uid = state.user?.id || null;
+    const uid = state.user?.id || state.localUser?.id || null;
     if (uid === renderedFor) return;
     renderedFor = uid;
-    if (!state.user) loginScreen(); else { start(); Push.refresh(); Push.syncZone(); }
+    if (!state.user && !state.localUser) loginScreen(); else { start(); if (state.user) { Push.refresh(); Push.syncZone(); } }
   } else if (what === 'data' && currentView?.refresh) {
     // A background sync must never rebuild the page while you are typing in it.
     //
@@ -856,7 +875,7 @@ async function maybeNotify() {
   } else if (!state.user) {
     // Local data but no session (token expired, or Supabase not set up yet):
     // the app is still fully usable — it just cannot sync until you sign in.
-    if (DB.transactions.length) start();
+    if (state.localUser || DB.transactions.length) start();
     else loginScreen();
   } else {
     start();
