@@ -2,6 +2,12 @@
   "name": "jinnyfin-tests",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node run.mjs" },
-  "devDependencies": { "playwright": "^1.48.0" }
+  "scripts": {
+    "test": "node sync-safety.mjs && node run.mjs",
+    "test:sync": "node sync-safety.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0",
+    "fake-indexeddb": "^6.2.5"
+  }
 }
