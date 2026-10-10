@@ -2,7 +2,8 @@
 //  sw.js — service worker: makes the app installable and fully offline.
 //  Bump CACHE when you change any file, so devices pick up the new version.
 // ============================================================================
-const CACHE = 'jinnyfin-2.3-sync-safety-20261010';
+const CACHE = 'jinnyfin-2.3-offline-session-20261010';
+const RUNTIME = 'jinnyfin-runtime-v1';
 
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './manifest.webmanifest?v=logo-20261010-transparent', './config.js',
@@ -28,7 +29,19 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
+    // Keep the downloaded auth module and its CDN dependencies across releases.
+    // They are essential for a fresh offline launch with a stored session.
+    const runtime = await caches.open(RUNTIME);
+    for (const k of await caches.keys()) {
+      if (k === CACHE || k === RUNTIME) continue;
+      const old = await caches.open(k);
+      for (const request of await old.keys()) {
+        if (/^(cdn\.jsdelivr\.net|esm\.sh|unpkg\.com)$/.test(new URL(request.url).hostname)) {
+          const response = await old.match(request); if (response) await runtime.put(request, response);
+        }
+      }
+      await caches.delete(k);
+    }
     await self.clients.claim();
   })());
 });
@@ -42,7 +55,7 @@ self.addEventListener('fetch', e => {
   // The seed file and the CDN module: cache-first, they never change.
   if (url.pathname.endsWith('seed-data.json') ||
       /^(cdn\.jsdelivr\.net|esm\.sh|unpkg\.com)$/.test(url.hostname)) {
-    e.respondWith(caches.open(CACHE).then(async c => {
+    e.respondWith(caches.open(RUNTIME).then(async c => {
       const hit = await c.match(e.request);
       if (hit) return hit;
       const res = await fetch(e.request);
