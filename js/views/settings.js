@@ -129,9 +129,19 @@ function general() {
       el('div', {}, el('p', { class: 'small' }, el('b', {}, 'Signed in: '), state.user?.email || '—'),
         el('p', { class: 'small' }, el('b', {}, 'Last sync: '), state.lastSync ? new Date(state.lastSync).toLocaleString() : 'never'),
         el('p', { class: 'small' }, el('b', {}, 'Waiting to upload: '), String(state.pending)),
+        state.syncError ? el('p', { class: 'small neg' }, 'Sync error: ' + state.syncError) : null,
         el('p', { class: 'small' }, el('b', {}, 'Transactions held locally: '), DB.transactions.length.toLocaleString('en-IN'))),
       el('div', { class: 'row' },
-        el('button', { class: 'btn', onclick: () => sync().then(() => toast('Synced')) }, '↻ Sync now'),
+        el('button', { class: 'btn', onclick: async event => {
+          const button = event.currentTarget;
+          button.disabled = true;
+          try {
+            const result = await sync();
+            toast(result?.ok ? 'Synced — all pending changes uploaded' :
+              'Not synced: ' + (result?.error || state.syncError || 'Please retry') +
+              '. ' + state.pending + ' changes waiting to upload.', result?.ok ? '' : 'warn', 7000);
+          } finally { button.disabled = false; }
+        } }, '↻ Sync now'),
         el('button', { class: 'btn', onclick: toggleTheme }, '◑ Theme'),
         el('button', { class: 'btn ghost', onclick: askSignOut }, 'Sign out')))));
 }
