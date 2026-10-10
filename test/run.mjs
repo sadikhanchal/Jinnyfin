@@ -2907,6 +2907,26 @@ test('mobile breakpoint never replaces a non-dashboard screen', async browser =>
   await ctx.close();if(errors.length)throw Error(errors.join(' | '));return 'desktop/mobile resizing preserves active screen';
 });
 
+
+test('mobile account balances wrap long names without hiding amounts', async browser => {
+ const {ctx,page,errors}=await open(browser);
+ await page.setViewportSize({width:320,height:760});
+ await page.waitForSelector('.jf-mobile-home');
+ await page.evaluate(async()=>{const {DB}=await import('/js/store.js');DB.accounts.push({id:'wrap-fixture',name:'Very Long International Bank Account For Family Savings',currency:'SAR',grp:'primary',opening_bal:9876543.21,active:true});const D=await import('/js/views/dashboard.js');D.refresh();});
+ await page.click('.jf-mobile-breakdowns summary');
+ await page.waitForSelector('.jf-balances-table');
+ for(const width of [320,390]){
+  await page.setViewportSize({width,height:844});
+  const check=await page.evaluate(()=>{const t=document.querySelector('.jf-balances-table'),wrap=t.parentElement;const name=[...t.querySelectorAll('tbody td:first-child')].find(n=>n.textContent.includes('Very Long International'));if(!name)return {missing:true};const amount=name.nextElementSibling;return {overflow:wrap.scrollWidth>wrap.clientWidth+1,nameWhiteSpace:getComputedStyle(name).whiteSpace,amount:amount.textContent,rows:t.querySelectorAll('thead th').length};});
+  if(check.missing||check.overflow||check.nameWhiteSpace==='nowrap'||check.rows!==2||!check.amount.includes('≈'))throw Error('Balances layout failed at '+width+': '+JSON.stringify(check));
+ }
+ await page.setViewportSize({width:1280,height:800});
+ await page.waitForFunction(()=>!document.querySelector('.jf-mobile-home'));
+ const headers=await page.locator('#main .card').filter({hasText:'Account balances'}).locator('thead th').allTextContents();
+ if(headers.length!==3||!headers.includes('≈ INR'))throw Error('Desktop balances changed');
+ await ctx.close();if(errors.length)throw Error(errors.join(' | '));return 'long name/native/INR amounts fit 320px/390px; desktop retains 3 columns';
+});
+
 // ------------------------------------------------------------------- run ---
 const only = process.argv.slice(2).filter(a => !a.startsWith('-'));
 const server = await serve();
