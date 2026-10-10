@@ -2,15 +2,15 @@
 //  sw.js — service worker: makes the app installable and fully offline.
 //  Bump CACHE when you change any file, so devices pick up the new version.
 // ============================================================================
-const CACHE = 'jinnyfin-2.3-welcome-logo-20261010';
+const CACHE = 'jinnyfin-2.3.1-mobile-refine-20261010';
 
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './manifest.webmanifest?v=logo-20261010-transparent', './config.js',
-  './css/app.css', './css/app.css?v=welcome-logo-20261010',
+  './css/app.css', './css/app.css?v=mobile-refine-20261010',
   './js/app.js', './js/util.js', './js/store.js', './js/calc.js', './js/charts.js', './js/crypto.js',
   './js/alerts.js', './js/push.js', './js/files.js', './js/icons.js',
   './js/views/editor.js', './js/views/dashboard.js', './js/views/transactions.js', './js/views/tasks.js',
-  './js/views/report.js', './js/views/incexp.js',
+  './js/views/mobile-reports.js', './js/views/report.js', './js/views/incexp.js',
   './js/views/statement.js', './js/views/payee.js', './js/views/business.js', './js/views/equity.js',
   './js/views/networth.js', './js/views/insurance.js', './js/views/cards.js', './js/views/budgets.js',
   './js/views/settings.js', './js/views/importer.js', './js/views/printable.js',
