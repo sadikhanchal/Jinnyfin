@@ -103,7 +103,7 @@ function healForPush(table, row) {
 export const state = {
   user: null, online: navigator.onLine, syncing: false,
   lastSync: null, pending: 0, ready: false, sb: null, sbError: null, sbLoading: null,
-  storageError: null, recovery: false, syncError: null, signingOut: false,
+  storageError: null, recovery: false, localUser: null, reauthRequired: false, syncError: null, signingOut: false,
 };
 
 const listeners = new Set();
@@ -160,6 +160,42 @@ async function meta(k, v) {
   const t = txn(['_meta'], 'readwrite'); t.objectStore('_meta').put({ k, v }); return done(t);
 }
 
+// Local identity is an ownership marker, NEVER proof of a valid server session.
+function cachedUser() {
+  try { const session = JSON.parse(safeStore('jinnyfin-auth') || 'null');
+    return session?.user?.id ? { id: session.user.id, email: session.user.email || '' } : null;
+  } catch { return null; }
+}
+async function restoreLocalUser() {
+  const stored = await meta('localUser');
+  const cached = cachedUser();
+  const owners = new Set(TABLES.flatMap(t => DB[t].map(r => r.user_id)).filter(Boolean));
+  for (const q of await queueAll()) if (q.row?.user_id) owners.add(q.row.user_id);
+  if (owners.size > 1) { state.syncError = 'Local data has conflicting account owners. Do not sync; make a backup first.'; return; }
+  if (stored?.id && owners.size && !owners.has(stored.id)) { state.syncError = 'Stored account owner conflicts with local entries. Make a backup before signing in.'; return; }
+  const id = stored?.id || [...owners][0] || cached?.id;
+  if (id) {
+    state.localUser = { id, email: stored?.email || (cached?.id === id ? cached.email : '') };
+    await meta('localUser', state.localUser);
+  }
+}
+function acceptSession(next) {
+  if (state.user && state.user.id !== next?.id) { dataEpoch++; state.syncing = false; }
+
+  if (next && state.localUser && next.id !== state.localUser.id) {
+    state.user = null; state.reauthRequired = true;
+    state.syncError = 'This device holds another account’s data. Sign in as the original account; nothing has been uploaded.';
+    emit('session'); return false;
+  }
+  state.user = next;
+  if (next) {
+    state.localUser = { id: next.id, email: next.email || '' };
+    state.reauthRequired = false;
+    meta('localUser', state.localUser).catch(e => { state.syncError = e.message; emit('sync'); });
+  } else state.reauthRequired = !!state.localUser;
+  return true;
+}
+
 // --------------------------------------------------------------- Supabase --
 // The client library is fetched once from a CDN and then served from the
 // service-worker cache. A failed fetch we can catch — but a fetch that simply
@@ -214,7 +250,7 @@ export async function initSupabase({ quiet = true, ms = 9000 } = {}) {
       const next = s?.user || null;
       if (event === 'PASSWORD_RECOVERY') {
         seenInitial = true;
-        state.user = next;
+        if (!acceptSession(next)) return;
         state.recovery = true;
         emit('recovery');
         return;
@@ -222,7 +258,7 @@ export async function initSupabase({ quiet = true, ms = 9000 } = {}) {
       // The very first callback is just Supabase announcing the session it
       // already found (or didn't) — that is not a change to react to, only the
       // starting point everything after it is compared against.
-      if (!seenInitial) { seenInitial = true; state.user = next; return; }
+      if (!seenInitial) { seenInitial = true; acceptSession(next); return; }
       // Supabase re-reads its stored session every time the tab becomes visible
       // again, and fires SIGNED_IN / TOKEN_REFRESHED for the SAME account. Passing
       // that on as an auth change made the app rebuild its shell and re-render the
@@ -233,11 +269,17 @@ export async function initSupabase({ quiet = true, ms = 9000 } = {}) {
       // person is announced as 'session', which repaints the sync chip and the bell
       // and touches nothing else.
       const same = (state.user?.id || null) === (next?.id || null);
-      state.user = next;
+      if (!acceptSession(next)) return;
+      // An expired/lost session must not hide or discard locally owned work.
+      if (!next && !state.signingOut && state.localUser) {
+        state.syncError = 'Your server session is unavailable. Local changes are safe on this device; sign in again to upload.';
+        emit('session'); return;
+      }
       emit(same ? 'session' : 'auth');
+      if (next && navigator.onLine && !state.signingOut) syncSoon(300);
     });
     const { data } = await state.sb.auth.getSession();
-    if (!seenInitial) { seenInitial = true; state.user = data?.session?.user || null; }
+    if (!seenInitial) { seenInitial = true; acceptSession(data?.session?.user || null); }
     state.sbError = null;
     return state.sb;
     })();
@@ -252,11 +294,14 @@ export async function initSupabase({ quiet = true, ms = 9000 } = {}) {
 }
 
 export async function signIn(email, password) {
+  if (state.localUser?.email && email.trim().toLowerCase() !== state.localUser.email.toLowerCase())
+    throw new Error('This device has local data for ' + state.localUser.email + '. Sign in to that account first and sync before switching accounts.');
   const sb = await initSupabase({ quiet: false, ms: 15000 });
   if (!sb) throw new Error('Supabase is not configured — edit config.js first.');
   const { data, error } = await sb.auth.signInWithPassword({ email, password });
   if (error) throw error;
-  state.user = data.user; emit('auth'); return data.user;
+  if (!acceptSession(data.user)) throw new Error(state.syncError);
+  emit('auth'); return data.user;
 }
 export async function signUp(email, password) {
   const sb = await initSupabase();
@@ -277,6 +322,8 @@ async function clearLocal({ clearSession = false, notify = false } = {}) {
   state.syncing = false;
   state.schemaGap = null;
   state.syncError = null;
+  state.localUser = null; state.reauthRequired = false;
+  clearTimeout(retryTimer); retryTimer = null; retryStep = 0;
 
   // These are only fallback/session copies. IndexedDB is authoritative when it
   // exists, but leaving these behind would resurrect a watermark or unlocked
@@ -392,6 +439,8 @@ export async function boot() {
   for (const t of TABLES) DB[t] = (await idbAll(t)).filter(r => !r.deleted);
   state.lastSync = await meta('lastSync');
   state.pending = (await queueAll()).length;
+  await restoreLocalUser();
+  state.online = navigator.onLine;
   state.ready = true;
   sortAll();
   emit('boot');
@@ -424,6 +473,14 @@ function sortAll() {
 // --------------------------------------------------------------- queue -----
 async function persistWrite(table, rows, queue = true) {
   if (state.signingOut) throw new Error('Sign-out is in progress. Please wait.');
+  const owner = state.localUser?.id || state.user?.id;
+  if (!owner) throw new Error('Sign in online once before saving entries on this device.');
+  if (state.localUser && state.user && state.localUser.id !== state.user.id)
+    throw new Error('Account mismatch. Your local entries have not been changed.');
+  for (const row of rows) {
+    if (row.user_id && row.user_id !== owner) throw new Error('Cannot save another account’s row.');
+    row.user_id = owner;
+  }
   if (!rows.length) return;
   if (!idb) {
     if (queue) for (const row of rows) mem.queue.push({ qid: mem.qid++, table, row, at: Date.now() });
@@ -509,10 +566,22 @@ function unknownColumn(error) {
       || null;
 }
 
+let retryTimer = null, retryStep = 0;
+function scheduleRetry() {
+  clearTimeout(retryTimer); retryTimer = null;
+  if (!document.hidden && navigator.onLine && state.pending && !state.reauthRequired && !state.signingOut) {
+    const ms = Math.min(15000 * 2 ** retryStep++, 120000);
+    retryTimer = setTimeout(() => { retryTimer = null; sync().catch(console.warn); }, ms);
+  }
+}
 let syncFlight = null;
 export function sync(options = {}) {
   if (syncFlight) return syncFlight;
-  syncFlight = performSync(options).finally(() => { syncFlight = null; });
+  syncFlight = performSync(options).finally(() => {
+    syncFlight = null;
+    if (!state.pending) { retryStep = 0; clearTimeout(retryTimer); retryTimer = null; }
+    else scheduleRetry();
+  });
   return syncFlight;
 }
 // Abort a hung request; do not let mobile network failures leave Syncing forever.
@@ -534,13 +603,23 @@ async function performSync({ full = false } = {}) {
     return { ok: false, pending: state.pending, error: message };
   };
   if (state.signingOut) return fail('Sign-out is in progress.');
-  if (!navigator.onLine) return fail('Offline — pending changes remain on this device.');
+  state.online = navigator.onLine;
+  if (!state.online) return fail('Offline — pending changes remain on this device.');
   const epoch = dataEpoch;
   let sb;
   try { sb = await deadline(initSupabase(), 12000, 'Sync connection'); }
   catch (e) { return fail(e.message || String(e)); }
   if (epoch !== dataEpoch) return;
-  if (!sb || !state.user) return fail(state.sbError || 'Not connected or not signed in.');
+  if (!sb) return fail(state.sbError || 'Could not load the sign-in service. Local changes remain on this device.');
+  // Retry session restoration on reconnect/foreground/manual sync. A missing
+  // client/session at offline boot is NOT a permanent signed-out state.
+  try {
+    const { data, error } = await deadline(sb.auth.getSession(), 12000, 'Session check');
+    if (epoch !== dataEpoch) return;
+    if (error) throw error;
+    if (!acceptSession(data?.session?.user || null)) return fail(state.syncError);
+  } catch (e) { return fail('Session check failed: ' + (e.message || e)); }
+  if (!state.user) return fail('Sign in again to upload. Your local changes remain on this device.');
   if (epoch !== dataEpoch) return;
   state.syncing = true; state.syncError = null; emit('sync');
   let pushed = 0;
@@ -551,6 +630,8 @@ async function performSync({ full = false } = {}) {
     const q = await queueAll();
     if (epoch !== dataEpoch) return;
     if (q.length) {
+      const wrongOwner = q.find(item => item.row?.user_id && item.row.user_id !== state.user.id);
+      if (wrongOwner) throw new Error('Pending changes belong to another account. Upload blocked; make a backup.');
       const byTable = {};
       for (const item of q) { if (!byTable[item.table]) byTable[item.table] = []; byTable[item.table].push(item); }
       // Rows the server keeps refusing after everything else here — named and
@@ -735,6 +816,14 @@ export async function setSettings(patch) {
   return put('settings', { ...(cur || {}), ...(id ? { id } : {}), data });
 }
 
-window.addEventListener('online', () => { state.online = true; emit('sync'); syncSoon(300); });
-window.addEventListener('offline', () => { state.online = false; emit('sync'); });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) syncSoon(500); });
+window.addEventListener('online', () => { state.online = navigator.onLine; retryStep = 0; emit('sync'); syncSoon(300); });
+window.addEventListener('offline', () => { state.online = false; clearTimeout(retryTimer); retryTimer = null; emit('sync'); });
+function resumeSync() {
+  state.online = navigator.onLine; emit('sync');
+  if (!document.hidden) { retryStep = 0; syncSoon(300); }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) resumeSync(); else { clearTimeout(retryTimer); retryTimer = null; }
+});
+window.addEventListener('pageshow', resumeSync);
+window.addEventListener('focus', resumeSync);
