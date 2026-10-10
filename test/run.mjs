@@ -361,15 +361,16 @@ test('coming back to the tab does not rebuild the screen', async browser => {
   return `scroll held at ${after}`;
 });
 
-test('signing in as someone else DOES rebuild', async browser => {
+test('another account cannot inherit or upload the local owner’s data', async browser => {
   const { ctx, page } = await open(browser, 'statement');
-  await mark(page);
   await page.evaluate(() => window.__sb.fire('SIGNED_IN', { user: { id: 'a-different-person' } }));
-  await page.waitForTimeout(900);
-  const ok = await survived(page);
+  const result = await page.evaluate(() => ({ user: window.JINNYFIN.S.state.user,
+    local: window.JINNYFIN.S.state.localUser?.id, error: window.JINNYFIN.S.state.syncError,
+    notice: document.querySelector('#session-notice')?.textContent || '' }));
   await ctx.close();
-  if (ok) throw new Error('a change of account left the old screen up');
-  return 'rebuilt, as it must';
+  if (result.user || result.local !== 'test-user' || !/another account/.test(result.error) || !/Sign in again/.test(result.notice))
+    throw new Error('Account ownership guard missing: ' + JSON.stringify(result));
+  return 'conflicting session blocked; original local owner and entries retained';
 });
 
 test('a sync that brings nothing new leaves the screen alone', async browser => {
