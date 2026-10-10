@@ -162,6 +162,7 @@ function sourceCard(title, rows, color, kind, period = {}) {
 
 function balancesCard() {
   const bals = C.allAccountBalances();
+  if (mobileViewport.matches) return mobileBalancesCard(bals);
   const card = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h3', {}, 'Account balances'), el('div', { class: 'spacer' }),
       el('button', { class: 'btn sm ghost', onclick: () => go('statement') }, 'Statement →')));
@@ -256,4 +257,21 @@ function drawMobile() {
   };
   details.addEventListener('toggle',()=>{mobileDetailsOpen=details.open;if(details.open)build();});
   wrap.append(details); if(mobileDetailsOpen)build(); restoreFilterFocus(host);
+}
+
+// Mobile balances: name + amount; INR equivalent stays below the native amount.
+function mobileBalancesCard(bals) {
+  const card=el('div',{class:'card'},el('div',{class:'card-head'},el('h3',{},'Account balances'),el('div',{class:'spacer'}),el('button',{class:'btn sm ghost',onclick:()=>go('statement')},'Statement →')));
+  const table=el('table',{class:'jf-balances-table'});
+  table.append(el('thead',{},el('tr',{},el('th',{},'Account'),el('th',{class:'n'},'Balance'))));
+  const body=el('tbody');let total=0;
+  for(const a of C.cashAccounts()){
+    const balance=bals.get(a.name)||0, equivalent=C.liveINR(balance,a.currency);total+=equivalent;
+    body.append(el('tr',{onclick:()=>{location.hash='#/statement?account='+encodeURIComponent(a.name);},style:'cursor:pointer'},
+      el('td',{class:'jf-balance-name'},a.name),
+      el('td',{class:'n jf-balance-amount'},el('div',{class:'tnum'+(balance<0?' neg':'')},money(balance,a.currency)),
+        a.currency!=='INR'?el('small',{class:'muted tnum'},'≈ '+money(equivalent,'INR',false)):null)));
+  }
+  body.append(el('tr',{class:'total'},el('td',{class:'jf-balance-name'},'Cash & bank total'),el('td',{class:'n jf-balance-amount tnum'},money(total,'INR',false))));
+  table.append(body);card.append(el('div',{class:'table-wrap'},table));return card;
 }
