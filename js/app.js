@@ -14,7 +14,7 @@ import * as Push from './push.js';
 
 // Stamped at build time. Settings shows it, so “did the update land?” is a
 // question you answer by looking, not by guessing.
-export const BUILD = { version: '2.3', date: '2026-09-22' };
+export const BUILD = { version: '2.3.1', date: '2026-10-10' };
 
 /**
  * `icon` names a mark in js/icons.js; `tint` is the palette token it wears.
@@ -24,6 +24,7 @@ export const BUILD = { version: '2.3', date: '2026-09-22' };
  * numbers agree, and the dark theme swaps them without a second list.
  */
 const ROUTES = {
+  mobileReports: { title: 'Reports', icon: 'bars', tab: 'Reports', load: () => import('./views/mobile-reports.js') },
   dashboard:    { title: 'Dashboard',        icon: 'home',    tint: '--s1', tab: 'Dashboard', load: () => import('./views/dashboard.js') },
   transactions: { title: 'Transactions',     icon: 'ledger',  tint: '--s7', tab: 'Transactions', load: () => import('./views/transactions.js') },
   statement:    { title: 'Account Statement',icon: 'receipt', tint: '--s1', tab: 'A/C Stmt', load: () => import('./views/statement.js') },
@@ -65,7 +66,8 @@ const scrollMemo = Object.create(null);
 // ---------------------------------------------------------------- drawer ---
 // On a phone the sidebar is the same list, slid in from the left. One NAV
 // array feeds both, so a new screen never has to be added in two places.
-const TABS = ['dashboard', 'statement', null, 'expense'];   // null = the + button's slot
+const TABS = ['dashboard', 'transactions', null, 'mobileReports'];
+const MOBILE_REPORT_ROUTES = ['mobileReports','income','expense','incexp','statement'];   // null = the + button's slot
 let drawerPushed = false;      // did opening the drawer add a history entry?
 let pendingRoute = null;       // route to open once the drawer's entry is gone
 
@@ -193,7 +195,7 @@ async function renderShell() {
       continue;
     }
     tabs.append(el('button', { dataset: { route: t }, onclick: () => pickFromDrawer(t) },
-      el('span', { class: 'i' }, navIcon(ROUTES[t], 21)), ROUTES[t].tab));
+      el('span', { class: 'i' }, navIcon(ROUTES[t], 21)), t === 'dashboard' ? 'Home' : t === 'transactions' ? 'Entries' : ROUTES[t].tab));
   }
   // Everything the four tabs cannot reach lives one tap away, behind ☰.
   tabs.append(el('button', {
@@ -211,7 +213,9 @@ function markActive() {
   // ☰ lights up when the screen you are on is not one of the four tabs — so a
   // glance at the bar always tells you where you are.
   const more = document.getElementById('moretab');
-  if (more) more.classList.toggle('active', drawerOpen() || !TABS.includes(r));
+  if (more) more.classList.toggle('active', drawerOpen() || (!TABS.includes(r) && !MOBILE_REPORT_ROUTES.includes(r)));
+  const reportsTab = document.querySelector('#tabbar [data-route="mobileReports"]');
+  if (reportsTab) reportsTab.classList.toggle('active', MOBILE_REPORT_ROUTES.includes(r));
 }
 
 export function topbar(title, ...right) {
