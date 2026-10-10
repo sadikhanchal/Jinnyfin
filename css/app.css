@@ -9,7 +9,7 @@
      you whether this device is holding an old stylesheet, so it is bumped with
      every release — not only when the stylesheet itself changes, or the check
      cries wolf. */
-  --jf-css: "2.3";
+  --jf-css: "2.3.1";
   color-scheme: light;
   --page:        #f9f9f7;
   --surface:     #fcfcfb;
@@ -891,3 +891,77 @@ main > .topbar { max-width: none; }
 .tab-badge { display: inline-block; margin-left: 5px; min-width: 16px; padding: 0 4px;
   border-radius: 999px; background: var(--warning); color: #23282f;
   font-size: 10px; font-weight: 800; line-height: 16px; text-align: center; }
+
+/* MOBILE REFINE 20261010: desktop rules above remain unchanged. */
+.jf-filter-toggle { display:none; }
+@media (max-width:860px) {
+  :root:not([data-theme="dark"]) { --brand:#236c54; --brand-ink:#205b47; }
+  main { padding:14px 16px calc(var(--nav-h) + env(safe-area-inset-bottom) + 24px); }
+  .topbar { padding:10px 16px 9px; margin:-14px -16px 15px; flex-wrap:wrap; }
+  .topbar h1 { font-size:21px; letter-spacing:-.6px; }
+  .topbar .sync-chip { font-size:10px; padding:4px 7px; max-width:27vw; }
+  .card { padding:12px; box-shadow:none; border-radius:15px; }
+  .card-head h3 { font-size:11px; letter-spacing:.03em; }
+  .filters { gap:7px; }
+  .filters .field { flex:1 1 110px; }
+  .filters select, .filters input { min-height:42px; }
+  input,select,textarea { font-size:16px; }
+  .btn { min-height:42px; }
+  .btn.sm { font-size:12px; min-height:36px; }
+  .tx { padding:10px 6px; gap:8px; grid-template-columns:30px minmax(0,1fr) auto; }
+  .tx .av { width:30px;height:30px;border-radius:9px; }
+  .tx .t1 { font-size:13px; line-height:1.35; }
+  .tx .t2 { font-size:10.5px; }
+  .tx .amt { font-size:13px; }
+  .tx .amt .sub { font-size:10px; }
+  .tx-slot { margin-bottom:2px; }
+  .tx-day { font-size:11px; }
+  #tabbar { --nav-h:68px; height:calc(68px + env(safe-area-inset-bottom)); background:var(--surface); box-shadow:0 -2px 12px #00000006; }
+  #tabbar button { font-size:10px; min-height:48px; }
+  #tabbar button.active { color:var(--brand); }
+  #tabbar .fab { background:#205b47; color:#fff; border-radius:15px; box-shadow:0 5px 15px #1b503128; }
+  #sidebar { width:min(90vw,340px); border-radius:0 20px 20px 0; }
+  #sidebar .nav-link { min-height:44px;padding:10px 12px;font-size:14px; }
+  #sidebar .nav-sep { margin-top:17px; }
+  .jf-mobile-mark { width:28px;height:28px;object-fit:contain;margin-right:8px;vertical-align:middle; }
+  .jf-mobile-period { display:flex;align-items:center;justify-content:space-between;gap:8px;margin:5px 0 17px;font-size:12px;color:var(--ink-2); }
+  .jf-mobile-period select { border:1px solid var(--hair); border-radius:9px;background:var(--surface);min-width:0;max-width:110px;font-size:12px;padding:8px 5px;min-height:40px; }
+  .jf-mobile-hero { background:#153f35;color:#f5faf5;border-radius:22px;padding:22px 20px 16px; }
+  .jf-eyebrow { font-size:10px;letter-spacing:1.2px;color:#c8ddce; }
+  .jf-hero-value { font-size:clamp(26px,8vw,38px);letter-spacing:-1px;font-weight:700;margin-top:12px;overflow-wrap:anywhere; }
+  .jf-hero-value.negative { color:#ffd0c4; }
+  .jf-hero-sub { font-size:11px;color:#b7cdbf;margin-top:3px; }
+  .jf-hero-foot { display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;margin-top:18px; }
+  .jf-hero-foot .btn { color:#ecf6eb; }
+  .jf-mobile-totals { display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:17px; }
+  .jf-mobile-total { text-align:left;background:none;border:0;padding:6px 0;min-width:0; }
+  .jf-mobile-total+button { border-left:1px solid var(--hair);padding-left:14px; }
+  .jf-mobile-total>span { display:block;font-size:12px;color:var(--ink-2); }
+  .jf-mobile-total b { display:block;font-size:clamp(16px,5vw,22px);margin:7px 0 4px;overflow-wrap:anywhere; }
+  .jf-mobile-total .income { color:var(--income); } .jf-mobile-total .expense { color:var(--expense); }
+  .jf-mobile-total small { font-size:10px;color:var(--ink-2); }
+  .jf-mobile-worth { display:flex;width:100%;align-items:center;gap:9px;background:none;border:0;border-bottom:1px solid var(--hair);padding:16px 0;margin-bottom:16px;font-size:12px; }
+  .jf-mobile-worth b { margin-left:auto;font-size:16px;overflow-wrap:anywhere; }
+  .jf-mobile-home .alert { font-size:12px;border-radius:12px; }
+  .jf-mobile-home .alert .small { font-size:10px; }
+  .jf-mobile-recent { background:transparent;border:0;padding:5px 0; }
+  .jf-mobile-recent .card-head h3 { color:var(--ink);text-transform:none;font-size:15px;letter-spacing:0; }
+  .jf-mobile-breakdowns { border:1px solid var(--hair);border-radius:13px;margin-top:17px;overflow:hidden; }
+  .jf-mobile-breakdowns summary { cursor:pointer;padding:15px;font-size:12px;min-height:46px; }
+  .jf-mobile-details-body { display:grid;gap:12px;padding:0 10px 10px; }
+  .jf-mobile-details-body .card { min-width:0; }
+  .jf-filter-toggle { display:flex;align-items:center;gap:8px;margin:8px 0 12px;width:100%;justify-content:space-between;font-size:12px; }
+  .jf-ledger-filters { display:none; }
+  .jf-ledger-filters.expanded { display:flex; padding:10px;background:var(--surface-2);border-radius:12px; }
+  .jf-ledger-summary { gap:7px; }
+  .jf-ledger-summary .stat { background:var(--surface-2);border:0;padding:10px; }
+  .jf-ledger-summary .label { font-size:10px;letter-spacing:.03em; }
+  .jf-ledger-summary .value { font-size:17px !important;overflow-wrap:anywhere; }
+  .jf-mobile-report-list { border:1px solid var(--hair);border-radius:17px;background:var(--surface);overflow:hidden; }
+  .jf-report-link { display:flex;align-items:center;gap:12px;border:0;border-bottom:1px solid var(--hair);background:none;text-align:left;padding:16px;width:100%;min-height:70px; }
+  .jf-report-link:last-child { border-bottom:0; }
+  .jf-report-icon { width:35px;height:35px;display:grid;place-items:center;border-radius:10px;background:var(--surface-2);color:var(--brand);flex-shrink:0; }
+  .jf-report-copy { flex:1;min-width:0; } .jf-report-copy b { font-size:14px;display:block; } .jf-report-copy small { font-size:11px;color:var(--ink-2);display:block;margin-top:3px; }
+}
+
+@media (max-width:860px) { .jf-mobile-redundant-add {display:none;} #tabbar button .ic {color:var(--ink-3) !important;} #tabbar button.active .ic {color:var(--brand) !important;} }
