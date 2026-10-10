@@ -2912,7 +2912,7 @@ test('mobile account balances wrap long names without hiding amounts', async bro
  const {ctx,page,errors}=await open(browser);
  await page.setViewportSize({width:320,height:760});
  await page.waitForSelector('.jf-mobile-home');
- await page.evaluate(async()=>{const {DB}=await import('/js/store.js');DB.accounts.push({id:'wrap-fixture',name:'Very Long International Bank Account For Family Savings',currency:'SAR',grp:'primary',opening_bal:9876543.21,active:true});const D=await import('/js/views/dashboard.js');D.refresh();});
+ await page.evaluate(async()=>{const {DB}=await import('/js/store.js');DB.accounts.push({id:'wrap-fixture',name:'Very Long International Bank Account For Family Savings',currency:'SAR',grp:'primary',opening_bal:9876543.21,active:true,pinned:true});const D=await import('/js/views/dashboard.js');D.refresh();});
  await page.click('.jf-mobile-breakdowns summary');
  await page.waitForSelector('.jf-balances-table');
  for(const width of [320,390]){
@@ -2944,6 +2944,7 @@ for (const c of CASES) {
     console.log(`  ✓ ${c.name}${note ? `  — ${note}` : ''}  (${Date.now() - t0}ms)`);
   } catch (e) {
     failed++;
+    if(process.env.GITHUB_ACTIONS) console.log(`::error title=${c.name.replace(/[%\r\n]/g, " ")}::${String(e.message).replace(/%/g,"%25").replace(/\r/g,"%0D").replace(/\n/g,"%0A")}`);
     console.log(`  ✗ ${c.name}\n      ${e.message}`);
   }
 }
