@@ -103,7 +103,7 @@ function healForPush(table, row) {
 export const state = {
   user: null, online: navigator.onLine, syncing: false,
   lastSync: null, pending: 0, ready: false, sb: null, sbError: null, sbLoading: null,
-  storageError: null, recovery: false,
+  storageError: null, recovery: false, syncError: null, signingOut: false,
 };
 
 const listeners = new Set();
@@ -276,6 +276,7 @@ async function clearLocal({ clearSession = false, notify = false } = {}) {
   state.pending = 0;
   state.syncing = false;
   state.schemaGap = null;
+  state.syncError = null;
 
   // These are only fallback/session copies. IndexedDB is authoritative when it
   // exists, but leaving these behind would resurrect a watermark or unlocked
@@ -303,12 +304,24 @@ async function clearLocal({ clearSession = false, notify = false } = {}) {
 }
 
 export async function signOut() {
+  if (state.signingOut) return;
+  state.signingOut = true;
+  try {
+    // Check durable storage, not a possibly stale badge. No discard escape hatch.
+    state.pending = (await queueAll()).length;
+    if (state.pending) throw new Error(state.pending + ' changes are still waiting to upload. Sign-out is blocked to protect them. Keep this device signed in and use Settings → Data → Backup before troubleshooting.');
+    dataEpoch++;
+    clearTimeout(syncTimer); syncTimer = null;
+    await finishSignOut();
+  } finally { state.signingOut = false; }
+}
+async function finishSignOut() {
   // Revoke the remote session while Supabase can still read its refresh token.
   // A network failure must not prevent the local privacy purge or the auth UI
   // transition, so the remote error is logged and the local clear runs anyway.
   try {
     if (state.sb) {
-      const { error } = await state.sb.auth.signOut();
+      const { error } = await deadline(state.sb.auth.signOut({ scope: 'local' }), 15000, 'Sign-out');
       if (error) console.warn('[sign-out] server session could not be revoked:', error);
     }
   } catch (e) { console.warn('[sign-out] server session could not be revoked:', e); }
@@ -409,20 +422,27 @@ function sortAll() {
 }
 
 // --------------------------------------------------------------- queue -----
-async function queuePush(table, rows) {
-  const list = Array.isArray(rows) ? rows : [rows];
-  if (!list.length) return;
-  if (!idb) { for (const row of list) mem.queue.push({ qid: mem.qid++, table, row, at: Date.now() }); state.pending += list.length; return; }
-  const t = txn(['_queue'], 'readwrite'), os = t.objectStore('_queue');
-  const at = Date.now();
-  for (const row of list) os.put({ table, row, at });
-  await done(t); state.pending += list.length;
+async function persistWrite(table, rows, queue = true) {
+  if (state.signingOut) throw new Error('Sign-out is in progress. Please wait.');
+  if (!rows.length) return;
+  if (!idb) {
+    if (queue) for (const row of rows) mem.queue.push({ qid: mem.qid++, table, row, at: Date.now() });
+  } else {
+    const t = txn(queue ? [table, '_queue'] : [table], 'readwrite');
+    const completed = done(t);
+    for (const row of rows) {
+      t.objectStore(table).put(row);
+      if (queue) t.objectStore('_queue').put({ table, row, at: Date.now() });
+    }
+    await completed;
+  }
+  if (queue) state.pending += rows.length;
 }
 async function queueAll() {
   if (!idb) return mem.queue.slice();
-  return new Promise(res => {
+  return new Promise((res, rej) => {
     const rq = txn(['_queue']).objectStore('_queue').getAll();
-    rq.onsuccess = () => res(rq.result || []); rq.onerror = () => res([]);
+    rq.onsuccess = () => res(rq.result || []); rq.onerror = () => rej(rq.error || new Error('Cannot read pending changes'));
   });
 }
 async function queueClear(qids) {
@@ -438,12 +458,12 @@ async function queueClear(qids) {
 export async function put(table, row, { silent = false } = {}) {
   const now = new Date().toISOString();
   const r = onlyColumns(table, { ...row, id: row.id || uuid(), updated_at: now, deleted: !!row.deleted });
+  await persistWrite(table, [r]);
   const arr = DB[table];
   const i = arr.findIndex(x => x.id === r.id);
   if (r.deleted) { if (i >= 0) arr.splice(i, 1); }
   else if (i >= 0) arr[i] = r; else arr.push(r);
-  await idbPut(table, [r]);
-  await queuePush(table, r);
+
   // Accounts too: renaming or adding one left DB.accounts out of its arranged
   // order until the next sync, so the new row sat at the bottom of every list.
   if (table === 'transactions' || table === 'accounts') sortAll();
@@ -455,11 +475,11 @@ export async function putMany(table, rows, { queue = true } = {}) {
   const now = new Date().toISOString();
   const out = rows.map(r => onlyColumns(table,
     { ...r, id: r.id || uuid(), updated_at: r.updated_at || now, deleted: !!r.deleted }));
+  await persistWrite(table, out, queue);
   const byId = new Map(DB[table].map(r => [r.id, r]));
   for (const r of out) byId.set(r.id, r);
   DB[table] = [...byId.values()].filter(r => !r.deleted);
-  await idbPut(table, out);
-  if (queue) await queuePush(table, out);
+
   sortAll(); emit('data');
   return out;
 }
@@ -489,15 +509,40 @@ function unknownColumn(error) {
       || null;
 }
 
-export async function sync({ full = false } = {}) {
-  if (state.syncing) return;
-  if (!navigator.onLine) return;
+let syncFlight = null;
+export function sync(options = {}) {
+  if (syncFlight) return syncFlight;
+  syncFlight = performSync(options).finally(() => { syncFlight = null; });
+  return syncFlight;
+}
+// Abort a hung request; do not let mobile network failures leave Syncing forever.
+async function syncRequest(query) {
+  const controller = new AbortController();
+  let timer;
+  try {
+    return await Promise.race([
+      typeof query.abortSignal === 'function' ? query.abortSignal(controller.signal) : query,
+      new Promise((_, reject) => { timer = setTimeout(() => {
+        controller.abort(); reject(new Error('Server request timed out. Your pending changes are still on this device.'));
+      }, 20000); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+async function performSync({ full = false } = {}) {
+  const fail = message => {
+    state.syncError = message; emit('sync');
+    return { ok: false, pending: state.pending, error: message };
+  };
+  if (state.signingOut) return fail('Sign-out is in progress.');
+  if (!navigator.onLine) return fail('Offline — pending changes remain on this device.');
   const epoch = dataEpoch;
-  const sb = await initSupabase();
+  let sb;
+  try { sb = await deadline(initSupabase(), 12000, 'Sync connection'); }
+  catch (e) { return fail(e.message || String(e)); }
   if (epoch !== dataEpoch) return;
-  if (!sb || !state.user) return;
+  if (!sb || !state.user) return fail(state.sbError || 'Not connected or not signed in.');
   if (epoch !== dataEpoch) return;
-  state.syncing = true; emit('sync');
+  state.syncing = true; state.syncError = null; emit('sync');
   let pushed = 0;
   const skippedCols = new Set();
   try {
@@ -515,7 +560,7 @@ export async function sync({ full = false } = {}) {
         // keep only the newest version of each row
         const latest = new Map();
         for (const it of items) latest.set(it.row.id, it.row);
-        const qidOf = new Map(items.map(it => [it.row.id, it.qid]));
+
         // Filter here as well as in put(): a row queued by an older build may
         // still be carrying a worked-out field, and it should drain quietly
         // instead of raising a migration warning that is not true.
@@ -523,19 +568,13 @@ export async function sync({ full = false } = {}) {
         const doneIds = new Set();
         for (let i = 0; i < rows.length; i += 500) {
           let chunk = rows.slice(i, i + 500);
-          let { error } = await sb.from(table).upsert(chunk, { onConflict: 'id' });
+          let { error } = await syncRequest(sb.from(table).upsert(chunk, { onConflict: 'id' }));
           if (epoch !== dataEpoch) return;
-          // A column this app writes may not exist on the server yet — the SQL
-          // migration has not been run. Rather than let one unknown column
-          // freeze every sync forever, drop it and push the rest, then say so.
-          for (let tries = 0; error && tries < 6; tries++) {
-            const miss = unknownColumn(error);
-            if (!miss) break;
-            skippedCols.add(`${table}.${miss}`);
-            chunk = chunk.map(r => { const { [miss]: _drop, ...rest } = r; return rest; });
-            rows = rows.map(r => { const { [miss]: _d, ...rest } = r; return rest; });
-            ({ error } = await sb.from(table).upsert(chunk, { onConflict: 'id' }));
-            if (epoch !== dataEpoch) return;
+          const missing = unknownColumn(error);
+          if (missing) {
+            skippedCols.add(table + '.' + missing);
+            stuck.push({ table, message: 'Server schema is missing ' + table + '.' + missing + '. These changes remain on this device; apply the matching database migration.' });
+            continue;
           }
           if (!error) { for (const r of chunk) doneIds.add(r.id); continue; }
           // A dropped connection fails every row the same way — that is not
@@ -551,19 +590,22 @@ export async function sync({ full = false } = {}) {
           // (this only runs once a whole chunk has already failed) and means
           // the one genuinely bad row is the only thing that stays queued.
           for (const r of chunk) {
-            const { error: e1 } = await sb.from(table).upsert([r], { onConflict: 'id' });
+            const { error: e1 } = await syncRequest(sb.from(table).upsert([r], { onConflict: 'id' }));
             if (epoch !== dataEpoch) return;
             if (!e1) doneIds.add(r.id); else stuck.push({ table, id: r.id, message: e1.message || String(e1) });
           }
         }
         if (epoch !== dataEpoch) return;
-        const qids = [...doneIds].map(id => qidOf.get(id)).filter(Boolean);
+        // Clear every OLD version included in this snapshot after its latest
+        // version was accepted. A newer edit queued during the request stays.
+        const qids = items.filter(it => doneIds.has(it.row.id)).map(it => it.qid);
         if (qids.length) await queueClear(qids);
         if (epoch !== dataEpoch) return;
         pushed += doneIds.size;
       }
       if (stuck.length) {
         console.warn('[sync] rows the server will not accept:', stuck);
+        state.syncError = stuck[0].message;
         toast(`${stuck.length} ${stuck.length === 1 ? 'entry' : 'entries'} will not sync — ${stuck[0].message}`, 'warn', 7000);
       }
     }
@@ -582,21 +624,22 @@ export async function sync({ full = false } = {}) {
     // losing one is permanent.
     const since = full ? '1970-01-01T00:00:00Z' : (state.lastSync || '1970-01-01T00:00:00Z');
     // Rows still waiting to go up are the only ones allowed to beat the server.
-    const held = new Set((await queueAll()).map(q => q.row?.id).filter(Boolean));
     if (epoch !== dataEpoch) return;
     let fresh = 0, newest = '';
     for (const table of TABLES) {
       let from = 0, page = 1000, got;
       do {
-        const { data, error } = await sb.from(table).select('*')
+        const { data, error } = await syncRequest(sb.from(table).select('*')
           .gt('updated_at', since).order('updated_at', { ascending: true })
-          .range(from, from + page - 1);
+          .range(from, from + page - 1));
         if (epoch !== dataEpoch) return;
         if (error) throw error;
         got = data || [];
         if (got.length) {
           if (epoch !== dataEpoch) return;
-          fresh += await mergeRemote(table, got, held, epoch);
+          // Edits may have arrived while a network read was in flight.
+          const currentHeld = new Set((await queueAll()).map(q => q.row?.id).filter(Boolean));
+          fresh += await mergeRemote(table, got, currentHeld, epoch);
           if (epoch !== dataEpoch) return;
           for (const r of got) if (r.updated_at && r.updated_at > newest) newest = r.updated_at;
         }
@@ -620,15 +663,16 @@ export async function sync({ full = false } = {}) {
     if (epoch !== dataEpoch) return;
     if (fresh || pushed) { sortAll(); emit('data'); }
     if (epoch !== dataEpoch) return;
-    if (skippedCols.size) {
-      state.schemaGap = [...skippedCols];
-      toast(`Synced, but your database is missing ${skippedCols.size} column(s): `
-        + [...skippedCols].join(', ') + '. Run migration-1.17.sql in Supabase.', 'warn', 9000);
-    } else state.schemaGap = null;
+    state.schemaGap = skippedCols.size ? [...skippedCols] : null;
+    state.pending = (await queueAll()).length;
+    if (state.pending && !state.syncError) state.syncError = 'Some changes are still waiting to upload. Retry sync.';
+    return { ok: !state.pending && !state.syncError, pending: state.pending, error: state.syncError };
   } catch (e) {
     console.warn('[sync]', e.message || e);
     if (epoch !== dataEpoch) return;
-    if (!/Failed to fetch|NetworkError/i.test(e.message || '')) toast('Sync problem: ' + (e.message || e), 'warn', 4000);
+    state.syncError = e.message || String(e);
+    toast('Sync problem: ' + state.syncError + '. Pending changes remain on this device.', 'warn', 7000);
+    return { ok: false, pending: state.pending, error: state.syncError };
   } finally {
     if (epoch === dataEpoch) { state.syncing = false; emit('sync'); }
   }
@@ -672,6 +716,8 @@ async function mergeRemote(table, rows, held = new Set(), epoch = dataEpoch) {
 
 /** Wipe the local copy and pull everything again. */
 export async function resetLocal() {
+  state.pending = (await queueAll()).length;
+  if (state.pending) throw new Error('Cannot re-download while changes are pending. Sync or make a backup first.');
   await clearLocal({ notify: true });
 }
 
